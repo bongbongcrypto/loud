@@ -13,6 +13,8 @@ use std::panic::{catch_unwind, AssertUnwindSafe};
 const E18: u128 = 1_000_000_000_000_000_000;
 const NEAR: u128 = 1_000_000_000_000_000_000_000_000;
 const MINUTE: u64 = 60 * SECOND_NS;
+/// The storage fee, written out so a change of the constant shows up here.
+const STORAGE_FEE: u128 = 20_000_000_000_000_000_000_000;
 const T0: u64 = 1_700_000_000 * SECOND_NS;
 
 fn acc(name: &str) -> AccountId {
@@ -99,10 +101,14 @@ fn demo() -> Cfg {
 }
 
 fn deploy(cfg: &Cfg) -> Loud {
+    deploy_as(cfg, creator(), "Loud", "LOUD", None)
+}
+
+fn deploy_as(cfg: &Cfg, creator_id: AccountId, name: &str, symbol: &str, icon: Option<String>) -> Loud {
     at(&creator(), T0, 0);
     Loud::new(
         U128(cfg.supply),
-        creator(),
+        creator_id,
         cfg.creator_bps,
         U128(cfg.virtual_near),
         U64(cfg.loud_window),
@@ -110,9 +116,9 @@ fn deploy(cfg: &Cfg) -> Loud {
         U64(cfg.exit_window),
         cfg.cap_bps,
         U64(cfg.cap_window),
-        "Loud".to_string(),
-        "LOUD".to_string(),
-        None,
+        name.to_string(),
+        symbol.to_string(),
+        icon,
     )
 }
 
@@ -132,8 +138,17 @@ fn expect_fail<R>(code: &str, f: impl FnOnce() -> R) {
     assert!(msg.starts_with(&format!("{code}:")), "expected {code}, got: {msg}");
 }
 
+/// Registers `who` with the exact storage fee, paid by `who`.
+fn register(c: &mut Loud, who: &AccountId, ts: u64) {
+    at(who, ts, STORAGE_FEE);
+    c.storage_deposit(None, None);
+}
+
+/// Buys with `near` reaching the pool. A caller that is not registered yet
+/// attaches the storage fee on top, as a first buy does.
 fn buy(c: &mut Loud, who: &AccountId, ts: u64, near: u128) -> u128 {
-    at(who, ts, near);
+    let fee = if c.is_registered(who.clone()) { 0 } else { STORAGE_FEE };
+    at(who, ts, near + fee);
     c.buy(U128(0)).0
 }
 
@@ -181,6 +196,22 @@ fn transfers_out() -> u128 {
     total
 }
 
+/// YoctoNEAR sent to `who` by the last call.
+fn paid_to(who: &AccountId) -> u128 {
+    let mut total = 0u128;
+    for receipt in get_created_receipts() {
+        if receipt.receiver_id != *who {
+            continue;
+        }
+        for action in receipt.actions.iter() {
+            if let MockAction::Transfer { deposit, .. } = action {
+                total += deposit.as_yoctonear();
+            }
+        }
+    }
+    total
+}
+
 /// `(receiver, method)` of every function call scheduled by the last call.
 fn calls_out() -> Vec<(AccountId, String)> {
     let mut calls = Vec::new();
@@ -205,9 +236,7 @@ fn has_event(name: &str) -> bool {
     logged(&format!("\"event\":\"{name}\""))
 }
 
-// ----------------------------------------------------------------------
 // Init
-// ----------------------------------------------------------------------
 
 #[test]
 fn new_sets_the_documented_state() {
@@ -241,6 +270,9 @@ fn new_sets_the_documented_state() {
     assert_eq!(bal(&c, &creator()), (50_000_000 * E18, 0));
     assert_eq!(c.ft_balance_of(creator()).0, 50_000_000 * E18);
     assert_eq!(c.ft_total_supply().0, cfg.supply);
+    // The creator is registered by `new` and nobody else is.
+    assert!(c.is_registered(creator()));
+    assert!(!c.is_registered(acc("anyone.test")));
     let m = c.ft_metadata();
     assert_eq!(m.spec, "ft-1.0.0");
     assert_eq!(m.decimals, 18);
@@ -311,6 +343,30 @@ fn new_rejects_out_of_bounds_params() {
 }
 
 #[test]
+fn new_rejects_the_token_account_as_creator() {
+    let cfg = standard();
+    expect_fail("E_PARAMS", || deploy_as(&cfg, token(), "Loud", "LOUD", None));
+}
+
+#[test]
+fn new_caps_the_metadata_sizes() {
+    let cfg = standard();
+    let icon = |bytes: usize| Some("i".repeat(bytes));
+    expect_fail("E_PARAMS", || deploy_as(&cfg, creator(), &"n".repeat(65), "LOUD", None));
+    expect_fail("E_PARAMS", || deploy_as(&cfg, creator(), "Loud", &"S".repeat(17), None));
+    expect_fail("E_PARAMS", || deploy_as(&cfg, creator(), "Loud", "LOUD", icon(2_049)));
+    // The limits count bytes: 33 two-byte letters are 66 bytes.
+    expect_fail("E_PARAMS", || deploy_as(&cfg, creator(), &"\u{e9}".repeat(33), "LOUD", None));
+
+    // Exactly at the limits is fine.
+    let c = deploy_as(&cfg, creator(), &"n".repeat(64), &"S".repeat(16), icon(2_048));
+    let m = c.ft_metadata();
+    assert_eq!(m.name.len(), 64);
+    assert_eq!(m.symbol.len(), 16);
+    assert_eq!(m.icon.map(|i| i.len()), Some(2_048));
+}
+
+#[test]
 fn new_is_callable_once() {
     let cfg = standard();
     let c = deploy(&cfg);
@@ -319,9 +375,7 @@ fn new_is_callable_once() {
     expect_fail("E_INIT", || deploy(&cfg));
 }
 
-// ----------------------------------------------------------------------
 // Trading
-// ----------------------------------------------------------------------
 
 #[test]
 fn buy_is_loud_inside_the_window_and_quiet_after() {
@@ -359,9 +413,55 @@ fn buy_is_loud_inside_the_window_and_quiet_after() {
 }
 
 #[test]
+fn first_buy_registers_the_caller_and_keeps_the_fee_out_of_the_pool() {
+    let mut c = deploy(&standard());
+    let alice = acc("alice.test");
+    let ts = T0 + SECOND_NS;
+    assert!(!c.is_registered(alice.clone()));
+
+    // The deposit must cover the fee and the smallest buy on top of it.
+    at(&alice, ts, STORAGE_FEE - 1);
+    expect_fail("E_DEPOSIT", || c.buy(U128(0)));
+    at(&alice, ts, STORAGE_FEE + 10u128.pow(21) - 1);
+    expect_fail("E_DEPOSIT", || c.buy(U128(0)));
+    // A buy that fails for another reason does not register either.
+    at(&alice, ts, STORAGE_FEE + NEAR);
+    let quote = c.quote_buy(U128(NEAR)).0;
+    expect_fail("E_SLIPPAGE", || c.buy(U128(quote + 1)));
+    assert!(!c.is_registered(alice.clone()));
+    assert_eq!(state(&c, ts).pool_near.0, 0);
+
+    // Only the part above the fee is priced and enters the pool.
+    at(&alice, ts, STORAGE_FEE + NEAR);
+    assert_eq!(c.buy(U128(quote)).0, quote);
+    assert!(logged(&format!("\"near_in\":\"{NEAR}\"")));
+    assert!(logged(&format!("\"storage_paid\":\"{STORAGE_FEE}\"")));
+    assert_eq!(transfers_out(), 0);
+    assert!(c.is_registered(alice.clone()));
+    assert_eq!(bal(&c, &alice), (quote, 0));
+    assert_eq!(state(&c, ts).pool_near.0, NEAR);
+
+    // The fee is paid once: the next buy goes to the pool in full.
+    at(&alice, ts, NEAR);
+    c.buy(U128(0));
+    assert!(logged(&format!("\"near_in\":\"{NEAR}\"")));
+    assert!(logged("\"storage_paid\":\"0\""));
+    assert_eq!(state(&c, ts).pool_near.0, 2 * NEAR);
+
+    // An account registered through storage_deposit pays no fee in buy.
+    let bob = acc("bob.test");
+    register(&mut c, &bob, ts);
+    at(&bob, ts, NEAR);
+    c.buy(U128(0));
+    assert!(logged("\"storage_paid\":\"0\""));
+    assert_eq!(state(&c, ts).pool_near.0, 3 * NEAR);
+}
+
+#[test]
 fn buy_checks_deposit_and_slippage() {
     let mut c = deploy(&standard());
     let alice = acc("alice.test");
+    register(&mut c, &alice, T0 + 1);
     at(&alice, T0 + 1, 10u128.pow(21) - 1);
     expect_fail("E_DEPOSIT", || c.buy(U128(0)));
     at(&alice, T0 + 1, 0);
@@ -442,9 +542,7 @@ fn sell_checks_yocto_amount_and_slippage() {
     assert_eq!(bal(&c, &dave), (0, out));
 }
 
-// ----------------------------------------------------------------------
 // shout / leave / hush
-// ----------------------------------------------------------------------
 
 /// Standard launch, a 1000 NEAR buy so the pool can pay, then the creator
 /// shouts 20M tokens (four caps) at T0 + 2 s. Returns the exit id.
@@ -487,7 +585,8 @@ fn shout_escrows_and_publishes_the_exit() {
 
 #[test]
 fn shout_checks_balance_dust_and_exit_count() {
-    let mut c = deploy(&standard());
+    let cfg = standard();
+    let mut c = deploy(&cfg);
     let ts = T0 + SECOND_NS;
     let dust = 1_000 * E18; // total_supply / 1_000_000
     at(&creator(), ts, 0);
@@ -509,9 +608,13 @@ fn shout_checks_balance_dust_and_exit_count() {
     assert_eq!(state(&c, ts).open_exits, 8);
     assert_eq!(c.get_account(creator()).exits.len(), 8);
 
-    // Closing one exit frees a slot.
-    hush(&mut c, &creator(), ts, 3);
-    assert_eq!(shout(&mut c, &creator(), ts, dust), 9);
+    // The slots stay taken until an exit is closed, and an exit that was
+    // never sold can only be closed after it expired.
+    let expired = ts + cfg.notice + cfg.exit_window + 1;
+    at(&creator(), expired, 1);
+    expect_fail("E_TOO_MANY", || c.shout(U128(dust)));
+    hush(&mut c, &creator(), expired, 3);
+    assert_eq!(shout(&mut c, &creator(), expired, dust), 9);
     // get_exits stays ordered by id after a removal, and pages.
     let ids: Vec<u64> = c.get_exits(0, 100).iter().map(|e| e.id.0).collect();
     assert_eq!(ids, vec![1, 2, 4, 5, 6, 7, 8, 9]);
@@ -529,6 +632,7 @@ fn shout_accepts_a_whole_balance_below_the_dust_floor() {
     // At this pool price one unit is worth less than one yoctoNEAR.
     buy(&mut c, &acc("minnow.test"), ts, NEAR);
     let small = acc("small.test");
+    register(&mut c, &small, ts);
     at(&creator(), ts, 1);
     c.transfer_loud(small.clone(), U128(dust - 1));
 
@@ -549,8 +653,10 @@ fn shout_accepts_a_whole_balance_below_the_dust_floor() {
     assert!(c.get_account(small.clone()).exits.is_empty());
 
     // One unit: the shout is accepted, the sale would pay 0 yoctoNEAR, so
-    // leave stops with E_AMOUNT and hush returns the unit.
+    // leave stops with E_AMOUNT. The unit comes back through hush once the
+    // exit has expired.
     let tiny = acc("tiny.test");
+    register(&mut c, &tiny, ready);
     at(&creator(), ready, 1);
     c.transfer_loud(tiny.clone(), U128(1));
     let id = shout(&mut c, &tiny, ready, 1);
@@ -559,9 +665,10 @@ fn shout_accepts_a_whole_balance_below_the_dust_floor() {
     at(&tiny, later, 1);
     expect_fail("E_AMOUNT", || c.leave(U64(id), U128(0)));
     assert_eq!(state(&c, later).escrowed.0, 1);
-    hush(&mut c, &tiny, later, id);
+    let expired = later + cfg.exit_window + 1;
+    hush(&mut c, &tiny, expired, id);
     assert_eq!(bal(&c, &tiny), (1, 0));
-    assert_eq!(state(&c, later).escrowed.0, 0);
+    assert_eq!(state(&c, expired).escrowed.0, 0);
 }
 
 #[test]
@@ -760,6 +867,7 @@ fn get_exits_pages_past_one_hundred_open_exits() {
     // 13 accounts with 8 open exits each.
     for i in 0..13 {
         let w = acc(&format!("w{i}.test"));
+        register(&mut c, &w, ts);
         at(&creator(), ts, 1);
         c.transfer_loud(w.clone(), U128(8 * dust));
         for _ in 0..8 {
@@ -775,29 +883,63 @@ fn get_exits_pages_past_one_hundred_open_exits() {
 }
 
 #[test]
-fn hush_returns_loud_tokens() {
+fn a_shout_is_binding_until_the_exit_expires() {
     let (mut c, id, ready) = launch_with_shout();
+    let t_shout = ready - 30 * MINUTE;
+    let expires = ready + 60 * MINUTE;
     let other = acc("whale.test");
-    // A stranger cannot hush before expiry, not even at `expires_at`.
-    at(&other, ready, 1);
-    expect_fail("E_NOT_OWNER", || c.hush(U64(id)));
-    at(&other, ready + 60 * MINUTE, 1);
-    expect_fail("E_NOT_OWNER", || c.hush(U64(id)));
     at(&creator(), ready, 0);
     expect_fail("E_YOCTO", || c.hush(U64(id)));
     at(&creator(), ready, 1);
     expect_fail("E_NO_EXIT", || c.hush(U64(42)));
 
-    // The owner can hush any time, also before the notice ends.
-    let outstanding = state(&c, ready - 1).loud_outstanding.0;
-    hush(&mut c, &creator(), ready - 1, id);
+    // Nobody can take the shout back, the owner included: not right after
+    // it, not during the notice, not inside the exit window, and not at
+    // `expires_at` itself.
+    for ts in [t_shout, ready - 1, ready, expires] {
+        for who in [creator(), other.clone()] {
+            at(&who, ts, 1);
+            expect_fail("E_NOTICE_BINDING", || c.hush(U64(id)));
+        }
+    }
+    let s = state(&c, expires);
+    assert_eq!(s.escrowed.0, 20_000_000 * E18);
+    assert_eq!(s.open_exits, 1);
+    assert_eq!(bal(&c, &creator()), (30_000_000 * E18, 0));
+    // The message says when the exit can be closed.
+    at(&creator(), ready, 1);
+    let err = catch_unwind(AssertUnwindSafe(|| c.hush(U64(id)))).unwrap_err();
+    let msg = err.downcast_ref::<String>().cloned().unwrap_or_default();
+    assert!(msg.contains(&expires.to_string()), "{msg}");
+
+    // One nanosecond later the owner gets the tokens back, still loud.
+    let outstanding = s.loud_outstanding.0;
+    hush(&mut c, &creator(), expires + 1, id);
     assert!(has_event("hush"));
     assert_eq!(bal(&c, &creator()), (50_000_000 * E18, 0));
-    let s = state(&c, ready - 1);
+    let s = state(&c, expires + 1);
     assert_eq!(s.escrowed.0, 0);
     assert_eq!(s.open_exits, 0);
     assert_eq!(s.loud_outstanding.0, outstanding, "hushed tokens are still loud");
     assert_eq!(s.total_left.0, 0);
+}
+
+#[test]
+fn statistics_counters_saturate() {
+    let (mut c, id, ready) = launch_with_shout();
+    // The counters are display only. At their maximum they must not stop
+    // a shout or a leave.
+    c.total_shouted = u128::MAX;
+    c.shout_count = u64::MAX;
+    c.total_left = u128::MAX;
+    c.leave_count = u64::MAX;
+    shout(&mut c, &creator(), ready, 1_000 * E18);
+    assert!(leave(&mut c, &creator(), ready, id) > 0);
+    let s = state(&c, ready);
+    assert_eq!(s.total_shouted.0, u128::MAX);
+    assert_eq!(s.shout_count, u64::MAX);
+    assert_eq!(s.total_left.0, u128::MAX);
+    assert_eq!(s.leave_count, u64::MAX);
 }
 
 #[test]
@@ -814,9 +956,7 @@ fn anyone_can_hush_an_expired_exit() {
     expect_fail("E_NO_LOUD", || c.shout(U128(50_000_000 * E18)));
 }
 
-// ----------------------------------------------------------------------
 // NEP-141
-// ----------------------------------------------------------------------
 
 /// Alice holds loud (bought in the window) and quiet (bought after it).
 fn alice_with_both() -> (Loud, AccountId, u128, u128, u64) {
@@ -833,6 +973,7 @@ fn alice_with_both() -> (Loud, AccountId, u128, u128, u64) {
 fn ft_transfer_takes_quiet_first_and_moves_the_tag() {
     let (mut c, alice, loud, quiet, ts) = alice_with_both();
     let bob = acc("bob.test");
+    register(&mut c, &bob, ts);
     let outstanding = state(&c, ts).loud_outstanding.0;
 
     // Less than the quiet balance: only quiet moves, no tag_move event.
@@ -884,6 +1025,7 @@ fn ft_balances_add_up_to_the_total_supply() {
     let late = acc("late.test");
     let friend = acc("friend.test");
     let everyone = [creator(), early.clone(), late.clone(), friend.clone(), token()];
+    register(&mut c, &friend, T0);
     let supply = c.ft_total_supply().0;
     assert_eq!(supply, cfg.supply);
 
@@ -942,28 +1084,60 @@ fn ft_balances_add_up_to_the_total_supply() {
     assert_eq!(c.ft_balance_of(token()).0, s.pool_tokens.0 + s.escrowed.0);
     assert_eq!(ft_sum(&c, ready, &everyone), supply);
 
-    // hush: the rest of the escrow goes back to the owner.
-    hush(&mut c, &creator(), ready, id);
-    let s = state(&c, ready);
+    // hush after expiry: the rest of the escrow goes back to the owner.
+    let expired = ready + cfg.exit_window + 1;
+    hush(&mut c, &creator(), expired, id);
+    let s = state(&c, expired);
     assert_eq!(s.escrowed.0, 0);
     assert_eq!(c.ft_balance_of(creator()).0, 49_000_000 * E18 - filled);
     assert_eq!(c.ft_balance_of(token()).0, s.pool_tokens.0);
-    assert_eq!(ft_sum(&c, ready, &everyone), supply);
+    assert_eq!(ft_sum(&c, expired, &everyone), supply);
 
     // A quiet sell returns the tokens to the pool.
     let rest = quiet_bought - quiet_bought / 4;
     assert_eq!(bal(&c, &late), (0, rest));
-    sell(&mut c, &late, ready, rest);
+    sell(&mut c, &late, expired, rest);
     assert_eq!(c.ft_balance_of(late.clone()).0, 0);
-    assert_eq!(ft_sum(&c, ready, &everyone), supply);
-    let s = state(&c, ready);
+    assert_eq!(ft_sum(&c, expired, &everyone), supply);
+    let s = state(&c, expired);
     assert_eq!(c.ft_balance_of(token()).0, s.pool_tokens.0);
+}
+
+#[test]
+fn transfers_need_a_registered_receiver() {
+    let (mut c, alice, loud, quiet, ts) = alice_with_both();
+    let bob = acc("bob.test");
+    assert!(!c.is_registered(bob.clone()));
+    at(&alice, ts, 1);
+    expect_fail("E_UNREGISTERED", || c.ft_transfer(bob.clone(), U128(1), None));
+    at(&alice, ts, 1);
+    expect_fail("E_UNREGISTERED", || c.transfer_loud(bob.clone(), U128(1)));
+    at(&alice, ts, 1);
+    expect_fail("E_UNREGISTERED", || {
+        c.ft_transfer_call(bob.clone(), U128(1), None, String::new()).detach()
+    });
+    assert_eq!(bal(&c, &alice), (loud, quiet));
+    assert_eq!(bal(&c, &bob), (0, 0));
+
+    // Alice pays the fee for bob, and then all three go through.
+    at(&alice, ts, STORAGE_FEE);
+    c.storage_deposit(Some(bob.clone()), None);
+    assert!(c.is_registered(bob.clone()));
+    at(&alice, ts, 1);
+    c.ft_transfer(bob.clone(), U128(3), None);
+    at(&alice, ts, 1);
+    c.transfer_loud(bob.clone(), U128(5));
+    at(&alice, ts, 1);
+    c.ft_transfer_call(bob.clone(), U128(7), None, String::new()).detach();
+    assert_eq!(bal(&c, &bob), (5, 10));
+    assert_eq!(bal(&c, &alice), (loud - 5, quiet - 10));
 }
 
 #[test]
 fn ft_transfer_checks() {
     let (mut c, alice, loud, quiet, ts) = alice_with_both();
     let bob = acc("bob.test");
+    register(&mut c, &bob, ts);
     at(&alice, ts, 0);
     expect_fail("E_YOCTO", || c.ft_transfer(bob.clone(), U128(1), None));
     at(&alice, ts, 1);
@@ -990,6 +1164,7 @@ fn tag_follows_the_tokens() {
     let mut c = deploy(&standard());
     let fresh = acc("fresh.test");
     let ts = T0 + 600 * MINUTE;
+    register(&mut c, &fresh, ts);
     at(&creator(), ts, 1);
     c.transfer_loud(fresh.clone(), U128(1_000_000 * E18));
     assert!(has_event("tag_move"));
@@ -1000,6 +1175,7 @@ fn tag_follows_the_tokens() {
     expect_fail("E_NO_QUIET", || c.sell(U128(1_000_000 * E18), U128(0)));
     // Plain ft_transfer of loud tokens carries the tag the same way.
     let second = acc("second.test");
+    register(&mut c, &second, ts);
     at(&fresh, ts, 1);
     c.ft_transfer(second.clone(), U128(400_000 * E18), None);
     assert_eq!(bal(&c, &second), (400_000 * E18, 0));
@@ -1013,6 +1189,7 @@ fn tag_follows_the_tokens() {
 fn transfer_loud_checks() {
     let (mut c, alice, loud, _quiet, ts) = alice_with_both();
     let bob = acc("bob.test");
+    register(&mut c, &bob, ts);
     at(&alice, ts, 0);
     expect_fail("E_YOCTO", || c.transfer_loud(bob.clone(), U128(1)));
     at(&alice, ts, 1);
@@ -1035,6 +1212,7 @@ fn transfer_loud_checks() {
 fn ft_transfer_call_rejects_loud() {
     let (mut c, alice, loud, quiet, ts) = alice_with_both();
     let dex = acc("dex.test");
+    register(&mut c, &dex, ts);
     at(&alice, ts, 0);
     expect_fail("E_YOCTO", || c.ft_transfer_call(dex.clone(), U128(1), None, String::new()).detach());
     at(&alice, ts, 1);
@@ -1066,27 +1244,61 @@ fn ft_transfer_call_rejects_loud() {
 }
 
 #[test]
-fn storage_views_are_fixed() {
+fn storage_deposit_registers_once_and_refunds_the_rest() {
     let mut c = deploy(&standard());
-    let min = 1_250_000_000_000_000_000_000u128;
+    assert_eq!(STORAGE_MIN_YOCTO, STORAGE_FEE);
     let bounds = c.storage_balance_bounds();
-    assert_eq!(bounds.min.0, min);
-    assert_eq!(bounds.max, Some(U128(min)));
-    let b = c.storage_balance_of(acc("anyone.test")).unwrap();
-    assert_eq!((b.total.0, b.available.0), (min, 0));
-
-    // storage_deposit keeps nothing.
+    assert_eq!(bounds.min.0, STORAGE_FEE);
+    assert_eq!(bounds.max, Some(U128(STORAGE_FEE)));
     let alice = acc("alice.test");
-    at(&alice, T0 + 1, min);
+    let bob = acc("bob.test");
+    assert!(c.storage_balance_of(alice.clone()).is_none());
+    assert!(!c.is_registered(alice.clone()));
+
+    // Less than the fee: nothing is kept and nobody is registered.
+    at(&alice, T0 + 1, STORAGE_FEE - 1);
+    expect_fail("E_STORAGE", || c.storage_deposit(None, None));
+    at(&alice, T0 + 1, 0);
+    expect_fail("E_STORAGE", || c.storage_deposit(Some(bob.clone()), None));
+    assert!(!c.is_registered(alice.clone()));
+    assert!(!c.is_registered(bob.clone()));
+
+    // The exact fee registers the caller and leaves nothing to refund.
+    at(&alice, T0 + 1, STORAGE_FEE);
     let b = c.storage_deposit(None, None);
-    assert_eq!((b.total.0, b.available.0), (min, 0));
-    assert_eq!(transfers_out(), min);
-    assert_eq!(state(&c, T0 + 1).pool_near.0, 0);
+    assert_eq!((b.total.0, b.available.0), (STORAGE_FEE, 0));
+    assert_eq!(transfers_out(), 0);
+    assert!(c.is_registered(alice.clone()));
+    let b = c.storage_balance_of(alice.clone()).unwrap();
+    assert_eq!((b.total.0, b.available.0), (STORAGE_FEE, 0));
+
+    // Alice registers bob with too much attached: the fee is kept and the
+    // rest goes back to alice, who paid.
+    at(&alice, T0 + 2, STORAGE_FEE + 7 * NEAR);
+    let b = c.storage_deposit(Some(bob.clone()), Some(true));
+    assert_eq!((b.total.0, b.available.0), (STORAGE_FEE, 0));
+    assert_eq!(transfers_out(), 7 * NEAR);
+    assert_eq!(paid_to(&alice), 7 * NEAR);
+    assert!(calls_out().contains(&(token(), "on_payout".to_string())));
+    assert!(c.is_registered(bob.clone()));
+
+    // Already registered: the whole deposit goes back, whoever sends it.
+    at(&bob, T0 + 3, STORAGE_FEE);
+    c.storage_deposit(None, None);
+    assert_eq!(paid_to(&bob), STORAGE_FEE);
+    at(&alice, T0 + 3, 5);
+    c.storage_deposit(Some(bob.clone()), None);
+    assert_eq!(paid_to(&alice), 5);
+    at(&acc("carol.test"), T0 + 3, NEAR);
+    c.storage_deposit(Some(creator()), None);
+    assert_eq!(paid_to(&acc("carol.test")), NEAR);
+    assert!(!c.is_registered(acc("carol.test")));
+
+    // Fees are not pool liquidity.
+    assert_eq!(state(&c, T0 + 3).pool_near.0, 0);
 }
 
-// ----------------------------------------------------------------------
 // Invariants of SPEC 4 under a random operation sequence
-// ----------------------------------------------------------------------
 
 struct Rng(u64);
 
@@ -1125,6 +1337,16 @@ fn invariants_hold_over_random_operations() {
     let mut now = T0;
     // NEAR the contract account received minus NEAR it sent (invariant 5).
     let mut balance: u128 = 0;
+    // Storage fees the contract kept. They are in `balance` and must never
+    // be counted as pool liquidity.
+    let mut fees: u128 = 0;
+    // Two users register up front and can receive tokens before they buy.
+    // The others register with their first buy.
+    for u in users[1..3].iter() {
+        register(&mut c, u, now);
+        balance += STORAGE_FEE;
+        fees += STORAGE_FEE;
+    }
     let mut prev_outstanding = state(&c, now).loud_outstanding.0;
     // (time, total_left, cap_available) right after a state-changing call.
     let mut snaps: Vec<(u64, u128, u128)> = vec![(T0, 0, 0)];
@@ -1143,8 +1365,11 @@ fn invariants_hold_over_random_operations() {
         match rng.below(7) {
             0 => {
                 let near = NEAR / 100 + rng.below(30 * NEAR);
+                let fee = if c.is_registered(who.clone()) { 0 } else { STORAGE_FEE };
                 buy(&mut c, &who, now, near);
-                balance += near;
+                assert!(c.is_registered(who.clone()));
+                balance += near + fee;
+                fees += fee;
                 if now < loud_until {
                     loud_buys += 1;
                 }
@@ -1198,28 +1423,19 @@ fn invariants_hold_over_random_operations() {
                 }
             }
             4 => {
-                // An expired exit is hushed by a stranger, otherwise the
-                // caller hushes one of its own.
+                // A shout is binding, so only an expired exit can be
+                // hushed. Any account may do it.
                 at(&token(), now, 0);
                 let all = c.get_exits(0, 100);
-                let expired = all.iter().find(|e| now > e.expires_at.0);
-                let own = all.iter().find(|e| e.owner == who);
-                let pick = if let Some(e) = expired {
-                    Some((other.clone(), e.id.0))
-                } else if rng.below(3) == 0 {
-                    own.map(|e| (who.clone(), e.id.0))
-                } else {
-                    None
-                };
-                if let Some((caller, id)) = pick {
-                    hush(&mut c, &caller, now, id);
+                if let Some(e) = all.iter().find(|e| now > e.expires_at.0) {
+                    hush(&mut c, &other, now, e.id.0);
                     balance += 1;
                     touched = true;
                     done[4] += 1;
                 }
             }
             5 => {
-                if loud + quiet > 0 && other != who {
+                if loud + quiet > 0 && other != who && c.is_registered(other.clone()) {
                     let amount = 1 + rng.below(loud + quiet);
                     at(&who, now, 1);
                     c.ft_transfer(other.clone(), U128(amount), None);
@@ -1229,7 +1445,7 @@ fn invariants_hold_over_random_operations() {
                 }
             }
             _ => {
-                if loud > 0 && other != who {
+                if loud > 0 && other != who && c.is_registered(other.clone()) {
                     let amount = 1 + rng.below(loud);
                     at(&who, now, 1);
                     c.transfer_loud(other.clone(), U128(amount));
@@ -1240,7 +1456,7 @@ fn invariants_hold_over_random_operations() {
             }
         }
 
-        // ---- invariants ----
+        // Invariants
         let s = state(&c, now);
         let mut sum_loud = 0u128;
         let mut sum_quiet = 0u128;
@@ -1280,7 +1496,12 @@ fn invariants_hold_over_random_operations() {
             snaps.push((now, s.total_left.0, s.cap_available.0));
         }
         // 5
-        assert!(balance >= s.pool_near.0, "step {step}: pool_near is not covered");
+        assert!(balance >= s.pool_near.0 + fees, "step {step}: pool_near is not covered");
+        // Tokens are only ever held by registered accounts.
+        for u in users.iter() {
+            let (l, q) = bal(&c, u);
+            assert!(l + q == 0 || c.is_registered(u.clone()), "step {step}: {u} holds tokens unregistered");
+        }
     }
 
     let s = state(&c, now);
@@ -1293,13 +1514,12 @@ fn invariants_hold_over_random_operations() {
     }
     assert!(snaps.len() > 20);
     assert!(loud_buys >= 5, "only {loud_buys} buys inside the loud window");
+    assert_eq!(fees, users.len() as u128 * STORAGE_FEE - STORAGE_FEE, "everyone but the creator paid once");
     assert!(now > loud_until + 10 * cfg.cap_window);
     assert!(s.total_left.0 > cap, "more than one full cap left over the run");
 }
 
-// ----------------------------------------------------------------------
 // SPEC 8.1: the split test
-// ----------------------------------------------------------------------
 
 struct SplitRun {
     /// Cumulative loud units sold after each checkpoint.
@@ -1333,6 +1553,7 @@ fn run_split(wallets: usize) -> SplitRun {
         for i in 0..wallets {
             let w = acc(&format!("w{i}.test"));
             let amount = if i + 1 == wallets { held - share * (wallets as u128 - 1) } else { share };
+            register(&mut c, &w, t_shout);
             at(&creator(), t_shout, 1);
             c.transfer_loud(w.clone(), U128(amount));
             parts.push((w, amount));
@@ -1441,9 +1662,7 @@ fn split_test_one_wallet_vs_one_hundred() {
     }
 }
 
-// ----------------------------------------------------------------------
 // Failed payouts: on_payout, claim, get_owed
-// ----------------------------------------------------------------------
 
 /// Dave buys quiet after the window and sells all of it. Returns the
 /// contract, dave, the NEAR paid out and the time.
@@ -1545,14 +1764,13 @@ fn claim_with_nothing_owed_fails() {
     assert_eq!(transfers_out(), 0);
 }
 
-// ----------------------------------------------------------------------
 // ft_transfer_call and ft_resolve_transfer
-// ----------------------------------------------------------------------
 
 /// Alice sends all her quiet tokens to `dex.test` with ft_transfer_call.
 fn alice_called_dex() -> (Loud, AccountId, AccountId, u128, u128, u64) {
     let (mut c, alice, loud, quiet, ts) = alice_with_both();
     let dex = acc("dex.test");
+    register(&mut c, &dex, ts);
     at(&alice, ts, 1);
     c.ft_transfer_call(dex.clone(), U128(quiet), None, "hello".to_string()).detach();
     let calls = calls_out();
@@ -1613,6 +1831,7 @@ fn ft_resolve_transfer_only_refunds_what_the_receiver_still_holds() {
     let (mut c, alice, dex, loud, quiet, ts) = alice_called_dex();
     // The receiver moved part of the tokens on before the callback ran.
     let moved = 10 * E18;
+    register(&mut c, &acc("erin.test"), ts);
     at(&dex, ts, 1);
     c.ft_transfer(acc("erin.test"), U128(moved), None);
     at_callback(ts, PromiseResult::Failed);

@@ -41,7 +41,7 @@ function setText(node, value) {
   if (node && node.textContent !== value) node.textContent = value;
 }
 
-// ---------------------------------------------------------------- board
+// Board
 
 function setStatus(tr, span, status) {
   span.textContent = status;
@@ -154,7 +154,7 @@ function setCap(bar, textNode, fraction, text) {
   setText(textNode, text);
 }
 
-// ---------------------------------------------------------------- hero board
+// Hero board
 
 const hero = {
   board: null,
@@ -193,8 +193,8 @@ function heroRenderSim() {
   const st = sim.state();
   const view = L.boardView(sim.exits(), sim.now, { limit: 9, showAll: hero.showAll.sim });
   hero.board.update(view.rows, 'No exits yet.', 'sim');
-  heroScope(view, view.total ? `${L.boardScope(view)} Simulated exits, not chain data.` : '');
-  setText($('#board-clock-label'), 'Engine clock');
+  heroScope(view, view.total ? `${L.boardScope(view)} Simulated exits.` : '');
+  setText($('#board-clock-label'), 'Sim clock');
   setText($('#board-clock'), L.fmtSinceLaunch(sim.now));
   setCap($('#hero-cap-bar'), $('#hero-cap-text'), Number((st.cap_available * 1000n) / st.cap_units) / 1000,
     `${L.fmtCompact(st.cap_available)} of ${L.fmtCompact(st.cap_units)} LOUD. Left so far: ${L.fmtCompact(st.total_left)}`);
@@ -207,7 +207,7 @@ function heroRenderLive() {
   const view = L.boardView(live.exits, st.now, { clock: L.fmtUtcTime, limit: 12, showAll: hero.showAll.live });
   hero.board.update(
     view.rows,
-    'No open exits on chain in this snapshot. The contract stores open exits only. The receipts under Testnet proof cover the saved proof run only; exits completed outside that run are not listed on this page.',
+    'No open exits on chain in this snapshot. The contract stores open exits only, so finished ones are not listed here.',
     'live',
   );
   const whole = live.exitsCapped
@@ -240,7 +240,8 @@ function heroSchedule() {
   if (hero.source === 'sim' && !hero.paused && !document.hidden) hero.timer = setInterval(heroTick, 400);
 }
 
-const SIM_NOTE = 'Simulation on the rule engine, standard parameters: the 5% creator allocation, split across 36 wallets, leaves through the door with a simple seller strategy that shouts in batches. It is not the fastest exit the rule allows: it can wait between batches while the cap has room. One engine minute every 0.4 s.';
+// Same text as the static note in index.html.
+const SIM_NOTE = 'Simulation: a creator splits a 5% bag across 36 wallets and sells it in batches. One minute passes every 0.4 s.';
 
 function heroSetSource(source) {
   hero.source = source;
@@ -248,12 +249,13 @@ function heroSetSource(source) {
   $('#src-live').setAttribute('aria-pressed', String(source === 'live'));
   $('#hero-pause').hidden = source !== 'sim';
   $('#hero-step').hidden = source !== 'sim';
+  $('#hero-refresh').hidden = source !== 'live';
   if (source === 'sim') {
     setText($('#hero-note'), SIM_NOTE);
     heroRenderSim();
   } else {
     const b = hero.live ? hero.live.block : null;
-    setText($('#hero-note'), `Snapshot of the deployed token, read with get_state and get_exits${b && b.pinned ? ` at block ${b.height}` : ''}. It does not update on its own; "read again" under Testnet proof takes a new one. Times are block times. Demo preset on testnet.`);
+    setText($('#hero-note'), `Snapshot of the token on NEAR testnet${b && b.pinned ? ` at block ${b.height}` : ''}, demo preset. It does not update on its own. Times are block times, UTC.`);
     heroRenderLive();
   }
   heroSchedule();
@@ -286,7 +288,7 @@ function initHero() {
   heroSetSource('sim');
 }
 
-// ---------------------------------------------------------------- charts
+// Charts
 
 function frame(container, height, margin) {
   const width = Math.max(240, Math.floor(container.clientWidth || 320));
@@ -305,7 +307,7 @@ function xAxis(f, minutes, x) {
     svg.append(s('text', { x: x(t), y: base + 16, 'text-anchor': t === ticks.at(-1) ? 'end' : t === 0 ? 'start' : 'middle' }, label));
   }
   svg.append(s('text', { x: (m.l + f.width - m.r) / 2, y: base + 31, 'text-anchor': 'middle' },
-    minutes <= 60 ? 'minutes after the insider starts' : 'hours after the insider starts'));
+    minutes <= 60 ? 'minutes after the launch window ends' : 'hours after the launch window ends'));
 }
 
 function drawSold(container, split, single, minutes, { label, markMinute, markText }) {
@@ -361,11 +363,11 @@ function drawPrice(container, series, minutes) {
   for (const e of ends) {
     svg.append(s('text', { class: e.key === 'loud' ? 'series-loud' : 'series', x: f.width - m.r + 6, y: e.ly }, `${e.name} ${Math.round(e.end * 100)}%`));
   }
-  svg.setAttribute('aria-label', `Price after ${minutes} minutes as a share of the starting price: ${lines.map((ln) => `${ln.name} ${Math.round(ln.pts.at(-1)[1] * 100)}%`).join(', ')}.`);
+  svg.setAttribute('aria-label', `Price after ${minutes} minutes as a share of the price at minute 0: ${lines.map((ln) => `${ln.name} ${Math.round(ln.pts.at(-1)[1] * 100)}%`).join(', ')}.`);
   container.replaceChildren(svg);
 }
 
-// ---------------------------------------------------------------- split attack
+// Split attack
 
 const split = { cache: new Map(), result: null, minutes: 60 };
 
@@ -391,6 +393,10 @@ function renderSplit() {
   const r = split.result;
   const n = r.stats.wallets;
   setText($('#legend-n'), n === 1 ? 'one wallet (same line)' : `split across ${n} wallets`);
+  $('#split-headlines').replaceChildren(...L.resultHeadlines(r.stats).map((x) => h('li', { 'data-rule': x.rule },
+    h('span', { class: 'v-rule', text: x.name }),
+    h('b', { class: 'v-line', text: x.line }),
+    h('span', { class: 'v-sub', text: x.sub }))));
   $('#split-result').replaceChildren(...L.resultSentences(r.stats).map((x) => h('li', { 'data-rule': x.rule, text: x.text })));
   $('#split-table thead th:nth-child(3)').textContent = n === 1 ? 'Same, one wallet' : `Same, ${n} wallets`;
   $('#split-table tbody').replaceChildren(...L.resultTable(r.stats).map((row, i) => h('tr', { 'data-rule': ['naive', 'per_wallet', 'loud'][i] },
@@ -410,7 +416,7 @@ function runSplit() {
   if (!L.WALLET_CHOICES.includes(wallets) || !L.SHARE_CHOICES_BPS.includes(shareBps)) return;
   const btn = $('#split-run');
   btn.disabled = true;
-  setText($('#split-status'), `Running ${wallets} wallet${wallets === 1 ? '' : 's'} under three rule sets, 6 engine hours each…`);
+  setText($('#split-status'), `Running ${wallets} wallet${wallets === 1 ? '' : 's'} under three rule sets, 6 simulated hours each…`);
   // Let the status paint before the synchronous run.
   setTimeout(() => {
     const t0 = performance.now();
@@ -449,15 +455,16 @@ function initSplit() {
   runSplit();
 }
 
-// ---------------------------------------------------------------- sandbox
+// Sandbox
 
 const HINTS = {
-  E_NO_QUIET: 'Loud tokens cannot use sell. Shout them, wait for the notice, then leave.',
+  E_NO_QUIET: 'Loud tokens cannot be sold directly. Shout them, wait for the notice, then leave.',
   E_NOTICE: 'Skip time with the clock buttons, then press Leave again.',
   E_EXPIRED: 'Press Hush to take the tokens back. They are still loud. Then shout again.',
+  E_NOTICE_BINDING: 'A shout cannot be cancelled. Leave when the notice is over, or skip past the exit window and hush then. The number in the message is engine time in nanoseconds.',
   E_NO_LOUD: 'Shout takes loud tokens only. Quiet tokens can simply be sold.',
   E_DUST: 'A shout must be at least one millionth of supply, which is 1,000 LOUD here, unless it is your whole loud balance.',
-  E_TOO_MANY: 'Hush or finish an exit first.',
+  E_TOO_MANY: 'Finish an exit, or let one expire and hush it.',
   E_POOL_EMPTY: 'The pool does not hold enough NEAR to pay for this amount.',
   E_DEPOSIT: 'Buy with at least 0.001 NEAR.',
   E_AMOUNT: 'There is nothing to send or sell.',
@@ -481,8 +488,14 @@ function renderSandbox() {
     'No exits yet. Shout to list one.');
   setCap($('#sb-cap-bar'), $('#sb-cap-text'), v.capFraction, v.capText);
   setText($('#sb-cap-note'), v.nextRoomText
-    ? `${v.nextRoomText}. The bucket refills to ${L.fmtTokens(v.capUnits)} LOUD over 60 min and is shared by every exit.`
-    : `The bucket starts empty at launch, refills to ${L.fmtTokens(v.capUnits)} LOUD over 60 min, and is shared by every exit.`);
+    ? `${v.nextRoomText}. Every exit shares this cap.`
+    : `The cap starts empty at launch and refills to ${L.fmtTokens(v.capUnits)} LOUD over 60 min. Every exit shares it.`);
+  const next = v.path.indexOf(false);
+  [...$('#sb-path').children].forEach((li, i) => {
+    li.dataset.done = String(v.path[i]);
+    if (i === next) li.setAttribute('aria-current', 'step');
+    else li.removeAttribute('aria-current');
+  });
 
   const box = $('#sb-result');
   const e = sb.last;
@@ -492,8 +505,7 @@ function renderSandbox() {
   } else {
     box.dataset.ok = String(e.ok);
     let hint = e.ok ? '' : (HINTS[e.code] || '');
-    if (e.code === 'E_CAP') hint = `${v.nextRoomText || 'Room is back'}. The cap is shared by every exit. Skip a few minutes and leave again.`;
-    if (e.code === 'E_CAP') hint += ' The timestamp in the message is engine time in nanoseconds.';
+    if (e.code === 'E_CAP') hint = `${v.nextRoomText || 'Room is back'}. Skip a few minutes and leave again. The timestamp in the message is engine time in nanoseconds.`;
     if (!e.ok && /units/.test(e.message)) hint += ' The engine counts in units: 1 LOUD is 10^18 units.';
     put(box,
       h('p', { class: 'call', text: `${L.fmtSinceLaunch(e.t)}  ${e.account}  ${e.call}  ${e.ok ? 'ok' : 'rejected'}` }),
@@ -564,20 +576,29 @@ function initSandbox() {
   renderSandbox();
 }
 
-// ---------------------------------------------------------------- proof
+// Proof
 
 function facts(dl, rows) {
   dl.replaceChildren(...rows.map((r) => h('div', {}, h('dt', { text: r.label ?? r[0] }), h('dd', {}, link(r.href ?? null, r.value ?? r[1])))));
 }
 
-function txList(txs) {
+// What one check expected, what the run recorded and its transactions, folded
+// under the check's title.
+function stepRecord(st) {
   const list = h('ol', { class: 'txs' });
-  const details = h('details', {}, h('summary', { text: 'show transactions' }), list);
-  // Step 9 can hold several hundred entries; build them when opened.
+  const labelled = (label, value) => h('p', {}, h('b', { text: `${label} ` }), value);
+  const details = h('details', {},
+    h('summary', { text: st.txs.length ? `Expected, recorded, ${st.txs.length} transaction${st.txs.length === 1 ? '' : 's'}` : 'Expected and recorded' }),
+    labelled('Expected', st.expect),
+    labelled('Recorded', st.got),
+    st.gotNote ? h('p', { text: st.gotNote }) : null,
+    st.txs.length ? h('p', { text: st.txSummary }) : null,
+    st.txs.length ? list : null);
+  // One check can hold several hundred transactions; build them when opened.
   details.addEventListener('toggle', () => {
     if (!details.open || list.childElementCount) return;
-    list.replaceChildren(...txs.map((t) => h('li', { class: t.outcome === 'success' && !t.unsettled ? '' : 'bad' },
-      link(t.href, t.short), ` ${L.shortAccount(t.account, 28)} ${t.round ? `round ${t.round} ` : ''}${t.label}${t.note ? `, ${t.note}` : ''}`,
+    list.replaceChildren(...st.txs.map((t) => h('li', { class: t.outcome === 'success' && !t.unsettled ? '' : 'bad' },
+      link(t.href, t.short), ` ${L.shortAccount(t.account, 28)} ${t.call ? `${t.call} ` : ''}${t.round ? `round ${t.round} ` : ''}${t.label}${t.note ? `, ${t.note}` : ''}`,
       // Earlier broadcasts of a send that was signed again (newer proof runs only).
       ...t.earlier.flatMap((e, i) => [i === 0 ? '; earlier broadcast of this send: ' : ', ', link(e.href, e.short), ` ${e.label}`]))));
   });
@@ -586,15 +607,41 @@ function txList(txs) {
 
 export function renderProof(dep, rec, loadError = '') {
   const d = L.deploymentView(dep);
-  const depState = $('#dep-state');
-  depState.dataset.state = d.state;
-  setText(depState, loadError ? `Pending. The data files could not be loaded (${loadError}).` : d.headline);
-  facts($('#dep-facts'), d.rows);
-
   const r = L.receiptsView(rec);
   const recState = $('#rec-state');
+  // index.html already carries the recorded run. If the files cannot be read,
+  // that text stays and one line says the details are missing.
+  if (loadError) {
+    recState.dataset.state = 'pending';
+    recState.hidden = false;
+    setText(recState, `The data files could not be read (${loadError}). This page shows the recorded run as saved with it, without the transaction lists.`);
+    return { deployment: d, receipts: r };
+  }
+  const depState = $('#dep-state');
+  depState.dataset.state = d.state;
+  setText(depState, d.headline);
+  facts($('#dep-facts'), d.rows);
+
+  const heads = L.proofHeadlines(d, r);
+  $('#proof-facts').replaceChildren(...heads.map((x) => h('li', { 'data-state': x.state },
+    h('b', { text: x.big }),
+    h('span', { text: x.small }),
+    x.href ? h('a', { href: x.href, rel: 'noopener', text: x.linkText }) : null)));
+  if (d.token) put($('#sum-token'), link(d.tokenHref, d.token));
+  else setText($('#sum-token'), 'Not deployed yet.');
+  put($('#sum-proof'), `${heads[0].big}. ${heads[2].big} ${r.scopeNote ? 'Recorded before two later rules, listed under Testnet proof. ' : ''}`,
+    heads[0].href ? h('a', { href: heads[0].href, rel: 'noopener', text: heads[0].linkText }) : null);
+
+  // The large line already says a clean pass; the sentence is shown when it adds something.
   recState.dataset.state = r.state;
+  recState.hidden = r.state === 'ok' && r.unresolved === 0 && !r.error;
   setText(recState, r.error ? `${r.headline} The run stopped early: ${r.error}` : r.headline);
+
+  const scope = $('#proof-scope');
+  scope.hidden = !r.scopeNote;
+  setText(scope, r.scopeNote);
+  $('#near-record').hidden = r.tokenNear.length === 0;
+  facts($('#near-facts'), r.tokenNear);
 
   const sp = $('#split-proof-state');
   sp.dataset.state = r.split.result === 'PASS' ? 'ok' : r.split.result === 'FAIL' ? 'failed' : 'pending';
@@ -602,21 +649,18 @@ export function renderProof(dep, rec, loadError = '') {
   if (r.split.have) facts($('#split-proof-facts'), r.split.rows);
   else $('#split-proof-facts').replaceChildren();
 
-  const tbody = $('#steps-table tbody');
   if (r.steps.length) {
-    tbody.replaceChildren(...r.steps.map((st) => h('tr', {},
-      h('td', {}, `${st.n}. ${st.title}`, st.txs.length ? h('div', { class: 'fine', text: st.txSummary }) : null, st.txs.length ? txList(st.txs) : null),
-      h('td', { 'data-label': 'Expected', text: st.expect }),
-      h('td', { 'data-label': 'Got' }, st.got, st.gotNote ? h('div', { class: 'fine', text: st.gotNote }) : null),
-      h('td', { class: 'res', 'data-label': 'Result', 'data-result': st.result, text: st.result }),
-    )));
-  } else {
-    for (const tr of tbody.rows) {
-      ['', 'Expected', 'Got', 'Result'].forEach((label, i) => { if (label && tr.cells[i]) tr.cells[i].dataset.label = label; });
-    }
+    const rows = (steps) => steps.map((st) => h('tr', {},
+      h('td', {}, `${st.n}. ${st.title}`, stepRecord(st)),
+      h('td', { class: 'res', 'data-result': st.result, text: st.result }),
+    ));
+    const { key, rest } = L.splitChecks(r.steps);
+    $('#steps-key tbody').replaceChildren(...rows(key));
+    $('#steps-table tbody').replaceChildren(...rows(rest));
+    $('#steps-rest').hidden = rest.length === 0;
   }
   const stamp = r.generatedAt || d.generatedAt;
-  if (stamp) setText($('#proof-meta'), `Recorded ${stamp}. The on-chain run uses the demo preset so it fits in one CI job: launch window 2 min, notice 1 min, exit window 10 min, cap 0.5% per 10 min. The script runs step 3 before step 2, so the launch window is not spent on creating accounts.`);
+  if (stamp) setText($('#proof-stamp'), `Recorded ${stamp}.`);
   return { deployment: d, receipts: r };
 }
 
@@ -633,15 +677,15 @@ async function loadLive(token) {
     setText(state, L.liveSummary(live, token));
     facts($('#live-facts'), L.liveFacts(live).map(([label, value]) => ({ label, value })));
     btn.disabled = false;
-    setText(btn, 'Testnet: snapshot');
+    setText(btn, 'Testnet snapshot');
     if (hero.source === 'live') heroSetSource('live');
   } catch (e) {
     state.dataset.state = 'failed';
     const kept = hero.live
       ? ` The board and the facts below still show the earlier snapshot (chain time ${L.fmtUtcDate(hero.live.state.now)} ${L.fmtUtcTime(hero.live.state.now)} UTC).`
       : '';
-    setText(state, `Could not read the token from NEAR testnet RPC in this browser (${e.message}).${kept} The receipts below do not depend on it.`);
-    if (!hero.live) setText(btn, 'Testnet: unreachable');
+    setText(state, `Could not read the token from NEAR testnet RPC in this browser (${e.message}).${kept} The recorded checks do not depend on it.`);
+    if (!hero.live) setText(btn, 'Testnet unreachable');
   }
 }
 
@@ -662,18 +706,14 @@ async function initProof() {
   }
   const { deployment } = renderProof(dep, rec, err);
   const repo = L.repoFromLocation(location.hostname, location.pathname) || (deployment.repo ? `https://github.com/${deployment.repo}` : null);
-  if (repo) {
-    const a = $('#repo-link');
-    a.href = repo;
-    a.hidden = false;
-  }
+  if (repo) for (const a of [$('#repo-link'), $('#sum-source')]) a.href = repo;
   if (deployment.token) {
-    $('#live-refresh').addEventListener('click', () => loadLive(deployment.token));
+    for (const b of [$('#live-refresh'), $('#hero-refresh')]) b.addEventListener('click', () => loadLive(deployment.token));
     await loadLive(deployment.token);
   }
 }
 
-// ---------------------------------------------------------------- start
+// Start
 
 function safely(name, fn) {
   try {

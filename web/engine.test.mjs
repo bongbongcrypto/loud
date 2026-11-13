@@ -80,6 +80,11 @@ test('new: every parameter bound is checked (E_PARAMS)', () => {
     { cap_bps: 0n }, { cap_bps: 1001n },
     { cap_window_ns: 59n * SEC }, { cap_window_ns: 7n * DAY + 1n },
     { creator: '' },
+    // The token account has no key: an allocation minted to it could never move.
+    { creator: CONTRACT_ACCOUNT },
+    // Metadata is optional in the engine; when given, it is held to the contract's byte limits.
+    { name: 'n'.repeat(65) }, { symbol: 'S'.repeat(17) }, { icon: 'i'.repeat(2049) },
+    { name: '\u00e9'.repeat(33) }, { name: 7 },
   ];
   for (const o of bad) assert.throws(() => fresh(o), code('E_PARAMS'), JSON.stringify(Object.keys(o)));
   const edge = fresh({
@@ -89,6 +94,7 @@ test('new: every parameter bound is checked (E_PARAMS)', () => {
   });
   assert.equal(edge.loud_outstanding, 0n);
   assert.doesNotThrow(() => new LoudToken(PRESETS.demo, 5n));
+  assert.doesNotThrow(() => fresh({ name: 'n'.repeat(64), symbol: 'S'.repeat(16), icon: 'i'.repeat(2048) }));
 });
 
 test('buy: pool math, loud inside the window, quiet after it', () => {
@@ -189,14 +195,16 @@ test('shout: a whole loud balance below the dust floor can be shouted; a part of
   assert.equal(t.last_near_out, quote);
   assert.equal(t.getAccount('small').exits.length, 0);
   checkInvariants(t);
-  // One unit is worth less than one yoctoNEAR here: the shout is accepted,
-  // leave fails with E_AMOUNT and hush returns the unit.
+  // One unit is worth less than one yoctoNEAR here: the shout is accepted and
+  // leave fails with E_AMOUNT. The unit comes back through hush once the exit
+  // has expired (shouted at minute 41, ready at 71, expires at 131).
   t.transferLoud(CREATOR, 'tiny', 1n, 41n * MIN);
   const tinyId = t.shout('tiny', 1n, 41n * MIN);
   assert.equal(t.quoteSell(1n), 0n);
   assert.throws(() => t.leave('tiny', tinyId, 0n, 71n * MIN), code('E_AMOUNT'));
   assert.equal(t.escrowed, 1n);
-  assert.equal(t.hush('tiny', tinyId, 71n * MIN), 1n);
+  assert.throws(() => t.hush('tiny', tinyId, 71n * MIN), code('E_NOTICE_BINDING'));
+  assert.equal(t.hush('tiny', tinyId, 131n * MIN + 1n), 1n);
   assert.equal(t.getAccount('tiny').loud, 1n);
   checkInvariants(t);
 });
@@ -300,23 +308,57 @@ test('leave: E_POOL_EMPTY when the pool holds no NEAR, state untouched', () => {
   checkInvariants(t);
 });
 
-test('hush: owner any time, anyone after expiry, tokens stay loud', () => {
+test('hush: a shout is binding until the exit has expired, then anyone can close it', () => {
   const t = seeded();
   const held = t.getAccount(CREATOR).loud;
+  // Shouted at minute 10: ready at 40, expires at 100.
   const a = t.shout(CREATOR, CAP, 10n * MIN);
   const b = t.shout(CREATOR, CAP, 10n * MIN);
-  assert.throws(() => t.hush('holder-0', a, 20n * MIN), code('E_NOT_OWNER'));
-  assert.throws(() => t.hush('holder-0', a, 100n * MIN), code('E_NOT_OWNER'));
-  assert.equal(t.hush(CREATOR, a, 20n * MIN), CAP);
-  assert.equal(t.getAccount(CREATOR).loud, held - CAP);
+  const before = snapshot(t);
+  // Nobody takes a shout back, the owner included: not right after it, not
+  // during the notice, not inside the exit window, not at expires_at itself.
+  for (const now of [10n * MIN, 20n * MIN, 40n * MIN, 100n * MIN]) {
+    for (const who of [CREATOR, 'holder-0']) {
+      assert.throws(() => t.hush(who, a, now), code('E_NOTICE_BINDING'), `${who} at ${now}`);
+    }
+  }
+  assert.deepEqual(snapshot(t), before);
+  assert.equal(t.escrowed, 2n * CAP);
+
   t.leave(CREATOR, b, 0n, 40n * MIN);
-  const remaining = t.getAccount(CREATOR).exits[0].remaining;
+  const remaining = t.getAccount(CREATOR).exits.find((e) => e.id === b).remaining;
+  assert.ok(remaining > 0n && remaining < CAP);
+  // A partly sold exit is just as binding.
+  assert.throws(() => t.hush(CREATOR, b, 100n * MIN), code('E_NOTICE_BINDING'));
+
+  // One nanosecond after expires_at the owner closes one, a stranger the other.
+  assert.equal(t.hush(CREATOR, a, 100n * MIN + 1n), CAP);
+  assert.equal(t.getAccount(CREATOR).loud, held - CAP);
   assert.equal(t.hush('holder-0', b, 100n * MIN + 1n), remaining);
+  // The tokens go back to the owner, not to the caller, and stay loud.
   assert.equal(t.getAccount(CREATOR).loud, held - (CAP - remaining));
   assert.equal(t.getAccount(CREATOR).quiet, 0n);
+  assert.equal(t.getAccount('holder-0').loud, 0n);
   assert.equal(t.escrowed, 0n);
   assert.throws(() => t.hush(CREATOR, b, 101n * MIN), code('E_NO_EXIT'));
   checkInvariants(t);
+});
+
+test('statistics counters saturate instead of stopping a shout or a leave', () => {
+  const t = seeded();
+  const U128_MAX = (1n << 128n) - 1n;
+  const U64_MAX = (1n << 64n) - 1n;
+  t.total_shouted = U128_MAX;
+  t.shout_count = U64_MAX;
+  t.total_left = U128_MAX;
+  t.leave_count = U64_MAX;
+  const id = t.shout(CREATOR, CAP, 10n * MIN);
+  assert.ok(t.leave(CREATOR, id, 0n, 40n * MIN) > 0n);
+  const s = t.getState(40n * MIN);
+  assert.equal(s.total_shouted, U128_MAX);
+  assert.equal(s.shout_count, U64_MAX);
+  assert.equal(s.total_left, U128_MAX);
+  assert.equal(s.leave_count, U64_MAX);
 });
 
 test('transfer: quiet first, then loud, and the tag follows the tokens (SPEC 8.2)', () => {
@@ -382,7 +424,7 @@ test('invariants 1-5 hold under a randomized sequence', () => {
   let now = 0n;
   let lastLoudOutstanding = null;
   const leaves = [];
-  const counts = { ok: 0, failed: 0 };
+  const counts = { ok: 0, failed: 0, hushed: 0 };
   const seen = new Set();
   for (let i = 0; i < 6000; i++) {
     // Dense activity in the launch window, then jumps of up to 3 minutes.
@@ -405,7 +447,13 @@ test('invariants 1-5 hold under a randomized sequence', () => {
         }
       } else if (op === 5) {
         const all = t.getExits(0, 100);
-        if (all.length) t.hush(a, all[Math.floor(rng() * all.length)].id, now);
+        if (all.length) {
+          const ex = all[Math.floor(rng() * all.length)];
+          t.hush(a, ex.id, now);
+          // Reached only when the hush went through: the exit had expired.
+          assert.ok(now > ex.expires_at, 'an exit was hushed before it expired');
+          counts.hushed++;
+        }
       } else if (op === 6) t.transfer(a, pick(), frac(acc.loud + acc.quiet), now);
       else t.transferLoud(a, pick(), frac(acc.loud), now);
       counts.ok++;
@@ -424,7 +472,8 @@ test('invariants 1-5 hold under a randomized sequence', () => {
   }
   assert.ok(counts.ok > 1500, `only ${counts.ok} calls succeeded`);
   assert.ok(leaves.length > 100, `only ${leaves.length} leaves`);
-  for (const c of ['E_NOTICE', 'E_EXPIRED', 'E_NOT_OWNER']) assert.ok(seen.has(c), `${c} never hit`);
+  for (const c of ['E_NOTICE', 'E_EXPIRED', 'E_NOT_OWNER', 'E_NOTICE_BINDING']) assert.ok(seen.has(c), `${c} never hit`);
+  assert.ok(counts.hushed > 20, `only ${counts.hushed} expired exits were hushed`);
   const capBound = leaves.filter((l) => l.fill === l.availBefore).length;
   assert.ok(capBound > 20, `the cap limited only ${capBound} leaves`);
   if (process.env.LOUD_TEST_DEBUG) console.log(counts, [...seen], leaves.length, capBound);
@@ -439,7 +488,7 @@ test('invariants 1-5 hold under a randomized sequence', () => {
   }
 });
 
-// ---- split test (SPEC 8.1 and 8.4) ----
+// Split test (SPEC 8.1 and 8.4)
 
 const SPLIT = { insiderShareBps: 500, horizonNs: 12n * HOUR, stepNs: 60n * SEC };
 
@@ -705,10 +754,12 @@ test('balanceOf: the token account holds pool and escrow, balances add up and ma
   const filled = t.leave(CREATOR, id, 0n, 41n * MIN);
   assert.ok(filled > 0n && filled < 4n * CAP, 'partial leave');
   check('partial leave');
-  t.hush(CREATOR, id, 41n * MIN);
+  // Shouted at minute 11: ready at 41, expires at 101. The rest comes back after that.
+  assert.throws(() => t.hush(CREATOR, id, 101n * MIN), code('E_NOTICE_BINDING'));
+  t.hush(CREATOR, id, 101n * MIN + 1n);
   assert.equal(t.escrowed, 0n);
   check('hush');
-  t.sell('late', t.getAccount('late').quiet, 0n, 41n * MIN);
+  t.sell('late', t.getAccount('late').quiet, 0n, 101n * MIN + 1n);
   assert.equal(t.balanceOf('late'), 0n);
   check('sell');
 });
@@ -745,7 +796,7 @@ test('exitPrice: quotes only what the pool can pay for, 0 when nothing can be so
   assert.ok(quote <= thin.pool_near);
   const px = thin.exitPrice(have);
   assert.equal(px, Number((quote * 10n ** 12n) / part) / 1e18);
-  // The old quote, pool NEAR over the whole lot, was a price no sale could get.
+  // Pool NEAR over the whole lot would be a price no sale can get.
   assert.ok(px > Number((thin.pool_near * 10n ** 12n) / have) / 1e18);
   assert.ok(px > 0 && px < thin.price());
   assert.equal(thin.sell('late', part, 0n, 11n * MIN), quote);

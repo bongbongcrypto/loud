@@ -193,7 +193,7 @@ mod tests {
 
     const MAX: u128 = u128::MAX;
 
-    // ---- xorshift64* PRNG, fixed seed, no external crate ----
+    // Xorshift64* PRNG, fixed seed, no external crate
     struct Rng(u64);
     impl Rng {
         fn next_u64(&mut self) -> u64 {
@@ -220,7 +220,7 @@ mod tests {
         }
     }
 
-    // ---- slow reference: 288-bit little-endian numbers in 32-bit limbs ----
+    // Slow reference: 288-bit little-endian numbers in 32-bit limbs
     type Big = [u32; 9];
 
     fn big_from(v: u128) -> Big {
@@ -494,7 +494,7 @@ mod tests {
         }
     }
 
-    // ---- pool ----
+    // Pool
 
     const E18: u128 = 1_000_000_000_000_000_000;
     const NEAR: u128 = 1_000_000_000_000_000_000_000_000;
@@ -605,7 +605,7 @@ mod tests {
         assert!(clamped > 0);
     }
 
-    // ---- bucket ----
+    // Bucket
 
     const WINDOW: u64 = 3_600_000_000_000;
     const CAP: u128 = 5_000_000 * E18;

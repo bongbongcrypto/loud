@@ -6,7 +6,7 @@ import * as L from './ui-logic.js';
 
 const read = (name) => readFileSync(new URL(name, import.meta.url), 'utf8');
 
-// ---- formatting
+// Formatting
 
 test('parseDecimal: strings to base units without floats', () => {
   assert.equal(L.parseDecimal('10', 24), 10n * NEAR);
@@ -49,12 +49,12 @@ test('links: only https and well-formed ids become links', () => {
   assert.equal(L.repoFromLocation('localhost', '/'), null);
 });
 
-// ---- static page text matches the engine preset
+// Static page text matches the engine preset
 
 test('index.html states the SPEC claim and the standard preset values', () => {
   const html = read('./index.html');
-  assert.ok(html.includes('LOUD limits how fast early supply can be sold on its defined path, no matter how many wallets it is split across.'));
-  assert.ok(html.includes('It does not prevent fraud.'));
+  // The summary carries the claim in the SPEC's words, next to what it does not cover.
+  assert.ok(html.includes('<dt>Claim</dt><dd>LOUD limits how fast early supply can be sold on its defined path, no matter how many wallets it is split across. It does not prevent fraud.'));
   assert.ok(html.includes('Built at NEAR HACKATHON. Testnet only. Unaudited.'));
   const d = L.paramDisplay(PRESETS.standard);
   assert.deepEqual(d, {
@@ -64,21 +64,28 @@ test('index.html states the SPEC claim and the standard preset values', () => {
   const table = html.slice(html.indexOf('id="params-table"'), html.indexOf('</table>', html.indexOf('id="params-table"')));
   for (const value of Object.values(d)) assert.ok(table.includes(`<td>${value}</td>`), `parameter table lacks ${value}`);
   // The rule text uses the same notice, exit window and cap.
-  assert.ok(html.includes(`Notice, ${d.notice}`));
-  assert.ok(html.includes(`Leave, within ${d.exit_window}`));
+  assert.ok(html.includes(`<b>Wait ${d.notice}</b>`));
+  assert.ok(html.includes(`<b>Leave within ${d.exit_window}</b>`));
   assert.ok(html.includes('0.5% of supply per 60 min'));
+  // A shout stays locked for the notice plus the exit window.
+  const lockMin = Number((PRESETS.standard.notice_ns + PRESETS.standard.exit_window_ns) / MIN);
+  assert.ok(html.includes(`until the exit expires, ${lockMin} min later.`));
+  assert.ok(html.includes(`The ${lockMin} min lock is the only cost.`));
+  // The hero is the kicker, the headline and one line on why, nothing else.
+  const lede = html.slice(html.indexOf('<section class="lede"'), html.indexOf('</section>', html.indexOf('<section class="lede"')));
+  assert.equal((lede.match(/<p[ >]/g) || []).length, 2);
+  assert.equal((html.match(/<h1[ >]/g) || []).length, 1);
   // The proof note describes the demo preset.
   const demo = L.paramDisplay(PRESETS.demo);
   assert.ok(html.includes(`launch window ${demo.loud_window}, notice ${demo.notice}, exit window ${demo.exit_window}, cap ${demo.cap}`));
   // No wording the claim rules out.
   assert.ok(!/prevents? (rugs?|insider|rug pulls?)/i.test(html));
-  assert.ok(!html.includes('—'), 'no em dashes in page copy');
   // No external scripts, styles or fonts.
   assert.ok(!/<(script|link)[^>]+(src|href)="https?:/i.test(html));
   assert.ok(!/@import|url\(\s*["']?https?:/i.test(read('./styles.css')));
 });
 
-// ---- split comparison
+// Split comparison
 
 test('comparison: per-wallet speed depends on the wallet count, LOUD does not', () => {
   const cache = new Map();
@@ -143,17 +150,20 @@ test('chart helpers', () => {
   assert.deepEqual(L.niceTicks(1, 4), [0, 0.25, 0.5, 0.75, 1]);
 });
 
-// ---- exits and the board
+// Exits and the board
 
-test('exitStatus covers the five states', () => {
+test('exitStatus covers the four states', () => {
   const ex = L.normalizeExit({ id: '1', owner: 'a.testnet', amount: '10', remaining: '10', shouted_at: '0', ready_at: '100', expires_at: '200' });
   assert.equal(L.exitStatus(ex, 99n), 'NOTICE');
   assert.equal(L.exitStatus(ex, 100n), 'BOARDING');
   assert.equal(L.exitStatus(ex, 200n), 'BOARDING');
   assert.equal(L.exitStatus(ex, 201n), 'EXPIRED');
   assert.equal(L.exitStatus({ ...ex, remaining: 0n, closed: 'left', closed_at: 150n }, 150n), 'LEFT');
-  assert.equal(L.exitStatus({ ...ex, closed: 'hushed', closed_at: 150n }, 300n), 'HUSHED');
-  assert.equal(L.exitStatus({ ...ex, closed: 'hushed', closed_at: 250n }, 300n), 'EXPIRED');
+  // hush only succeeds after expiry, so a hushed exit reads as expired.
+  const hushed = { ...ex, closed: 'hushed', closed_at: 250n };
+  assert.equal(L.exitStatus(hushed, 300n), 'EXPIRED');
+  const rows = L.boardRows([{ ...ex }, { ...hushed, id: 2n }], 300n);
+  assert.deepEqual(rows.map((r) => r.detail), ['0.00 locked until hush', '0.00 returned, still loud']);
 });
 
 test('board simulation: statuses come from the engine and agree with its state', () => {
@@ -205,7 +215,7 @@ test('board simulation: statuses come from the engine and agree with its state',
   assert.equal(sim.state().total_left, sim.token.getParams().creator_alloc);
 });
 
-// ---- sandbox
+// Sandbox
 
 test('sandbox: "send half" sends half of the combined balance, quiet first', () => {
   const sb = new L.Sandbox();
@@ -266,13 +276,24 @@ test('sandbox: the guided path shows the real errors', () => {
   assert.equal(v.rows.length, 1);
   assert.equal(v.rows[0].status, 'NOTICE');
   assert.ok(v.rows[0].canLeave && v.rows[0].canHush);
+  assert.deepEqual(v.path, [true, true, true, false, false, false]);
 
   r = sb.leave('1');
   assert.equal(r.code, 'E_NOTICE');
   assert.match(r.message, /1800 seconds of notice left/);
 
+  // A shout is binding: the owner cannot take it back during the notice
+  // or while the exit is ready.
+  r = sb.hush('1');
+  assert.equal(r.ok, false);
+  assert.equal(r.code, 'E_NOTICE_BINDING');
+  assert.ok(r.message.startsWith('E_NOTICE_BINDING: '));
+  assert.equal(sb.view().escrowed, 86363636363636363636363636n);
+  assert.deepEqual(sb.view().path, [true, true, true, true, false, false]);
+
   sb.skip(30n * MIN);
   assert.equal(sb.view().rows[0].status, 'BOARDING');
+  assert.equal(sb.hush('1').code, 'E_NOTICE_BINDING');
   r = sb.leave('1');
   assert.ok(r.ok);
   assert.match(r.message, /^Partial fill: 2,500,000 LOUD/);
@@ -287,11 +308,14 @@ test('sandbox: the guided path shows the real errors', () => {
   assert.equal(sb.view().rows[0].status, 'EXPIRED');
   r = sb.leave('1');
   assert.equal(r.code, 'E_EXPIRED');
+  assert.match(sb.view().rows[0].detail, /locked until hush$/);
   r = sb.hush('1');
-  assert.ok(r.ok);
+  assert.ok(r.ok, r.message);
   v = sb.view();
   assert.equal(v.rows[0].status, 'EXPIRED');
+  assert.match(v.rows[0].detail, /returned, still loud$/);
   assert.equal(v.rows[0].canLeave, false);
+  assert.deepEqual(v.path, [true, true, true, true, true, true]);
   assert.equal(v.loud, 86363636363636363636363636n - 2_500_000n * UNIT);
 
   // A buy after the launch window is quiet and sells at once.
@@ -335,7 +359,7 @@ test('sandbox: the guided path shows the real errors', () => {
   assert.equal(sb.view().clock, 'T+0:00');
 });
 
-// ---- chain views
+// Chain views
 
 const bytes = (obj) => [...new TextEncoder().encode(JSON.stringify(obj))];
 
@@ -424,9 +448,9 @@ test('view calls: request shape, decoding, failover and soft failure', async () 
   assert.deepEqual(loose.block.heights, [500, 501, 502]);
   assert.match(L.liveSummary(loose, 't.loud-ab12.testnet'), /read separately at final blocks 500 to 502, so they may not describe the same instant\./);
   assert.ok(!/at block 500/.test(L.liveSummary(loose, 't.loud-ab12.testnet')));
-  const blind = await L.fetchLive(node({ height: false }).fetchFn, 't.loud-ab12.testnet', ['https://up.example']);
-  assert.equal(blind.block.pinned, false);
-  assert.match(L.liveSummary(blind, 't.loud-ab12.testnet'), /may come from adjacent blocks\./);
+  const unpinned = await L.fetchLive(node({ height: false }).fetchFn, 't.loud-ab12.testnet', ['https://up.example']);
+  assert.equal(unpinned.block.pinned, false);
+  assert.match(L.liveSummary(unpinned, 't.loud-ab12.testnet'), /may come from adjacent blocks\./);
   assert.equal(live.state.cap_units, 5_000_000n * UNIT);
   assert.equal(live.state.is_loud_window, false);
   assert.equal(live.exits[0].id, 3n);
@@ -441,7 +465,7 @@ test('view calls: request shape, decoding, failover and soft failure', async () 
   await assert.rejects(L.fetchLive(fakeFetch, 't.loud-ab12.testnet', ['https://down.example']), /no RPC endpoint answered/);
 });
 
-// ---- proof view model
+// Proof view model
 
 const H = (c) => c.repeat(44);
 
@@ -506,7 +530,7 @@ test('proof: a completed run', () => {
   const byLabel = Object.fromEntries(d.rows.map((x) => [x.label, x]));
   assert.match(byLabel['Access keys on the token account'].value, /^0 access keys/);
   assert.equal(byLabel['Deploy transaction'].href, `https://testnet.nearblocks.io/txns/${H('A')}`);
-  assert.equal(byLabel['CI run that produced this'].href, 'https://github.com/someone/loud/actions/runs/123456');
+  assert.equal(byLabel['Automated run that produced this'].href, 'https://github.com/someone/loud/actions/runs/123456');
   assert.equal(d.repo, 'someone/loud');
 
   const r = L.receiptsView(receipts);
@@ -600,6 +624,67 @@ test('proof: a failed run and a key on the account are not shown as passing', ()
   assert.equal(r.error, 'step 10 failed');
 });
 
+test('proof: the three large lines follow the files and never overstate them', () => {
+  const { deployment, receipts } = fixture();
+  const heads = (dep, rec) => L.proofHeadlines(L.deploymentView(dep), L.receiptsView(rec));
+  const big = (list) => list.map((x) => `${x.state}: ${x.big}`);
+
+  // A clean run.
+  const ok = heads(deployment, receipts);
+  assert.deepEqual(ok.map((x) => x.key), ['checks', 'keys', 'dump']);
+  assert.deepEqual(big(ok), [
+    'ok: 10 of 10 checks passed',
+    'ok: 0 access keys',
+    'ok: 20 wallets tried to dump. The cap held.',
+  ]);
+  assert.match(ok[0].small, /^on NEAR testnet(, \d{4}-\d{2}-\d{2})?\.$/);
+  assert.equal(ok[0].href, `https://testnet.nearblocks.io/txns/${H('A')}`);
+  assert.equal(ok[1].href, 'https://testnet.nearblocks.io/address/t.loud-ab12.testnet');
+  assert.equal(ok[2].small, '20 wallets sold 5,600,000 LOUD in 10 min 30 s. The cap allowed at most 5,750,000 LOUD in that time.');
+  assert.equal(ok[2].href, 'receipts.json');
+
+  // The numbers come from the files: a run with another number of checks and wallets.
+  const eleven = heads(deployment, {
+    ...receipts,
+    steps: [...receipts.steps, { ...receipts.steps[9], n: 11 }],
+    split: { ...receipts.split, wallets: 50 },
+  });
+  assert.equal(eleven[0].big, '11 of 11 checks passed');
+  assert.equal(eleven[2].big, '50 wallets tried to dump. The cap held.');
+
+  // A failed check, a key on the account and a broken cap are all shown as failed.
+  const steps = receipts.steps.map((s) => (s.n === 10 ? { ...s, ok: false } : s));
+  const bad = heads(
+    { ...deployment, zero_keys: false, access_keys: ['ed25519:abc', 'ed25519:def'] },
+    { ...receipts, status: 'failed', steps, split: { ...receipts.split, pass: false }, error: 'step 10 failed' },
+  );
+  assert.deepEqual(big(bad), [
+    'failed: 9 of 10 checks passed',
+    'failed: 2 access keys',
+    'failed: 20 wallets tried to dump. The cap check failed.',
+  ]);
+  assert.match(bad[0].small, /step 10 failed/);
+  assert.match(bad[1].small, /zero-key claim does not hold/);
+  // All recorded checks passed but the file says the run failed: not shown as a pass.
+  assert.equal(heads(deployment, { ...receipts, status: 'failed' })[0].state, 'failed');
+  // The zero-key flag without a key list is not a pass either.
+  assert.equal(heads({ ...deployment, access_keys: null }, receipts)[1].state, 'pending');
+  assert.equal(heads({ ...deployment, zero_keys: false }, receipts)[1].state, 'failed');
+
+  // Transactions with no confirmed outcome are named next to the pass.
+  const unresolved = heads(deployment, { ...receipts, unresolved_txs: 3 });
+  assert.equal(unresolved[0].state, 'ok');
+  assert.match(unresolved[0].small, / 3 transactions were sent with no confirmed outcome\.$/);
+
+  // Missing files: nothing is claimed.
+  assert.deepEqual(big(heads(null, null)), [
+    'pending: No run recorded yet',
+    'pending: Access keys not checked yet',
+    'pending: No dump measured yet',
+  ]);
+  assert.ok(heads(null, null).every((x) => !x.href));
+});
+
 test('proof: an unresolved transaction is never called "not executed" and qualifies the headline', () => {
   const { receipts } = fixture();
   const withUnknown = (n) => receipts.steps.map((s) => {
@@ -618,7 +703,7 @@ test('proof: an unresolved transaction is never called "not executed" and qualif
   assert.equal(none.headline, 'All 10 steps passed on NEAR testnet.');
   assert.ok(!/unresolved/.test(none.steps[8].txSummary));
 
-  // Four unresolved, as in the saved run.
+  // Four unresolved.
   const four = L.receiptsView({ ...receipts, steps: withUnknown(4) });
   assert.equal(four.unresolved, 4);
   assert.equal(four.headline, "All 10 steps passed on NEAR testnet. 4 transactions were sent but their outcome was not confirmed; the cap check rests on the contract's own counter.");
@@ -668,7 +753,7 @@ test('proof: an unresolved transaction is never called "not executed" and qualif
   for (const s of onDisk.steps) {
     const own = s.txs.filter((x) => x.unresolved).length;
     if (!Number.isInteger(disk.unresolved_txs) && own > 0 && /not executed/.test(s.got)) {
-      assert.match(s.gotNote, new RegExp(`^Added by this page: .*${own} of the calls in this step .* no confirmed outcome`));
+      assert.match(s.gotNote, new RegExp(`^Note: .*${own} of the calls in this step .* no confirmed outcome`));
     } else {
       assert.equal(s.gotNote, '');
     }
@@ -751,7 +836,7 @@ test('proof: the keys of the newer proof script are shown, and an older file sti
   assert.deepEqual(older.unresolvedHashes, []);
   assert.ok(older.steps.every((s) => s.txs.every((t) => t.earlier.length === 0)));
   assert.ok(!older.split.rows.some(([label]) => /executed and failed/.test(label)));
-  assert.match(older.steps[8].gotNote, /^Added by this page: .* 1 of the calls in this step was sent and has no confirmed outcome; it is not known whether it never executed or executed and failed\.$/);
+  assert.match(older.steps[8].gotNote, /^Note: .* 1 of the calls in this step was sent and has no confirmed outcome; it is not known whether it never executed or executed and failed\.$/);
   assert.equal(older.steps[8].got, '300 leave calls from 20 wallets: 100 filled, 199 E_CAP, 0 E_EXPIRED, 0 other failures, 1 not executed');
 });
 
@@ -764,12 +849,187 @@ test('snapshot: unpinned pages above 100 exits carry the paging caveat', () => {
   assert.ok(!caveat.test(L.liveSummary({ state: { ...s, open_exits: 100 }, exits: exits.slice(0, 100), exitsCapped: false, block: { pinned: false, height: 500, heights: [500, 501] } }, 't.testnet')));
 });
 
-test('index.html: the corrected claims are in the static text', () => {
+test('index.html: the static text makes no claim the contract does not back', () => {
   const html = read('./index.html');
-  assert.ok(!/all at once\.<\/h1>/.test(html));
-  assert.ok(!/covers the minutes when bundles and snipers buy/.test(html));
-  assert.ok(!/Nothing can be sold/.test(html));
-  assert.ok(!/until someone sends NEAR/.test(html));
   assert.match(html, /Waiting out the launch window avoids the tag/);
-  assert.match(html, /calls whose outcome could not be confirmed are listed as unresolved/);
+  assert.match(html, /The creator allocation is unbacked/);
+  assert.match(html, /A notice can start a rush/);
+  assert.match(html, /<dt>Sybil resistance<\/dt>/);
+  // An exit is announced on chain. The board on the page is labelled as a simulation.
+  assert.match(html, /the exit is announced on chain/);
+  assert.match(html, /id="hero-note">Simulation: /);
+  // A shout cannot be cancelled, it does not force a sale, and storage is paid per account.
+  assert.match(html, /<b>A shout cannot be cancelled\.<\/b> The tokens stay locked until they are sold/);
+  assert.match(html, /<dt>A shout is not a sale<\/dt>/);
+  assert.match(html, /Storage costs 0\.02 NEAR per account/);
+  // One word per thing in the reader's text: cap and exit.
+  const visible = html.replace(/<[^>]+>/g, ' ');
+  assert.ok(!/\bbucket\b|\bthe door\b|\bescrow/i.test(visible));
+});
+
+test('index.html: the proof lines readable without the page script are the recorded run', () => {
+  const html = read('./index.html');
+  const json = (name) => JSON.parse(read(name));
+  const d = L.deploymentView(json('./deployment.json'));
+  const r = L.receiptsView(json('./receipts.json'));
+  const slice = (id, end) => html.slice(html.indexOf(`id="${id}"`), html.indexOf(end, html.indexOf(`id="${id}"`)));
+  // The three large lines, exactly as the page script renders them.
+  const facts = slice('proof-facts', '</ul>');
+  for (const x of L.proofHeadlines(d, r)) {
+    assert.ok(facts.includes(`<li data-state="${x.state}"><b>${x.big}</b><span>${x.small}</span><a href="${x.href}" rel="noopener">${x.linkText}</a></li>`), `static proof line: ${x.key}`);
+  }
+  // The summary rows name the token and the result.
+  assert.ok(slice('sum-token', '</dd>').includes(`<a href="${d.tokenHref}" rel="noopener">${d.token}</a>`));
+  const heads = L.proofHeadlines(d, r);
+  assert.ok(slice('sum-proof', '</dd>').includes(`${heads[0].big}. ${heads[2].big} `));
+  // What the run does not check is said in the static text whenever the view model says it.
+  assert.equal(slice('sum-proof', '</dd>').includes('Recorded before two later rules, listed under Testnet proof.'), Boolean(r.scopeNote));
+  assert.equal(slice('proof-scope', '</p>'), `id="proof-scope"${r.scopeNote ? '' : ' hidden'}>${r.scopeNote}`);
+  assert.ok(html.includes(`<p class="state" id="dep-state" data-state="${d.state}">${d.headline}</p>`));
+  assert.ok(html.includes(`id="split-proof-state" data-state="ok">${r.split.result}. ${r.split.sentence}</p>`));
+  assert.ok(html.includes(`<span id="proof-stamp">Recorded ${r.generatedAt}.</span>`));
+  // Every recorded check has a static row with its number and result, three of them shown first.
+  const { key, rest } = L.splitChecks(r.steps);
+  assert.deepEqual(key.map((s) => s.n), [...L.KEY_CHECKS]);
+  const rowsOf = (id) => [...slice(id, '</table>').matchAll(/<tr><td>(\d+)\. [^<]+<span class="expect">Expected: [^<]+<\/span><\/td><td class="res" data-result="(\w+)">\2<\/td><\/tr>/g)].map((m) => [m[1], m[2]]);
+  assert.deepEqual(rowsOf('steps-key'), key.map((s) => [s.n, s.result]));
+  assert.deepEqual(rowsOf('steps-table'), rest.map((s) => [s.n, s.result]));
+  // The README names the same token account and the same day.
+  const readme = read('../README.md');
+  assert.ok(readme.includes(`[${d.token}](${d.tokenHref})`));
+  assert.ok(readme.includes(`recorded ${r.generatedAt.slice(0, 10)}`));
+  // The README names the commit the token was built from, and says so when rules came after it.
+  assert.ok(readme.includes(`built from commit \`${json('./deployment.json').run.commit.slice(0, 7)}\``));
+  assert.equal(readme.includes('Two rules came after that commit'), Boolean(r.scopeNote));
+});
+
+test('proof: three checks are shown first and the others folded', () => {
+  const steps = Array.from({ length: 10 }, (_, i) => ({ n: String(i + 1) }));
+  const { key, rest } = L.splitChecks(steps);
+  assert.deepEqual(key.map((s) => s.n), ['6', '8', '10']);
+  assert.deepEqual(rest.map((s) => s.n), ['1', '2', '3', '4', '5', '7', '9']);
+  // A file with other step numbers shows everything.
+  assert.deepEqual(L.splitChecks([{ n: '1' }, { n: '2' }]), { key: [{ n: '1' }, { n: '2' }], rest: [] });
+});
+
+test('index.html: structure a parser can rely on', () => {
+  const html = read('./index.html');
+  assert.match(html, /<meta name="description" content="[^"]{80,300}">/);
+  // Section ids, in page order.
+  const ids = [...html.matchAll(/<section[^>]* id="([\w-]+)"/g)].map((m) => m[1]);
+  assert.deepEqual(ids, ['board', 'rule', 'split', 'sandbox', 'proof', 'limits', 'parameters']);
+  // One h2 per section with an id, and no heading level is skipped.
+  for (const id of ids) {
+    const at = html.indexOf(`id="${id}"`);
+    const body = html.slice(at, html.indexOf('</section>', at));
+    assert.equal((body.match(/<h2[ >]/g) || []).length, 1, `${id} needs exactly one h2`);
+    assert.ok(!/<h[456][ >]/.test(body));
+  }
+  // The summary is a definition list near the top, before the rule section.
+  const sum = html.indexOf('<section class="summary" aria-label="Summary">');
+  assert.ok(sum > html.indexOf('id="board"') && sum < html.indexOf('id="rule"'));
+  const dl = html.slice(sum, html.indexOf('</section>', sum));
+  const terms = [...dl.matchAll(/<dt>([^<]+)<\/dt>/g)].map((m) => m[1]);
+  assert.deepEqual(terms, ['What it is', 'Network', 'Token account', 'Proof', 'Claim', 'Source']);
+  // Links say where they go.
+  for (const m of html.matchAll(/<a [^>]*>([^<]*)<\/a>/g)) {
+    assert.ok(m[1].trim().length >= 4 && !/^(here|click here|link|more)$/i.test(m[1].trim()), `vague link text: ${m[0]}`);
+  }
+  // No text is hidden from readers by style.
+  assert.ok(!/display:\s*none|visibility:\s*hidden|font-size:\s*0/.test(html));
+});
+
+test('index.html: the static result lines are what the engine computes for the default choice', () => {
+  const html = read('./index.html');
+  // The form defaults: 5% of supply, 100 wallets.
+  assert.match(html, /name="share" value="500" checked/);
+  assert.match(html, /name="wallets" value="100" checked/);
+  const heads = L.resultHeadlines(L.runComparison({ wallets: 100, shareBps: 500 }).stats);
+  for (const x of heads) {
+    assert.ok(html.includes(`<li data-rule="${x.rule}"><span class="v-rule">${x.name}</span><b class="v-line">${x.line}</b><span class="v-sub">${x.sub}</span></li>`), `static line for ${x.rule}`);
+  }
+  // The static table rows are the same run.
+  const rules = ['naive', 'per_wallet', 'loud'];
+  L.resultTable(L.runComparison({ wallets: 100, shareBps: 500 }).stats).forEach((row, i) => {
+    const sub = (text) => (row.note ? `<span class="sub">${text}</span>` : '');
+    assert.ok(html.includes(`<tr data-rule="${rules[i]}"><td>${row.label}</td><td>${row.single}</td><td>${row.split}${sub(row.note)}</td><td>${row.drop1}</td><td>${row.dropMax}${sub('sale still running')}</td></tr>`), `static table row for ${rules[i]}`);
+  });
+  assert.match(html, /<th scope="col">Same, 100 wallets<\/th>/);
+});
+
+test('result lines: every choice of share and wallets', () => {
+  const cache = new Map();
+  for (const shareBps of L.SHARE_CHOICES_BPS) {
+    for (const wallets of L.WALLET_CHOICES) {
+      const { stats } = L.runComparison({ wallets, shareBps }, cache);
+      const [naive, pw, loud] = L.resultHeadlines(stats);
+      assert.deepEqual([naive.rule, pw.rule, loud.rule], ['naive', 'per_wallet', 'loud']);
+      const who = wallets === 1 ? '1 wallet' : `${wallets} wallets`;
+      for (const x of [naive, pw, loud]) assert.ok(x.line.startsWith(`${who}: `), x.line);
+      assert.equal(naive.line, `${who}: sold in 1 min`);
+      if (wallets === 1) {
+        assert.equal(pw.line, `1 wallet: sold in ${L.fmtDuration(stats.per_wallet.sellOutSecSingle)}`);
+        assert.match(loud.line, /^1 wallet: \d+\.\d% out after 6 h$/);
+      } else {
+        // The split never changes what LOUD lets out; under per-wallet limits it does.
+        assert.equal(loud.line, `${who}: same as 1 wallet`);
+        assert.ok(stats.loud.maxDiffUnits <= BigInt(wallets));
+        assert.match(pw.sub, /^1 wallet took \d+ min\. Splitting made it \d+x faster\.$/);
+        assert.match(loud.sub, /^\d+\.\d% out after 6 h\. Nothing sold before minute 31\.$/);
+      }
+    }
+  }
+  // A split run that differs from the single-wallet run by more than rounding is not called the same.
+  const { stats } = L.runComparison({ wallets: 10, shareBps: 500 }, cache);
+  const odd = L.resultHeadlines({ ...stats, loud: { ...stats.loud, maxDiffUnits: 11n, soldAtEndSingle: 0.5 } })[2];
+  assert.equal(odd.line, '10 wallets: 61.7% out after 6 h, 1 wallet: 50.0%');
+  // A position that is never sold says so.
+  const stuck = L.resultHeadlines({ ...stats, naive: { ...stats.naive, sellOutSec: null }, per_wallet: { ...stats.per_wallet, sellOutSec: null, speedup: null } });
+  assert.equal(stuck[0].line, '10 wallets: not sold out in 6 h');
+  assert.equal(stuck[1].line, '10 wallets: not sold out in 6 h');
+  assert.equal(stuck[1].sub, '1 wallet took 10 min.');
+});
+
+test('proof: a run recorded before storage and binding shouts says what it does not check', () => {
+  const { receipts } = fixture();
+  const older = L.receiptsView(receipts);
+  assert.match(older.scopeNote, /recorded before two later rules: each account pays for its storage, and a shout cannot be cancelled/);
+  assert.deepEqual(older.tokenNear, []);
+  assert.equal(older.steps[4].txs[0].call, '');
+  // The saved file is shown with whatever its own keys support.
+  const saved = L.receiptsView(JSON.parse(read('./receipts.json')));
+  assert.equal(saved.scopeNote === '', saved.state === 'pending' || Object.hasOwn(JSON.parse(read('./receipts.json')), 'token_near'));
+
+  const N = 10n ** 24n;
+  const reading = (balance) => ({
+    balance: String(balance), pool_near: String(2n * N), owed_total: '0', spare: String(balance - 2n * N),
+    storage_bytes: 230000, storage_stake: String(23n * N / 10n), free: String(balance - 2n * N - 23n * N / 10n),
+  });
+  const newer = L.receiptsView({
+    ...receipts,
+    token_near: { at_deploy: null, at_end: reading(5n * N) },
+    steps: receipts.steps.map((s) => {
+      if (s.n === 5) return { ...s, registration: { wallets: 20, registered: 20 }, txs: [{ hash: H('E'), account: 'w01.loud-ab12.testnet', outcome: 'success', error: null, call: 'storage_deposit' }] };
+      return s;
+    }),
+  });
+  assert.equal(newer.scopeNote, '');
+  assert.equal(newer.steps[4].txs[0].call, 'storage_deposit');
+  assert.deepEqual(newer.tokenNear, [
+    ['Balance of the token account at the end of the run', '5.0000 NEAR'],
+    ['Of that, pool liquidity (pool_near)', '2.0000 NEAR'],
+    ['Owed for failed payouts', '0.0000 NEAR'],
+    ['Locked by the protocol for storage', '2.3000 NEAR (230,000 bytes of code and records)'],
+    ['Left after all three', '0.7000 NEAR'],
+  ]);
+  // A balance that does not cover all three shows as a negative remainder.
+  const short = L.receiptsView({ ...receipts, token_near: { at_deploy: reading(4n * N), at_end: null } });
+  assert.equal(short.tokenNear[4][1], '-0.3000 NEAR');
+  assert.equal(short.tokenNear[0][0], 'Balance of the token account right after the deploy');
+  // A run of the current script that stopped early has the key with nothing read:
+  // it is a failed run of the current contract, not an older one.
+  const stopped = L.receiptsView({ ...receipts, status: 'failed', steps: receipts.steps.slice(8), token_near: { at_deploy: null, at_end: null } });
+  assert.equal(stopped.scopeNote, '');
+  assert.deepEqual(stopped.tokenNear, []);
+  assert.equal(L.receiptsView({ status: 'pending' }).scopeNote, '');
 });

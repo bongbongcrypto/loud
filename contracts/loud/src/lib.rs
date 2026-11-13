@@ -4,12 +4,16 @@
 //! Each account has two balances, `loud` and `quiet`. Loud tokens can only
 //! reach the pool through `shout` -> notice -> `leave`, and all leaves share
 //! one global cap bucket. There is no owner and no setter.
+//!
+//! Every account pays for its own storage once, when it registers
+//! (`storage_deposit`, or the first `buy`). Only a registered account can
+//! receive tokens.
 
 #![allow(clippy::too_many_arguments)]
 
 use near_sdk::json_types::{U128, U64};
 use near_sdk::serde_json::{json, Value};
-use near_sdk::store::{IterableMap, LookupMap};
+use near_sdk::store::{IterableMap, LookupMap, LookupSet};
 use near_sdk::{env, near, AccountId, Gas, NearToken, PanicOnDefault, Promise};
 
 #[cfg(test)]
@@ -34,8 +38,35 @@ const MIN_BUY_YOCTO: u128 = 10u128.pow(21);
 const DUST_DIVISOR: u128 = 1_000_000;
 const MAX_EXITS_PER_ACCOUNT: usize = 8;
 const MAX_EXITS_PAGE: u32 = 100;
-/// 0.00125 NEAR, the value wallets expect from NEP-145.
-const STORAGE_MIN_YOCTO: u128 = 1_250_000_000_000_000_000_000;
+/// One-time storage fee per account: 0.02 NEAR, which pays for 2,000 bytes
+/// at 10^19 yoctoNEAR per byte. It is kept for good; there is no
+/// unregister.
+///
+/// Bytes one account can occupy. `L` is the length of its id (at most 64),
+/// a stored id takes `4 + L`, and every record carries 40 bytes of protocol
+/// overhead on top of its key and value:
+///
+/// ```text
+/// loud, quiet, owed       3 * (61 + L)   key 1 + 4 + L, value 16
+/// registration            45 + L         key 1 + 4 + L, no value
+/// list of open exit ids   49 + L + 8n    key 1 + 4 + L, value 4 + 8n
+/// each open exit          198 + L        index record: key 6, value 8;
+///                                        exit record: key 32, value 72 + L
+/// total                   277 + 5L + n * (206 + L)
+/// ```
+///
+/// With the longest id that is 597 bytes plus 270 per open exit: 1,947
+/// bytes with five open exits, so the fee covers the account and five
+/// exits. The full eight exits take 2,757 bytes. The 757 bytes above the
+/// fee (under 0.008 NEAR) are locked from the token account's spare
+/// balance until the exits close. An account that goes that far has paid
+/// 0.02 NEAR it never gets back, so it pays more than it locks.
+const STORAGE_MIN_YOCTO: u128 = 20_000_000_000_000_000_000_000;
+/// Metadata sits in the root state, which every call reads, callbacks with
+/// fixed gas included. The limits keep that read small.
+const MAX_NAME_BYTES: usize = 64;
+const MAX_SYMBOL_BYTES: usize = 16;
+const MAX_ICON_BYTES: usize = 2_048;
 const DECIMALS: u8 = 18;
 const FT_ON_TRANSFER_TGAS: u64 = 30;
 const FT_RESOLVE_TGAS: u64 = 10;
@@ -46,7 +77,8 @@ const PAYOUT_CALLBACK_TGAS: u64 = 10;
 /// code is listed in SPEC 7: most with the method that raises them, and
 /// E_AMOUNT (zero amount, a buy that rounds to zero tokens, or a sale that
 /// rounds to zero yoctoNEAR), E_SELF (sender equals receiver), E_NO_EXIT
-/// (unknown exit id) and E_MATH (pool math overflow) at the top of it.
+/// (unknown exit id), E_MATH (pool math overflow) and E_UNREGISTERED (the
+/// receiver has not paid storage) at the top of it.
 fn fail(msg: &str) -> ! {
     if cfg!(test) {
         // A plain panic keeps the message readable in unit tests.
@@ -273,16 +305,18 @@ pub struct Loud {
     /// to it until the account calls `claim`.
     owed: LookupMap<AccountId, u128>,
     owed_total: u128,
+    /// Accounts that paid the storage fee. Only these can receive tokens,
+    /// so every balance entry belongs to an account that paid for it.
+    registered: LookupSet<AccountId>,
 }
 
 #[near]
 impl Loud {
-    // ------------------------------------------------------------------
     // Init
-    // ------------------------------------------------------------------
 
     /// Mints the fixed supply: the creator allocation as loud, the rest to
-    /// the pool. Callable once.
+    /// the pool. Callable once. The creator is registered without a fee;
+    /// the deployer funds the account that stores it.
     #[init(ignore_state)]
     pub fn new(
         total_supply: U128,
@@ -332,6 +366,20 @@ impl Loud {
         if !(MIN_CAP_WINDOW_NS..=SEVEN_DAYS_NS).contains(&cap_window_ns) {
             fail("E_PARAMS: cap_window_ns must be 60 s ..= 7 days");
         }
+        // The token account has no key: an allocation minted to it could
+        // never be moved or shouted.
+        if creator == env::current_account_id() {
+            fail("E_PARAMS: creator cannot be the token account");
+        }
+        if name.len() > MAX_NAME_BYTES {
+            fail("E_PARAMS: name must be at most 64 bytes");
+        }
+        if symbol.len() > MAX_SYMBOL_BYTES {
+            fail("E_PARAMS: symbol must be at most 16 bytes");
+        }
+        if icon.as_ref().is_some_and(|i| i.len() > MAX_ICON_BYTES) {
+            fail("E_PARAMS: icon must be at most 2048 bytes");
+        }
 
         let launch_ts = env::block_timestamp();
         let loud_until = match launch_ts.checked_add(loud_window_ns) {
@@ -376,8 +424,10 @@ impl Loud {
             leave_count: 0,
             owed: LookupMap::new(b"o"),
             owed_total: 0,
+            registered: LookupSet::new(b"r"),
         };
 
+        this.registered.insert(creator.clone());
         if creator_alloc > 0 {
             this.loud.insert(creator.clone(), creator_alloc);
             emit_ft_mint(&creator, creator_alloc);
@@ -386,20 +436,25 @@ impl Loud {
         this
     }
 
-    // ------------------------------------------------------------------
     // Trading (SPEC 5, 7)
-    // ------------------------------------------------------------------
 
     /// Buys from the pool with the attached NEAR. Tokens are loud while the
     /// launch window is open and quiet afterwards.
+    /// A caller that is not registered yet is registered here: the storage
+    /// fee comes out of the deposit first and never enters the pool.
     #[payable]
     pub fn buy(&mut self, min_tokens_out: U128) -> U128 {
         let now = self.touch();
         let caller = env::predecessor_account_id();
-        let near_in = env::attached_deposit().as_yoctonear();
-        if near_in < MIN_BUY_YOCTO {
-            fail("E_DEPOSIT: attach at least 0.001 NEAR");
-        }
+        let deposit = env::attached_deposit().as_yoctonear();
+        let storage_paid = if self.registered.contains(&caller) { 0 } else { STORAGE_MIN_YOCTO };
+        let near_in = match deposit.checked_sub(storage_paid) {
+            Some(v) if v >= MIN_BUY_YOCTO => v,
+            _ if storage_paid > 0 => fail(
+                "E_DEPOSIT: attach at least 0.001 NEAR plus the one-time 0.02 NEAR storage fee of a new account",
+            ),
+            _ => fail("E_DEPOSIT: attach at least 0.001 NEAR"),
+        };
         let out = match loud_math::buy_out(self.pool_tokens, self.reserve(), near_in) {
             Some(v) => v,
             None => fail("E_MATH: deposit is too large for the pool math"),
@@ -414,6 +469,10 @@ impl Loud {
             ));
         }
 
+        // Registered only now, after every check has passed.
+        if storage_paid > 0 {
+            self.registered.insert(caller.clone());
+        }
         self.pool_near += near_in;
         self.pool_tokens -= out;
         let is_loud = now < self.loud_until;
@@ -430,6 +489,7 @@ impl Loud {
             json!({
                 "account": caller,
                 "near_in": U128(near_in),
+                "storage_paid": U128(storage_paid),
                 "tokens_out": U128(out),
                 "loud": is_loud
             }),
@@ -473,9 +533,7 @@ impl Loud {
         U128(near_out)
     }
 
-    // ------------------------------------------------------------------
     // The door for loud tokens
-    // ------------------------------------------------------------------
 
     /// Announces an exit and escrows the tokens. Returns the exit id.
     /// An amount below the dust floor is accepted only when it is the
@@ -526,8 +584,9 @@ impl Loud {
         );
         ids.push(id);
         self.account_exits.insert(caller.clone(), ids);
-        self.total_shouted += amount;
-        self.shout_count += 1;
+        // Display counters only: they saturate, so they can never stop a call.
+        self.total_shouted = self.total_shouted.saturating_add(amount);
+        self.shout_count = self.shout_count.saturating_add(1);
 
         emit_ft_transfer(&caller, &env::current_account_id(), amount, Some("shout"));
         emit_loud(
@@ -603,8 +662,8 @@ impl Loud {
         self.bucket_units -= fill;
         self.escrowed -= fill;
         self.loud_outstanding -= fill;
-        self.total_left += fill;
-        self.leave_count += 1;
+        self.total_left = self.total_left.saturating_add(fill);
+        self.leave_count = self.leave_count.saturating_add(1);
         let remaining = exit.remaining - fill;
         if remaining == 0 {
             self.remove_exit(id, &exit.owner);
@@ -628,8 +687,10 @@ impl Loud {
         U128(fill)
     }
 
-    /// Cancels an exit and returns what is left of it to the owner as loud.
-    /// The owner may call any time; anyone may call after `expires_at`.
+    /// Closes an expired exit and returns what is left of it to the owner
+    /// as loud. A shout is binding: until `expires_at` has passed nobody can
+    /// take it back, the owner included, so a notice on the board always
+    /// has its tokens locked behind it. After that anyone may call.
     #[payable]
     pub fn hush(&mut self, exit_id: U64) {
         let now = self.touch();
@@ -640,8 +701,11 @@ impl Loud {
             Some(e) => e.clone(),
             None => fail("E_NO_EXIT: no open exit with this id"),
         };
-        if exit.owner != caller && now <= exit.expires_at {
-            fail("E_NOT_OWNER: only the owner can hush before the exit expires");
+        if now <= exit.expires_at {
+            fail(&format!(
+                "E_NOTICE_BINDING: a shout cannot be taken back; this exit can be closed once it has expired, after timestamp {} ns",
+                exit.expires_at
+            ));
         }
         self.remove_exit(id, &exit.owner);
         self.escrowed -= exit.remaining;
@@ -659,9 +723,7 @@ impl Loud {
         );
     }
 
-    // ------------------------------------------------------------------
     // Failed payouts
-    // ------------------------------------------------------------------
 
     /// Callback of every payout made by `pay`. If the transfer receipt
     /// failed, the NEAR came back to this account, so the amount is
@@ -716,9 +778,7 @@ impl Loud {
         U128(amount)
     }
 
-    // ------------------------------------------------------------------
     // NEP-141
-    // ------------------------------------------------------------------
 
     /// Takes quiet first, then loud. The receiver gets the same split.
     #[payable]
@@ -730,6 +790,7 @@ impl Loud {
             fail("E_SELF: sender and receiver must differ");
         }
         require_not_token_account(&receiver_id);
+        self.require_registered(&receiver_id);
         let amount = amount.0;
         if amount == 0 {
             fail("E_AMOUNT: amount must be positive");
@@ -775,6 +836,7 @@ impl Loud {
             fail("E_SELF: sender and receiver must differ");
         }
         require_not_token_account(&receiver_id);
+        self.require_registered(&receiver_id);
         let amount = amount.0;
         let loud = self.loud_of(&sender);
         if amount == 0 || amount > loud {
@@ -812,6 +874,7 @@ impl Loud {
             fail("E_SELF: sender and receiver must differ");
         }
         require_not_token_account(&receiver_id);
+        self.require_registered(&receiver_id);
         if amount.0 == 0 {
             fail("E_AMOUNT: amount must be positive");
         }
@@ -911,34 +974,55 @@ impl Loud {
         }
     }
 
-    // ------------------------------------------------------------------
-    // NEP-145, minimal: accounts are implicit and the contract pays storage
-    // ------------------------------------------------------------------
+    // NEP-145 registration: one fixed fee per account, paid once
 
     pub fn storage_balance_bounds(&self) -> StorageBalanceBounds {
         StorageBalanceBounds { min: U128(STORAGE_MIN_YOCTO), max: Some(U128(STORAGE_MIN_YOCTO)) }
     }
 
-    /// Registers nothing and refunds the whole deposit.
+    /// Registers `account_id` (the caller if omitted) for the fixed fee and
+    /// refunds whatever was attached above it. If the account is already
+    /// registered the whole deposit goes back. Anyone can pay for anyone.
+    /// There is no withdraw and no unregister: the fee stays.
     #[payable]
     pub fn storage_deposit(
         &mut self,
         account_id: Option<AccountId>,
         registration_only: Option<bool>,
     ) -> StorageBalance {
-        let _ = (account_id, registration_only);
-        pay(&env::predecessor_account_id(), env::attached_deposit().as_yoctonear());
+        // The fee is a single fixed amount, so the flag has nothing to choose.
+        let _ = registration_only;
+        let payer = env::predecessor_account_id();
+        let account = account_id.unwrap_or_else(|| payer.clone());
+        let deposit = env::attached_deposit().as_yoctonear();
+        let refund = if self.registered.contains(&account) {
+            deposit
+        } else {
+            let rest = match deposit.checked_sub(STORAGE_MIN_YOCTO) {
+                Some(v) => v,
+                None => fail("E_STORAGE: attach at least 0.02 NEAR to register an account"),
+            };
+            self.registered.insert(account);
+            rest
+        };
+        pay(&payer, refund);
         StorageBalance { total: U128(STORAGE_MIN_YOCTO), available: U128(0) }
     }
 
+    /// `None` for an account that is not registered.
     pub fn storage_balance_of(&self, account_id: AccountId) -> Option<StorageBalance> {
-        let _ = account_id;
-        Some(StorageBalance { total: U128(STORAGE_MIN_YOCTO), available: U128(0) })
+        if self.registered.contains(&account_id) {
+            Some(StorageBalance { total: U128(STORAGE_MIN_YOCTO), available: U128(0) })
+        } else {
+            None
+        }
     }
 
-    // ------------------------------------------------------------------
+    pub fn is_registered(&self, account_id: AccountId) -> bool {
+        self.registered.contains(&account_id)
+    }
+
     // Views
-    // ------------------------------------------------------------------
 
     pub fn get_params(&self) -> Params {
         Params {
@@ -1131,6 +1215,17 @@ impl Loud {
         self.pool_near -= near_out;
         self.pool_tokens += amount;
         near_out
+    }
+
+    /// A balance entry costs storage, so tokens only go to accounts that
+    /// paid for theirs. Senders need no check: a holder is registered.
+    fn require_registered(&self, account: &AccountId) {
+        if !self.registered.contains(account) {
+            fail(&format!(
+                "E_UNREGISTERED: {} is not registered; call storage_deposit for it first",
+                account
+            ));
+        }
     }
 
     fn loud_of(&self, account: &AccountId) -> u128 {

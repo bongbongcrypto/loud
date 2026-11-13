@@ -7,7 +7,8 @@
 //   shout(account, amount, now)                     -> exit id
 //   leave(account, exitId, minNearOut, now)         -> units filled (near in last_near_out);
 //       minNearOut is for everything left in the exit and is scaled to the part filled
-//   hush(account, exitId, now)                      -> units returned to loud
+//   hush(account, exitId, now)                      -> units returned to loud;
+//       only after the exit has expired, by anyone (a shout is binding)
 //   transfer(account, receiver, amount, now)        -> { quiet_amount, loud_amount }
 //   transferLoud(account, receiver, amount, now)    -> amount
 //   transferCall(account, receiver, amount, now)    -> amount (quiet only)
@@ -24,6 +25,10 @@
 // the pool inventory and the escrow, so all balances add up to total_supply.
 // Differences from the contract, sandbox only: hush returns the units returned
 // (the contract method returns nothing), and the constructor emits no ft_mint.
+// Storage registration is not modelled: there is no storage_deposit, no
+// storage fee and no E_UNREGISTERED, any account can receive tokens, the whole
+// NEAR passed to buy reaches the pool, and the buy event has no storage_paid.
+// name, symbol and icon are optional here and only checked for their size.
 //
 // NaiveToken and PerWalletToken are the comparison baselines of SPEC 8.4 with
 // the same pool math. runSplitScenario drives a greedy insider under each rule.
@@ -41,6 +46,8 @@ const U64_MAX = (1n << 64n) - 1n;
 export const CONTRACT_ACCOUNT = 'loud.contract';
 const MIN_DEPOSIT = 10n ** 21n;
 const MAX_EXITS_PER_ACCOUNT = 8;
+// Metadata size limits of `new`, in UTF-8 bytes.
+const MAX_META_BYTES = Object.freeze({ name: 64, symbol: 16, icon: 2048 });
 
 export const PRESETS = Object.freeze({
   standard: Object.freeze({
@@ -234,6 +241,8 @@ function checkParams(p) {
   };
   inRange(p.total_supply, 10n ** 24n, 10n ** 30n, 'total_supply');
   if (typeof p.creator !== 'string' || p.creator.length === 0) fail('E_PARAMS', 'creator is not a valid account');
+  // The token account has no key, so an allocation minted to it could never move.
+  if (p.creator === CONTRACT_ACCOUNT) fail('E_PARAMS', 'creator cannot be the token account');
   inRange(p.creator_alloc_bps, 0n, 2000n, 'creator_alloc_bps');
   inRange(p.virtual_near, 10n ** 23n, 10n ** 30n, 'virtual_near');
   inRange(p.loud_window_ns, 60n * SEC, 7n * DAY, 'loud_window_ns');
@@ -249,6 +258,13 @@ function readParams(params) {
     'notice_ns', 'exit_window_ns', 'cap_bps', 'cap_window_ns'];
   const p = { creator: params.creator };
   for (const name of names) p[name] = big(params[name], name);
+  for (const [name, limit] of Object.entries(MAX_META_BYTES)) {
+    const v = params[name];
+    if (v === undefined || v === null) continue;
+    if (typeof v !== 'string' || new TextEncoder().encode(v).length > limit) {
+      fail('E_PARAMS', `${name} must be a string of at most ${limit} bytes`);
+    }
+  }
   return p;
 }
 
@@ -289,7 +305,7 @@ export class LoudToken extends Pool {
     if (creatorAlloc > 0n) this.loud.set(this.creator, creatorAlloc);
   }
 
-  // ---- internals ----
+  // Internals
 
   _loudOf(a) {
     return this.loud.get(a) || 0n;
@@ -349,7 +365,7 @@ export class LoudToken extends Pool {
     return out;
   }
 
-  // ---- trading ----
+  // Trading
 
   buy(account, nearYocto, minOut, now) {
     return this._tx(account, now, (t) => {
@@ -388,7 +404,7 @@ export class LoudToken extends Pool {
     });
   }
 
-  // ---- the door for loud tokens ----
+  // The door for loud tokens
 
   shout(account, amount, now) {
     return this._tx(account, now, (t) => {
@@ -418,8 +434,9 @@ export class LoudToken extends Pool {
       this._set(this.loud, account, held - x);
       this.escrowed += x;
       this.exits.set(id, ex);
-      this.total_shouted += x;
-      this.shout_count += 1n;
+      // Display counters saturate on chain, so they can never stop a call.
+      this.total_shouted = min(this.total_shouted + x, U128_MAX);
+      this.shout_count = min(this.shout_count + 1n, U64_MAX);
       this._emit('ft_transfer', t, {
         old_owner_id: account, new_owner_id: CONTRACT_ACCOUNT, amount: x, memo: 'shout',
       });
@@ -455,8 +472,8 @@ export class LoudToken extends Pool {
       ex.remaining -= fill;
       this._applySell(fill, nearOut);
       if (ex.remaining === 0n) this.exits.delete(ex.id);
-      this.total_left += fill;
-      this.leave_count += 1n;
+      this.total_left = min(this.total_left + fill, U128_MAX);
+      this.leave_count = min(this.leave_count + 1n, U64_MAX);
       this.last_near_out = nearOut;
       this._emit('leave', t, {
         id: ex.id, account, filled: fill, remaining: ex.remaining, near_out: nearOut,
@@ -468,8 +485,10 @@ export class LoudToken extends Pool {
   hush(account, exitId, now) {
     return this._tx(account, now, (t) => {
       const ex = this._exit(exitId);
-      if (ex.owner !== account && t <= ex.expires_at) {
-        fail('E_NOT_OWNER', 'only the owner can hush before the exit expires');
+      // A shout is binding: nobody takes it back before the exit has expired,
+      // the owner included. After that anyone may close it.
+      if (t <= ex.expires_at) {
+        fail('E_NOTICE_BINDING', `a shout cannot be taken back; this exit can be closed after ${ex.expires_at}`);
       }
       const back = ex.remaining;
       this.loud.set(ex.owner, this._loudOf(ex.owner) + back);
@@ -483,7 +502,7 @@ export class LoudToken extends Pool {
     });
   }
 
-  // ---- NEP-141 ----
+  // NEP-141
 
   transfer(account, receiver, amount, now) {
     return this._tx(account, now, (t) => {
@@ -555,7 +574,7 @@ export class LoudToken extends Pool {
     return account === CONTRACT_ACCOUNT ? own + this.pool_tokens + this.escrowed : own;
   }
 
-  // ---- views ----
+  // Views
 
   _nextRoomTs(now) {
     if (this._available(now) > 0n) return now;
@@ -725,7 +744,7 @@ export class PerWalletToken extends NaiveToken {
   }
 }
 
-// ---- greedy sellers (simulation drivers, not part of the contract) ----
+// Greedy sellers (simulation drivers, not part of the contract)
 
 // Sells loud tokens from a set of wallets through the door with a simple batch
 // strategy. It is not the fastest possible exit: the gate at the top of

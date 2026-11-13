@@ -32,7 +32,7 @@ target/
 logs/
 .cache/
 
-# IDE / agents / OS
+# Editors / OS
 .vscode/
 .idea/
 *.swp
@@ -43,7 +43,7 @@ logs/
 .DS_Store
 Thumbs.db
 
-# Internal notes (not for the public repo)
+# Local notes
 CLAUDE.md
 PROGRESS.md
 AGENTS.md

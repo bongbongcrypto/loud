@@ -5,6 +5,9 @@ export const YOCTO = 10n ** 24n;
 export const TGAS = 10n ** 12n;
 export const ONE_TOKEN = 10n ** 18n;
 export const STORAGE_PER_BYTE = 10n ** 19n; // yoctoNEAR per byte of account storage
+// What one account pays the token once to be registered (SPEC section 7, NEP-145): 0.02 NEAR.
+// The contract has the same constant; step 2 compares it with storage_balance_bounds().min.
+export const STORAGE_MIN_YOCTO = 20_000_000_000_000_000_000_000n;
 export const EXPLORER = 'https://testnet.nearblocks.io';
 
 // "1.5" -> 1500000000000000000000000n
@@ -65,14 +68,18 @@ export function budget({ wasmBytes, balance, wallets = 20 }) {
   const insider = nearToYocto('1.25'); // 1 NEAR buy + gas for 21 calls
   const late = nearToYocto('0.65'); // 0.5 NEAR buy + gas
   const rootReserve = nearToYocto('0.3'); // gas for account creation and deploy
-  const minWallet = nearToYocto('0.1'); // gas for about 60 calls
-  const maxWallet = nearToYocto('0.25');
+  // Each split wallet pays its own registration with storage_deposit before it can receive
+  // tokens. The insider is the creator, which `new` registers; the late buyer's registration
+  // is taken out of the NEAR it attaches to its buy. So only the wallets need more.
+  const registration = STORAGE_MIN_YOCTO;
+  const minWallet = nearToYocto('0.1') + registration; // gas for about 60 calls + registration
+  const maxWallet = nearToYocto('0.25') + registration;
   const fixed = tokenDeposit + insider + late + rootReserve;
   const need = fixed + minWallet * BigInt(wallets);
   const bal = BigInt(balance);
   let perWallet = bal > fixed ? (bal - fixed) / BigInt(wallets) : 0n;
   if (perWallet > maxWallet) perWallet = maxWallet;
-  return { ok: bal >= need, need, tokenDeposit, insider, late, rootReserve, perWallet };
+  return { ok: bal >= need, need, tokenDeposit, insider, late, rootReserve, perWallet, registration };
 }
 
 // Text of a failed execution status, e.g. the contract panic message.
@@ -128,6 +135,98 @@ export function leaveFilled({ logs, successValue }) {
   }
   const v = returnValueBigInt(successValue);
   return { filled: v, remaining: null };
+}
+
+// A decimal string (or a safe non-negative integer) as a BigInt; anything else is null.
+export function decimalOrNull(v) {
+  if (typeof v === 'string' && /^[0-9]+$/.test(v)) return BigInt(v);
+  if (typeof v === 'number' && Number.isSafeInteger(v) && v >= 0) return BigInt(v);
+  return null;
+}
+
+// The `buy` event of the `loud` standard in the logs of a transaction, or null.
+// A field the event does not carry, or that is not a decimal amount, is null.
+export function buyEvent(logs) {
+  const ev = parseEvents(logs).find((e) => e.standard === 'loud' && e.event === 'buy');
+  if (!ev) return null;
+  return {
+    nearIn: decimalOrNull(ev.data.near_in),
+    storagePaid: decimalOrNull(ev.data.storage_paid),
+    tokensOut: decimalOrNull(ev.data.tokens_out),
+    loud: typeof ev.data.loud === 'boolean' ? ev.data.loud : null,
+  };
+}
+
+// Check of one buy against the storage rule: an account that is not registered yet pays
+// STORAGE_MIN_YOCTO out of the attached NEAR, and only the rest goes into the pool.
+//   attached               yoctoNEAR attached to the buy
+//   registeredBefore       is_registered(buyer), read before the buy
+//   poolNearBefore/After   get_state().pool_near on both sides of the buy (null: not read)
+//   event                  buyEvent() of the transaction (null: no buy event found)
+// The pool change read from the contract decides. The event is evidence: a field that is
+// present and differs fails the check, a field that is absent is named in `notes` only.
+export function evaluateBuy({ attached, registeredBefore, poolNearBefore, poolNearAfter, event, storageMin = STORAGE_MIN_YOCTO }) {
+  const paid = BigInt(attached);
+  const storagePaid = registeredBefore === true ? 0n : BigInt(storageMin);
+  const nearIn = paid > storagePaid ? paid - storagePaid : 0n;
+  const poolKnown = poolNearBefore !== null && poolNearBefore !== undefined
+    && poolNearAfter !== null && poolNearAfter !== undefined;
+  const poolDelta = poolKnown ? BigInt(poolNearAfter) - BigInt(poolNearBefore) : null;
+  const reasons = [];
+  const notes = [];
+  if (typeof registeredBefore !== 'boolean') reasons.push('is_registered was not read before the buy');
+  if (!poolKnown) reasons.push('pool_near was not read on both sides of the buy');
+  else if (poolDelta !== nearIn) reasons.push(`pool_near changed by ${poolDelta}, expected ${nearIn}`);
+  const ev = event ?? null;
+  if (ev === null) {
+    notes.push('no buy event was read');
+  } else {
+    if (ev.nearIn === null) notes.push('the buy event has no near_in');
+    else if (ev.nearIn !== nearIn) reasons.push(`the buy event says near_in ${ev.nearIn}, expected ${nearIn}`);
+    if (ev.storagePaid === null) notes.push('the buy event has no storage_paid');
+    else if (ev.storagePaid !== storagePaid) reasons.push(`the buy event says storage_paid ${ev.storagePaid}, expected ${storagePaid}`);
+  }
+  const text = (v) => (v === null || v === undefined ? null : v.toString());
+  return {
+    pass: reasons.length === 0,
+    reasons,
+    notes,
+    // The part that goes into receipts.json.
+    record: {
+      attached: paid.toString(),
+      registered_before: typeof registeredBefore === 'boolean' ? registeredBefore : null,
+      expected_storage_paid: storagePaid.toString(),
+      expected_near_in: nearIn.toString(),
+      pool_near_before: poolKnown ? BigInt(poolNearBefore).toString() : null,
+      pool_near_after: poolKnown ? BigInt(poolNearAfter).toString() : null,
+      pool_near_change: text(poolDelta),
+      event_near_in: text(ev?.nearIn),
+      event_storage_paid: text(ev?.storagePaid),
+      pass: reasons.length === 0,
+    },
+  };
+}
+
+// NEAR held by the token account, split by what it is for. Inputs in yoctoNEAR and bytes.
+//   spare         = balance - pool_near                  everything that is not pool liquidity
+//   storage_stake = storage_bytes * 1e19                 what the protocol keeps locked for state
+//   free          = spare - owed_total - storage_stake   what is left after those two
+// Values are decimal strings; `free` is negative when the balance does not cover all three.
+export function tokenNear({ balance, storageBytes, poolNear, owedTotal }) {
+  const bal = BigInt(balance);
+  const pool = BigInt(poolNear);
+  const owed = BigInt(owedTotal);
+  const stake = BigInt(storageBytes) * STORAGE_PER_BYTE;
+  const spare = bal - pool;
+  return {
+    balance: bal.toString(),
+    pool_near: pool.toString(),
+    owed_total: owed.toString(),
+    spare: spare.toString(),
+    storage_bytes: Number(storageBytes),
+    storage_stake: stake.toString(),
+    free: (spare - owed - stake).toString(),
+  };
 }
 
 // SPEC invariant 4: units that may leave in [t0, t1] given the bucket level at t0.
@@ -334,14 +433,16 @@ export function jsonReplacer(_key, value) {
   return typeof value === 'bigint' ? value.toString() : value;
 }
 
-// ---------- transaction records and outcome counts ----------
+// Transaction records and outcome counts
 
 // What a transaction looks like inside receipts.json. `r` is the result of one send:
-// { hash, account, outcome, error, earlierAttempts? }. When the send was signed and
+// { hash, account, outcome, error, method?, earlierAttempts? }. When the send was signed and
 // broadcast more than once (a new nonce or block hash after InvalidNonce / Expired), the
 // hashes of the earlier broadcasts are kept under `earlier_attempts`, oldest first.
 export function txRecord(r, extra = {}) {
   const rec = { hash: r.hash, account: r.account, outcome: r.outcome, error: r.error, ...extra };
+  // The contract method, for a function call. Other transactions have no `call` key.
+  if (typeof r.method === 'string' && r.method !== '') rec.call = r.method;
   const earlier = (r.earlierAttempts ?? []).filter((h) => typeof h === 'string' && h !== '');
   if (earlier.length > 0) rec.earlier_attempts = [...earlier];
   return rec;

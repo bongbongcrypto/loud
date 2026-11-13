@@ -18,12 +18,13 @@ import {
   txLink, accountLink, jsonReplacer,
   receiptSettlement, base58Encode, faucetTx, paramMismatches,
   txRecord, needsLookup, leaveCounts, leaveCountsText, unresolvedSummary,
+  STORAGE_MIN_YOCTO, buyEvent, evaluateBuy, tokenNear,
 } from './lib.mjs';
 
 const { KeyPair, transactions: T, utils } = nearApi;
 const { base_encode: b58encode, base_decode: b58decode } = utils.serialize;
 
-// ---------- configuration ----------
+// Configuration
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const REPO = path.resolve(HERE, '..', '..');
@@ -56,7 +57,7 @@ function checkDeadline(what) {
   if (Date.now() - startedAt > MAX_RUNTIME_MS) throw new Error(`runtime limit reached while ${what}`);
 }
 
-// ---------- output documents ----------
+// Output documents
 
 const deployment = {
   status: 'failed',
@@ -125,6 +126,10 @@ const receipts = {
   unresolved_txs: null,
   unresolved_hashes: null,
   unresolved_note: null,
+  // NEAR of the token account next to the pool's own count, right after the deploy and
+  // after step 10, and the unpaid payouts at the end (expected "0").
+  token_near: { at_deploy: null, at_end: null },
+  owed_total_at_end: null,
   generated_at: null,
 };
 
@@ -169,7 +174,7 @@ async function writeOutputs() {
   log('wrote web/deployment.json and web/receipts.json');
 }
 
-// ---------- accounts and transactions ----------
+// Accounts and transactions
 
 function newSigner(id) {
   const kp = KeyPair.fromRandom('ed25519');
@@ -365,8 +370,27 @@ function summarize(result, hash, account) {
 // contract reserves 10 Tgas out of the attached gas.
 const PAY_GAS = 80n * TGAS;
 
-const call = (signer, contract, method, args, { gas = 30n * TGAS, deposit = 0n } = {}) =>
-  sendTx(signer, contract, [T.functionCall(method, args, gas, deposit)]);
+// One function call. The result carries the method name, which txRecord writes as `call`.
+const call = async (signer, contract, method, args, { gas = 30n * TGAS, deposit = 0n } = {}) => ({
+  ...await sendTx(signer, contract, [T.functionCall(method, args, gas, deposit)]),
+  method,
+});
+
+// An amount in yoctoNEAR for a step text.
+const nearText = (v) => (v === null || v === undefined ? 'unknown'
+  : String(v).startsWith('-') ? `${v} yoctoNEAR` : `${yoctoToNear(v)} NEAR`);
+
+// The storage part of a buy step text, from the result of evaluateBuy.
+function buyText(b) {
+  const r = b.record;
+  return `pool_near rose by ${nearText(r.pool_near_change)} for ${nearText(r.attached)} attached (`
+    + (r.registered_before === true
+      ? 'the buyer was registered already, so nothing was taken for storage'
+      : `the buyer was not registered, so ${nearText(r.expected_storage_paid)} of the deposit paid its registration`)
+    + ')'
+    + (b.reasons.length > 0 ? `; NOT as expected: ${b.reasons.join('; ')}` : '')
+    + (b.notes.length > 0 ? `; ${b.notes.join('; ')}` : '');
+}
 
 async function blockTsOf(r) {
   if (!r.blockHash) return null;
@@ -436,7 +460,7 @@ async function readUntil(read, ok, tries = 10) {
   return value;
 }
 
-// ---------- the run ----------
+// The run
 
 async function main() {
   log(`preset ${PRESET}; rpc ${RPC_URLS.map((u) => new URL(u).host).join(', ')}`);
@@ -446,7 +470,7 @@ async function main() {
   deployment.wasm = { bytes: wasm.length, sha256: createHash('sha256').update(wasm).digest('hex') };
   log(`wasm ${wasm.length} bytes, sha256 ${deployment.wasm.sha256}`);
 
-  // ----- step 1: root account from the faucet -----
+  // Step 1: root account from the faucet
   const s1 = addStep(1, 'Create a fresh root account through the testnet faucet', 'the account exists and is funded');
   const root = newSigner(`loud-${Date.now().toString(36)}${randomBytes(3).toString('hex')}.testnet`);
   deployment.root_account = root.id;
@@ -483,9 +507,9 @@ async function main() {
     : "the faucet returned no transaction identifier, so the faucet's own account-creation transaction is not recorded here";
   finishStep(s1, plan.ok, `${root.id} holds ${yoctoToNear(rootBalance)} NEAR (faucet ${new URL(faucet.url).host}); the run needs ${yoctoToNear(plan.need)}; ${faucetNote}`);
   if (!plan.ok) throw new Error('root balance is too small for the run');
-  log(`plan: token ${yoctoToNear(plan.tokenDeposit)}, insider ${yoctoToNear(plan.insider)}, late ${yoctoToNear(plan.late)}, each wallet ${yoctoToNear(plan.perWallet)} NEAR`);
+  log(`plan: token ${yoctoToNear(plan.tokenDeposit)}, insider ${yoctoToNear(plan.insider)}, late ${yoctoToNear(plan.late)}, each wallet ${yoctoToNear(plan.perWallet)} NEAR (of which ${yoctoToNear(plan.registration)} is its registration)`);
 
-  // ----- step 3 (runs before step 2 so the loud window is not spent on setup) -----
+  // Step 3 (runs before step 2 so the loud window is not spent on setup)
   const s3 = addStep(3, `Create the insider, ${WALLETS} split wallets and one late buyer under the root`, `${WALLETS + 2} accounts created`);
   const insider = newSigner(`insider.${root.id}`);
   const late = newSigner(`late.${root.id}`);
@@ -509,9 +533,10 @@ async function main() {
   finishStep(s3, created === funding.length, `${created} of ${funding.length} accounts created`);
   if (created !== funding.length) throw new Error('account creation failed');
 
-  // ----- step 2: token account in one batch transaction, no AddKey -----
+  // Step 2: token account in one batch transaction, no AddKey
   const s2 = addStep(2, 'Create, fund, deploy and initialise the token account in one transaction with no access key',
-    'view_access_key_list returns an empty list; the on-chain code hash equals the hash of the built wasm; get_params equals the preset');
+    'view_access_key_list returns an empty list; the on-chain code hash equals the hash of the built wasm; get_params equals the preset; '
+    + 'storage_balance_bounds().min is 0.02 NEAR, storage_balance_of() of an account that is not registered is null, and the creator is registered');
   const token = `t.${root.id}`;
   const params = presetParams(PRESET, insider.id);
   deployment.token_account = token;
@@ -554,18 +579,66 @@ async function main() {
       }
     }
   };
-  const onchain = await view('get_params');
+  // NEAR of the token account next to what the contract counts as pool liquidity and as
+  // unpaid payouts. Never throws: null when a read failed.
+  async function tokenNearNow() {
+    try {
+      const [acct, st] = await Promise.all([rpc.viewAccount(token), view('get_state')]);
+      return tokenNear({ balance: acct.amount, storageBytes: acct.storage_usage, poolNear: st.pool_near, owedTotal: st.owed_total });
+    } catch (e) {
+      log(`could not read the NEAR of the token account: ${String(e?.message ?? e).slice(0, 160)}`);
+      return null;
+    }
+  }
+  // All reads of this step go out together, so that the insider's buy stays well inside
+  // the 2 minute loud window. `stranger` is an account name that is never created.
+  // A storage view that cannot be read counts as a failed check (undefined), so that the
+  // deployment result below is still written.
+  const stranger = `nobody.${root.id}`;
+  const soft = (read) => read.catch((e) => {
+    log(`storage view failed: ${String(e?.message ?? e).slice(0, 160)}`);
+    return undefined;
+  });
+  const [onchain, bounds, strangerBalance, strangerRegistered, creatorRegistered, stateAtDeploy, nearAtDeploy] = await Promise.all([
+    view('get_params'),
+    soft(view('storage_balance_bounds')),
+    soft(view('storage_balance_of', { account_id: stranger })),
+    soft(view('is_registered', { account_id: stranger })),
+    soft(view('is_registered', { account_id: insider.id })),
+    view('get_state'),
+    tokenNearNow(),
+  ]);
+  receipts.token_near.at_deploy = nearAtDeploy;
+  const storageMin = bounds?.min === undefined || bounds?.min === null ? null : String(bounds.min);
+  // `new` registers the creator, so that the holder of the creator allocation is registered
+  // like every other holder.
+  const storageOk = storageMin === STORAGE_MIN_YOCTO.toString() && strangerBalance === null && creatorRegistered === true;
+  s2.storage = {
+    expected_min: STORAGE_MIN_YOCTO.toString(),
+    min: storageMin,
+    max: bounds?.max === undefined || bounds?.max === null ? null : String(bounds.max),
+    unregistered_account: stranger,
+    unregistered_balance: strangerBalance === undefined ? 'not read' : strangerBalance,
+    unregistered_is_registered: strangerRegistered ?? null,
+    creator_is_registered: creatorRegistered ?? null,
+    pass: storageOk,
+  };
   deployment.onchain_params = onchain;
   const mismatches = paramMismatches(params, onchain);
   deployment.param_mismatches = mismatches;
   deployment.params_match = mismatches.length === 0;
   const deployOk = deployment.zero_keys && deployment.code_hash_match && deployment.params_match;
-  finishStep(s2, deployOk,
+  // The storage views are part of this step's result. deployment.json keeps its three
+  // conditions (zero keys, code hash, parameters).
+  finishStep(s2, deployOk && storageOk,
     `${token} has ${keys.length} access keys; code hash on chain ${deployment.code_hash} `
     + `${deployment.code_hash_match ? 'equals' : 'DIFFERS from'} the hash of the built wasm ${expectedCodeHash}; `
     + (deployment.params_match
       ? `get_params equals the ${PRESET} preset (cap_units ${unitsToTokens(onchain.cap_units)} LOUD per ${BigInt(onchain.cap_window_ns) / 10n ** 9n}s)`
-      : `get_params differs from the ${PRESET} preset: ${mismatches.join('; ').slice(0, 500)}`));
+      : `get_params differs from the ${PRESET} preset: ${mismatches.join('; ').slice(0, 500)}`)
+    + `; storage_balance_bounds().min is ${storageMin === null ? 'missing' : nearText(storageMin)} (expected ${nearText(STORAGE_MIN_YOCTO)}); `
+    + `storage_balance_of(${stranger}) is ${strangerBalance === null ? 'null' : strangerBalance === undefined ? 'not read' : JSON.stringify(strangerBalance).slice(0, 120)}; `
+    + `the creator ${creatorRegistered === true ? 'is' : 'is NOT'} registered by new`);
   deployment.status = deployOk ? 'ok' : 'failed';
   const capUnits = BigInt(onchain.cap_units);
   const capWindowNs = BigInt(onchain.cap_window_ns);
@@ -586,22 +659,73 @@ async function main() {
     }
   }
 
-  // ----- step 4: insider buys in the loud window -----
-  const s4 = addStep(4, 'The insider buys with 1 NEAR during the loud window', 'the bought tokens are loud; quiet balance is 0');
+  // Step 4: insider buys in the loud window
+  // The insider is the creator, which `new` registered, so its buy should pay nothing for
+  // storage. The check takes the registration state and pool_near as read in step 2, a
+  // moment ago, and does not assume either.
+  const s4 = addStep(4, 'The insider buys with 1 NEAR during the loud window',
+    'the bought tokens are loud; quiet balance is 0; pool_near rises by the attached NEAR less the registration payment, which is 0 for an account that is registered already');
   const before4 = await account(insider.id);
   const buy = await call(insider, token, 'buy', { min_tokens_out: '1' }, { gas: 50n * TGAS, deposit: nearToYocto('1') });
   s4.txs.push(txRecord(buy));
+  const state4 = await readUntil(() => view('get_state'),
+    (st) => buy.outcome !== 'success' || BigInt(st.pool_near) !== BigInt(stateAtDeploy.pool_near));
+  const buy4 = evaluateBuy({
+    attached: nearToYocto('1'),
+    registeredBefore: creatorRegistered,
+    poolNearBefore: stateAtDeploy.pool_near,
+    poolNearAfter: state4.pool_near,
+    event: buyEvent(buy.logs),
+  });
+  s4.buy = buy4.record;
   const bought = returnValueBigInt(buy.successValue) ?? 0n;
   const after4 = await readUntil(() => account(insider.id), (a) => buy.outcome !== 'success' || BigInt(a.loud) > BigInt(before4.loud));
   const insiderLoud = BigInt(after4.loud);
-  finishStep(s4, buy.outcome === 'success' && insiderLoud > BigInt(before4.loud) && BigInt(after4.quiet) === 0n,
-    `loud ${unitsToTokens(before4.loud)} -> ${unitsToTokens(insiderLoud)} LOUD (bought ${unitsToTokens(bought)}), quiet ${after4.quiet}${buy.error ? `; ${buy.error}` : ''}`);
+  finishStep(s4, buy.outcome === 'success' && insiderLoud > BigInt(before4.loud) && BigInt(after4.quiet) === 0n && buy4.pass,
+    `loud ${unitsToTokens(before4.loud)} -> ${unitsToTokens(insiderLoud)} LOUD (bought ${unitsToTokens(bought)}), quiet ${after4.quiet}${buy.error ? `; ${buy.error}` : ''}; ${buyText(buy4)}`);
   if (insiderLoud === 0n) throw new Error('the insider holds no loud tokens; nothing to split');
 
-  // ----- step 5: split across the wallets -----
+  // Step 5: split across the wallets
   const s5 = addStep(5, `The insider splits its whole loud balance across ${WALLETS} wallets with ft_transfer`,
-    `every wallet holds loud tokens and no quiet tokens; the insider holds 0`);
-  const parts = splitEvenly(insiderLoud, WALLETS);
+    'every wallet holds loud tokens and no quiet tokens; the insider holds 0. Before the split: a transfer of 1 unit to a wallet '
+    + 'that is not registered fails with E_UNREGISTERED, then every wallet registers itself with storage_deposit (0.02 NEAR)');
+  // An account has to be registered before it can receive tokens. First the refusal: one
+  // unit to a wallet that has not paid its registration yet.
+  const probeTo = wallets[0];
+  const probeRegistered = await view('is_registered', { account_id: probeTo.id });
+  const probe = await call(insider, token, 'ft_transfer', { receiver_id: probeTo.id, amount: '1' }, { deposit: ONE_YOCTO });
+  s5.txs.push(txRecord(probe));
+  const probeOk = probeRegistered === false && probe.outcome === 'failure' && probe.code === 'E_UNREGISTERED';
+  s5.unregistered_transfer = {
+    receiver: probeTo.id,
+    registered_before: probeRegistered,
+    amount: '1',
+    hash: probe.hash,
+    outcome: probe.outcome,
+    error_code: probe.code,
+    pass: probeOk,
+  };
+  // Then every wallet pays its own registration, all at the same time. The deposit is
+  // exactly the minimum, so there is nothing to refund.
+  const register = (w) => call(w, token, 'storage_deposit', { registration_only: true }, { deposit: STORAGE_MIN_YOCTO });
+  const isRegistered = (w) => readUntil(() => view('is_registered', { account_id: w.id }), (v) => v === true, 6);
+  const deposits = await Promise.all(wallets.map(register));
+  deposits.forEach((r) => s5.txs.push(txRecord(r)));
+  const registered = await Promise.all(wallets.map(isRegistered));
+  // The chain decides, not the send result. A wallet that is still not registered sends
+  // once more; a second deposit to a registered account is refunded in full.
+  for (let i = 0; i < WALLETS; i++) {
+    if (registered[i] === true) continue;
+    checkDeadline('registering the wallets');
+    log(`storage_deposit of ${wallets[i].id}: ${deposits[i].outcome} ${deposits[i].error ?? ''}; sending once more`);
+    s5.txs.push(txRecord(await register(wallets[i])));
+    registered[i] = await isRegistered(wallets[i]);
+  }
+  const registeredCount = registered.filter((v) => v === true).length;
+  s5.registration = { deposit: STORAGE_MIN_YOCTO.toString(), wallets: WALLETS, registered: registeredCount };
+  // The refused transfer moved nothing. If it did go through, split what is left.
+  const toSplit = probe.outcome === 'failure' ? insiderLoud : BigInt((await account(insider.id)).loud);
+  const parts = splitEvenly(toSplit, WALLETS);
   for (let i = 0; i < WALLETS; i++) {
     checkDeadline('splitting');
     const r = await call(insider, token, 'ft_transfer', { receiver_id: wallets[i].id, amount: parts[i].toString() }, { deposit: ONE_YOCTO });
@@ -613,23 +737,46 @@ async function main() {
   const insiderAfter = await account(insider.id);
   s5.balances = wallets.map((w, i) => ({ account: w.id, loud: String(balances[i].loud), quiet: String(balances[i].quiet) }));
   const loudOk = balances.every((b, i) => BigInt(b.loud) === parts[i] && BigInt(b.quiet) === 0n);
-  finishStep(s5, loudOk && BigInt(insiderAfter.loud) === 0n,
-    `${balances.filter((b) => BigInt(b.loud) > 0n).length} wallets hold loud, about ${unitsToTokens(parts[0])} LOUD each; insider loud ${insiderAfter.loud}`);
+  finishStep(s5, loudOk && BigInt(insiderAfter.loud) === 0n && probeOk && registeredCount === WALLETS,
+    `${balances.filter((b) => BigInt(b.loud) > 0n).length} wallets hold loud, about ${unitsToTokens(parts[0])} LOUD each; insider loud ${insiderAfter.loud}; `
+    + `before the split, 1 unit to ${probeTo.id} (${probeRegistered === false ? 'not registered' : 'registration state not as expected'}): ${probe.outcome}: ${probe.error ?? 'no error'}; `
+    + `${registeredCount} of ${WALLETS} wallets registered with storage_deposit, ${nearText(STORAGE_MIN_YOCTO)} each`);
 
-  // ----- step 6: a split wallet cannot use sell() -----
+  // Step 6: a split wallet cannot use sell()
   const s6 = addStep(6, 'A split wallet tries sell() with its loud tokens', 'the call fails with E_NO_QUIET');
   const sellTry = await call(wallets[0], token, 'sell', { amount: parts[0].toString(), min_near_out: '0' }, { gas: PAY_GAS, deposit: ONE_YOCTO });
   s6.txs.push(txRecord(sellTry));
   finishStep(s6, sellTry.outcome === 'failure' && sellTry.code === 'E_NO_QUIET', `${sellTry.outcome}: ${sellTry.error ?? 'no error'}`);
 
-  // ----- step 7: a late buyer stays quiet and can sell at once -----
+  // Step 7: a late buyer stays quiet and can sell at once
   const s7 = addStep(7, 'After the loud window a late buyer buys with 0.5 NEAR and sells half at once',
-    'the late buyer holds quiet tokens only; the sell succeeds and none of its receipts failed');
+    'the late buyer holds quiet tokens only; its first buy registers it: 0.02 NEAR of the deposit pays the registration and pool_near rises by the rest; '
+    + 'the sell succeeds and none of its receipts failed');
   await waitChainTime(loudUntil + 1n, 'the end of the loud window');
+  const [lateRegistered, state7] = await Promise.all([view('is_registered', { account_id: late.id }), view('get_state')]);
   const lateBuy = await call(late, token, 'buy', { min_tokens_out: '1' }, { gas: 50n * TGAS, deposit: nearToYocto('0.5') });
   s7.txs.push(txRecord(lateBuy));
   const lateAfterBuy = await readUntil(() => account(late.id), (a) => lateBuy.outcome !== 'success' || BigInt(a.quiet) > 0n);
   const lateQuiet = BigInt(lateAfterBuy.quiet);
+  // Read before the sell goes out, which lowers pool_near again.
+  const state7b = await readUntil(() => view('get_state'),
+    (st) => lateBuy.outcome !== 'success' || BigInt(st.pool_near) !== BigInt(state7.pool_near));
+  const [lateRegisteredAfter, lateStorage] = await Promise.all([
+    readUntil(() => view('is_registered', { account_id: late.id }), (v) => lateBuy.outcome !== 'success' || v === true, 6),
+    view('storage_balance_of', { account_id: late.id }),
+  ]);
+  const buy7 = evaluateBuy({
+    attached: nearToYocto('0.5'),
+    registeredBefore: lateRegistered,
+    poolNearBefore: state7.pool_near,
+    poolNearAfter: state7b.pool_near,
+    event: buyEvent(lateBuy.logs),
+  });
+  s7.buy = {
+    ...buy7.record,
+    registered_after: lateRegisteredAfter,
+    storage_balance_total: lateStorage?.total === undefined || lateStorage?.total === null ? null : String(lateStorage.total),
+  };
   let lateSell = null;
   if (lateQuiet > 1n) {
     lateSell = await call(late, token, 'sell', { amount: (lateQuiet / 2n).toString(), min_near_out: '0' }, { gas: PAY_GAS, deposit: ONE_YOCTO });
@@ -638,22 +785,33 @@ async function main() {
   const sellSettled = lateSell?.outcome === 'success' && lateSell.settled === true;
   s7.payout_calls = lateSell?.outcome === 'success' ? 1 : 0;
   s7.payouts_settled = sellSettled ? 1 : 0;
-  finishStep(s7, lateBuy.outcome === 'success' && BigInt(lateAfterBuy.loud) === 0n && lateQuiet > 0n && sellSettled,
-    `after buy: loud ${lateAfterBuy.loud}, quiet ${unitsToTokens(lateQuiet)} LOUD; sell of half: ${lateSell ? lateSell.outcome : 'not sent'}${lateSell?.error ? ` (${lateSell.error})` : ''}`
+  finishStep(s7, lateBuy.outcome === 'success' && BigInt(lateAfterBuy.loud) === 0n && lateQuiet > 0n && sellSettled
+    && buy7.pass && lateRegistered === false && lateRegisteredAfter === true,
+    `after buy: loud ${lateAfterBuy.loud}, quiet ${unitsToTokens(lateQuiet)} LOUD; ${buyText(buy7)}; `
+    + `is_registered after the buy: ${lateRegisteredAfter}; sell of half: ${lateSell ? lateSell.outcome : 'not sent'}${lateSell?.error ? ` (${lateSell.error})` : ''}`
     + (lateSell?.outcome === 'success' ? `; payout receipts: ${sellSettled ? 'all succeeded' : `NOT settled (${lateSell.receiptError ?? 'unknown'})`}` : ''));
 
-  // ----- step 8: every wallet shouts; an early leave is rejected -----
-  const s8 = addStep(8, `All ${WALLETS} wallets shout their full balance; one tries leave() before the notice ends`,
-    `${WALLETS} open exits; the early leave fails with E_NOTICE`);
+  // Step 8: every wallet shouts; an early leave is rejected
+  const s8 = addStep(8, `All ${WALLETS} wallets shout their full balance; one tries leave() and then hush() before the notice ends`,
+    `${WALLETS} open exits; the early leave fails with E_NOTICE; the hush of the same exit by its owner fails with E_NOTICE_BINDING and the exit stays open`);
   const shouts = await Promise.all(wallets.map((w, i) => call(w, token, 'shout', { amount: parts[i].toString() }, { deposit: ONE_YOCTO })));
   shouts.forEach((r) => s8.txs.push(txRecord(r)));
   // The early leave goes out at once, while the notice of the exit just opened is still running.
+  // The same wallet then tries to take its notice back. A shout is binding: hush fails for
+  // everyone, the owner included, until the exit has expired.
   let early = null;
+  let earlyHush = null;
+  let earlyExitId = null;
+  async function earlyCalls(wallet, exitId) {
+    earlyExitId = exitId;
+    early = await call(wallet, token, 'leave', { exit_id: exitId, min_near_out: '0' }, { gas: PAY_GAS, deposit: ONE_YOCTO });
+    s8.txs.push(txRecord(early));
+    earlyHush = await call(wallet, token, 'hush', { exit_id: exitId }, { deposit: ONE_YOCTO });
+    s8.txs.push(txRecord(earlyHush));
+  }
   const firstShout = shouts.findIndex((r) => r.outcome === 'success' && returnValueBigInt(r.successValue) !== null);
   if (firstShout >= 0) {
-    early = await call(wallets[firstShout], token, 'leave',
-      { exit_id: returnValueBigInt(shouts[firstShout].successValue).toString(), min_near_out: '0' }, { gas: PAY_GAS, deposit: ONE_YOCTO });
-    s8.txs.push(txRecord(early));
+    await earlyCalls(wallets[firstShout], returnValueBigInt(shouts[firstShout].successValue).toString());
   }
   const afterShout = await Promise.all(wallets.map((w) => readUntil(() => account(w.id), (a) => (a.exits ?? []).length > 0, 4)));
   const exits = wallets.map((w, i) => {
@@ -664,15 +822,34 @@ async function main() {
   s8.exits = open.map((e) => ({ id: e.id, account: e.wallet.id, amount: e.amount, ready_at: e.readyAt.toString(), expires_at: e.expiresAt.toString() }));
   if (early === null && open.length > 0) {
     // The shout return value was not readable; use the exit id from get_account instead.
-    const e = open[0];
-    early = await call(e.wallet, token, 'leave', { exit_id: e.id, min_near_out: '0' }, { gas: PAY_GAS, deposit: ONE_YOCTO });
-    s8.txs.push(txRecord(early));
+    await earlyCalls(open[0].wallet, open[0].id);
   }
-  finishStep(s8, open.length === WALLETS && early?.outcome === 'failure' && early.code === 'E_NOTICE',
-    `${open.length} open exits (ids ${open.map((e) => e.id).join(',')}); early leave: ${early ? `${early.outcome}: ${early.error ?? 'no error'}` : 'not sent'}`);
+  // In the usual path the exits above were read after the hush, so an exit that is still
+  // listed was not cancelled. The block time says whether the hush landed inside the notice;
+  // it has to fail either way, because the exit has not expired.
+  const hushedExit = earlyExitId === null ? null : (open.find((e) => e.id === earlyExitId) ?? null);
+  const hushTs = earlyHush ? await blockTsOf(earlyHush) : null;
+  const hushOk = earlyHush?.outcome === 'failure' && earlyHush.code === 'E_NOTICE_BINDING' && hushedExit !== null;
+  s8.early_leave = early ? { account: early.account, exit_id: earlyExitId, hash: early.hash, outcome: early.outcome, error_code: early.code } : null;
+  s8.early_hush = earlyHush ? {
+    account: earlyHush.account,
+    exit_id: earlyExitId,
+    hash: earlyHush.hash,
+    outcome: earlyHush.outcome,
+    error_code: earlyHush.code,
+    block_timestamp: hushTs === null ? null : hushTs.toString(),
+    ready_at: hushedExit ? hushedExit.readyAt.toString() : null,
+    before_ready: hushTs !== null && hushedExit ? hushTs < hushedExit.readyAt : null,
+    exit_still_open: hushedExit !== null,
+    pass: hushOk,
+  } : null;
+  finishStep(s8, open.length === WALLETS && early?.outcome === 'failure' && early.code === 'E_NOTICE' && hushOk,
+    `${open.length} open exits (ids ${open.map((e) => e.id).join(',')}); early leave: ${early ? `${early.outcome}: ${early.error ?? 'no error'}` : 'not sent'}; `
+    + `hush of exit ${earlyExitId ?? '-'} by its owner${s8.early_hush?.before_ready === true ? ' during the notice' : s8.early_hush?.before_ready === false ? ' after the notice, before expiry' : ''}: `
+    + `${earlyHush ? `${earlyHush.outcome}: ${earlyHush.error ?? 'no error'}` : 'not sent'}; the exit is ${hushedExit !== null ? 'still open' : 'NOT listed as open'}`);
   if (open.length === 0) throw new Error('no exit was opened; cannot run the leave test');
 
-  // ----- step 9: all wallets leave for one cap window -----
+  // Step 9: all wallets leave for one cap window
   const s9 = addStep(9, `After the notice, all ${WALLETS} wallets call leave() in rounds for one full cap window`,
     'at least one fill; every call that executed and failed did so with E_CAP (or E_EXPIRED at the very end); no successful leave has a failed receipt or a payout_failed event; calls that were not executed or whose outcome stayed unknown are counted apart');
   const readyAt = open.reduce((m, e) => (e.readyAt > m ? e.readyAt : m), 0n);
@@ -771,7 +948,8 @@ async function main() {
       }
       // An earlier broadcast that did execute is a leave call of its own: it gets its own
       // record, so that its fill (if any) is on record for step 10.
-      for (const r of await resolveEarlier(rec, lookupUntil)) {
+      for (const found of await resolveEarlier(rec, lookupUntil)) {
+        const r = { ...found, method: 'leave' };
         const { fields } = await leaveFields(r);
         const extra = payRecord(r, { round: rec.round, exit_id: rec.exit_id, ...fields, retried_as: rec.hash });
         leaveRecs.add(extra);
@@ -818,7 +996,7 @@ async function main() {
   receipts.split.unresolved = c9.unresolved;
   finishStep(s9, fillsCount > 0 && unexpected === 0 && payoutsSettled === payoutCalls, leaveCountsText(c9, open.length));
 
-  // ----- step 10: the cap held -----
+  // Step 10: the cap held
   const s10 = addStep(10, 'Total loud units that left during the cap window stay within the cap',
     'measured over the full cap window: sold <= bucket_at_start + cap_units * elapsed / cap_window (SPEC invariant 4), and the per-transaction fills add up to the contract counter');
   // The measurement closes only after chain time has passed the end of the cap window.
@@ -865,6 +1043,16 @@ async function main() {
         + ' is not known whether each of them never executed or executed and failed'
       : '')
     + (reasons.length > 0 ? `; not passed because: ${reasons.join('; ').slice(0, 600)}` : ''));
+
+  // Closing record: unpaid payouts and the NEAR of the token account
+  // Recorded only: no step result depends on it. tokenNearNow() never throws.
+  const nearAtEnd = await tokenNearNow();
+  receipts.token_near.at_end = nearAtEnd;
+  receipts.owed_total_at_end = nearAtEnd?.owed_total ?? null;
+  if (nearAtEnd) {
+    log(`at the end: owed_total ${nearAtEnd.owed_total}; the token account holds ${nearText(nearAtEnd.balance)}, pool_near is ${nearText(nearAtEnd.pool_near)}, `
+      + `spare ${nearText(nearAtEnd.spare)}; the protocol locks ${nearText(nearAtEnd.storage_stake)} for ${nearAtEnd.storage_bytes} bytes of state; free ${nearText(nearAtEnd.free)}`);
+  }
 }
 
 let exitCode = 1;

@@ -6,6 +6,7 @@ import {
   txLink, accountLink, jsonReplacer,
   receiptSettlement, base58Encode, isTxHash, faucetTx, paramMismatches,
   txRecord, outcomeClass, needsLookup, unresolvedEarlier, leaveCounts, leaveCountsText, unresolvedSummary,
+  STORAGE_MIN_YOCTO, decimalOrNull, buyEvent, evaluateBuy, tokenNear,
 } from './lib.mjs';
 
 const b64 = (v) => Buffer.from(JSON.stringify(v)).toString('base64');
@@ -42,16 +43,148 @@ test('splitEvenly keeps the exact total', () => {
 test('budget scales wallet funding and reports a shortfall', () => {
   const rich = budget({ wasmBytes: 300_000, balance: 100n * YOCTO });
   assert.equal(rich.ok, true);
-  assert.equal(rich.perWallet, nearToYocto('0.25'));
+  assert.equal(rich.perWallet, nearToYocto('0.27'));
+  assert.equal(rich.registration, STORAGE_MIN_YOCTO);
   assert.equal(rich.tokenDeposit, nearToYocto('3.5'));
   const ten = budget({ wasmBytes: 300_000, balance: 10n * YOCTO });
   assert.equal(ten.ok, true);
-  assert.ok(ten.perWallet >= nearToYocto('0.1') && ten.perWallet <= nearToYocto('0.25'));
+  // Every wallet gets its registration payment on top of the NEAR it needs for gas.
+  assert.ok(ten.perWallet >= nearToYocto('0.12') && ten.perWallet <= nearToYocto('0.27'));
   const total = ten.tokenDeposit + ten.insider + ten.late + ten.rootReserve + ten.perWallet * 20n;
   assert.ok(total <= 10n * YOCTO);
   const poor = budget({ wasmBytes: 300_000, balance: 5n * YOCTO });
   assert.equal(poor.ok, false);
   assert.ok(poor.need > 5n * YOCTO);
+  // 3.5 token + 1.25 insider + 0.65 late + 0.3 root + 20 * (0.1 gas + 0.02 registration)
+  assert.equal(poor.need, nearToYocto('8.1'));
+});
+
+test('STORAGE_MIN_YOCTO is 0.02 NEAR', () => {
+  assert.equal(STORAGE_MIN_YOCTO, nearToYocto('0.02'));
+  assert.equal(STORAGE_MIN_YOCTO.toString(), '20000000000000000000000');
+});
+
+test('errorCode keeps the codes of this run apart', () => {
+  assert.equal(errorCode('E_NOTICE: 55 s of notice left'), 'E_NOTICE');
+  assert.equal(errorCode('E_NOTICE_BINDING: a shout is binding until the exit expires'), 'E_NOTICE_BINDING');
+  assert.equal(errorCode('E_UNREGISTERED: w01.x.testnet is not registered'), 'E_UNREGISTERED');
+  const panic = { ActionError: { index: 0, kind: { FunctionCallError: { ExecutionError: 'Smart contract panicked: E_NOTICE_BINDING: wait' } } } };
+  assert.equal(errorCode(failureText(panic)), 'E_NOTICE_BINDING');
+});
+
+test('buyEvent reads the buy event and leaves absent fields null', () => {
+  const line = (data) => `EVENT_JSON:${JSON.stringify({ standard: 'loud', version: '1.0.0', event: 'buy', data: [data] })}`;
+  const full = buyEvent([
+    'EVENT_JSON:{"standard":"nep141","version":"1.0.0","event":"ft_transfer","data":[{"amount":"5"}]}',
+    line({ account: 'a.testnet', near_in: '480000000000000000000000', storage_paid: '20000000000000000000000', tokens_out: '77', loud: false }),
+  ]);
+  assert.deepEqual(full, { nearIn: nearToYocto('0.48'), storagePaid: STORAGE_MIN_YOCTO, tokensOut: 77n, loud: false });
+  const old = buyEvent([line({ account: 'a.testnet', near_in: '1000', tokens_out: '5', loud: true })]);
+  assert.equal(old.storagePaid, null);
+  assert.equal(old.nearIn, 1000n);
+  assert.equal(buyEvent([line({ near_in: 'abc', storage_paid: -1 })]).nearIn, null);
+  assert.equal(buyEvent([line({ near_in: 'abc', storage_paid: -1 })]).storagePaid, null);
+  assert.equal(buyEvent(['plain log']), null);
+  assert.equal(buyEvent(undefined), null);
+  assert.equal(decimalOrNull('12'), 12n);
+  assert.equal(decimalOrNull(12), 12n);
+  assert.equal(decimalOrNull('1.5'), null);
+  assert.equal(decimalOrNull(null), null);
+});
+
+test('evaluateBuy: a first buy pays the registration out of the deposit', () => {
+  const half = nearToYocto('0.5');
+  const net = nearToYocto('0.48');
+  const event = { nearIn: net, storagePaid: STORAGE_MIN_YOCTO, tokensOut: 1n, loud: false };
+  const first = evaluateBuy({ attached: half, registeredBefore: false, poolNearBefore: '1000', poolNearAfter: (1000n + net).toString(), event });
+  assert.equal(first.pass, true);
+  assert.deepEqual(first.reasons, []);
+  assert.deepEqual(first.notes, []);
+  assert.deepEqual(first.record, {
+    attached: half.toString(),
+    registered_before: false,
+    expected_storage_paid: STORAGE_MIN_YOCTO.toString(),
+    expected_near_in: net.toString(),
+    pool_near_before: '1000',
+    pool_near_after: (1000n + net).toString(),
+    pool_near_change: net.toString(),
+    event_near_in: net.toString(),
+    event_storage_paid: STORAGE_MIN_YOCTO.toString(),
+    pass: true,
+  });
+
+  // The whole deposit in the pool: the registration was not taken.
+  const untaken = evaluateBuy({ attached: half, registeredBefore: false, poolNearBefore: 0n, poolNearAfter: half, event });
+  assert.equal(untaken.pass, false);
+  assert.match(untaken.reasons.join(' '), /pool_near changed by/);
+
+  // A registered account pays nothing for storage.
+  const one = nearToYocto('1');
+  const again = evaluateBuy({
+    attached: one, registeredBefore: true, poolNearBefore: '0', poolNearAfter: one.toString(),
+    event: { nearIn: one, storagePaid: 0n, tokensOut: 1n, loud: true },
+  });
+  assert.equal(again.pass, true);
+  assert.equal(again.record.expected_storage_paid, '0');
+  assert.equal(again.record.event_storage_paid, '0');
+  // Charging a registered account a second time fails the check.
+  const twice = evaluateBuy({ attached: one, registeredBefore: true, poolNearBefore: '0', poolNearAfter: (one - STORAGE_MIN_YOCTO).toString(), event: null });
+  assert.equal(twice.pass, false);
+});
+
+test('evaluateBuy: the event is evidence, the pool change decides', () => {
+  const half = nearToYocto('0.5');
+  const net = nearToYocto('0.48');
+  const base = { attached: half, registeredBefore: false, poolNearBefore: 0n, poolNearAfter: net };
+  // An absent event or an absent field is named, and does not fail the check.
+  const noEvent = evaluateBuy({ ...base, event: null });
+  assert.equal(noEvent.pass, true);
+  assert.deepEqual(noEvent.notes, ['no buy event was read']);
+  const noField = evaluateBuy({ ...base, event: { nearIn: net, storagePaid: null, tokensOut: 1n, loud: false } });
+  assert.equal(noField.pass, true);
+  assert.deepEqual(noField.notes, ['the buy event has no storage_paid']);
+  assert.equal(noField.record.event_storage_paid, null);
+  // A field that is present and wrong fails it.
+  const wrongIn = evaluateBuy({ ...base, event: { nearIn: half, storagePaid: STORAGE_MIN_YOCTO, tokensOut: 1n, loud: false } });
+  assert.equal(wrongIn.pass, false);
+  assert.match(wrongIn.reasons.join(' '), /near_in/);
+  const wrongPaid = evaluateBuy({ ...base, event: { nearIn: net, storagePaid: 0n, tokensOut: 1n, loud: false } });
+  assert.equal(wrongPaid.pass, false);
+  assert.match(wrongPaid.reasons.join(' '), /storage_paid/);
+  // Without the reads there is no verdict in favour.
+  const unread = evaluateBuy({ attached: half, registeredBefore: undefined, poolNearBefore: null, poolNearAfter: null, event: null });
+  assert.equal(unread.pass, false);
+  assert.equal(unread.reasons.length, 2);
+  assert.equal(unread.record.registered_before, null);
+  assert.equal(unread.record.pool_near_change, null);
+});
+
+test('tokenNear splits the balance of the token account', () => {
+  const sheet = tokenNear({
+    balance: nearToYocto('4'),
+    storageBytes: 230_000,
+    poolNear: nearToYocto('1.2'),
+    owedTotal: '0',
+  });
+  assert.deepEqual(sheet, {
+    balance: nearToYocto('4').toString(),
+    pool_near: nearToYocto('1.2').toString(),
+    owed_total: '0',
+    spare: nearToYocto('2.8').toString(),
+    storage_bytes: 230_000,
+    storage_stake: nearToYocto('2.3').toString(),
+    free: nearToYocto('0.5').toString(),
+  });
+  // A balance that does not cover pool, debts and storage shows as a negative `free`.
+  const short = tokenNear({ balance: nearToYocto('3'), storageBytes: 230_000, poolNear: nearToYocto('1'), owedTotal: nearToYocto('0.1') });
+  assert.equal(short.spare, nearToYocto('2').toString());
+  assert.equal(short.free, `-${nearToYocto('0.4')}`);
+});
+
+test('txRecord names the contract method of a function call', () => {
+  const rec = txRecord({ hash: 'h', account: 'a.testnet', outcome: 'success', error: null, method: 'storage_deposit' });
+  assert.equal(rec.call, 'storage_deposit');
+  assert.equal('call' in txRecord({ hash: 'h', account: 'a.testnet', outcome: 'success', error: null }), false);
 });
 
 test('failureText and errorCode read a contract panic', () => {
@@ -149,7 +282,7 @@ test('evaluateSplit rejects weak evidence', () => {
   assert.equal(good.timestampsValid, true);
   assert.equal(good.measuredNs, 600n);
 
-  // The case from the review: no receipt evidence, a counter change of one, one time
+  // No receipt evidence, a counter change of one, one time
   // unit measured against a sixty-unit window.
   const weak = evaluateSplit({ attempts: [], bucketAtStart: 10n, capUnits: 100n, capWindowNs: 60n, t0: 1000n, t1: 1001n, totalLeftDelta: 1n });
   assert.equal(weak.pass, false);

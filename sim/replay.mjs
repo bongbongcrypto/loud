@@ -26,7 +26,7 @@ const TICK = 60n * SEC;
 const RULES = ['naive', 'per_wallet', 'loud'];
 const CROWD_NEAR = 300n * NEAR;
 
-// ---- loader ----
+// Loader
 
 export function validateData(data) {
   const need = ['label', 'network', 'pool', 'total_supply', 'candles', 'documented', 'source'];
@@ -106,7 +106,7 @@ export async function fetchData({ network, pool, hours = 6, from = null, label, 
   });
 }
 
-// ---- model ----
+// Model
 
 // Splits each minute of real volume into a flow, as a share of supply.
 // Model rule: a minute that closes below its open is counted as selling, any
@@ -233,7 +233,7 @@ export function replayAll(data) {
   };
 }
 
-// ---- report ----
+// Report
 
 const pct = (x, d = 2) => (x === null || x === undefined ? 'n/a' : `${(x * 100).toFixed(d)}%`);
 const iso = (ts) => new Date(ts * 1000).toISOString().replace('.000Z', 'Z');

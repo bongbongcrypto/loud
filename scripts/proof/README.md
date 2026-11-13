@@ -14,19 +14,32 @@ The step numbers are the ones used in `receipts.json`. Step 3 runs before step 2
 | n | Step | Expectation |
 |---|---|---|
 | 1 | Create a fresh root account `loud-<random>.testnet` through the testnet faucet | account exists and holds enough NEAR |
-| 2 | Create `t.<root>` in one batch transaction: CreateAccount, Transfer, DeployContract, FunctionCall `new` (demo preset, creator = insider). No AddKey | `view_access_key_list` is empty; the on-chain `code_hash` equals base58(sha256) of the built wasm; `get_params` equals the preset |
+| 2 | Create `t.<root>` in one batch transaction: CreateAccount, Transfer, DeployContract, FunctionCall `new` (demo preset, creator = insider). No AddKey | `view_access_key_list` is empty; the on-chain `code_hash` equals base58(sha256) of the built wasm; `get_params` equals the preset; `storage_balance_bounds().min` is 0.02 NEAR; `storage_balance_of` of an account that is not registered is `null`; the creator is registered |
 | 3 | Create `insider`, `w01`..`w20` and `late` under the root | 22 accounts |
-| 4 | The insider buys with 1 NEAR in the loud window | bought tokens are loud |
-| 5 | The insider splits its whole loud balance across the 20 wallets with `ft_transfer` | every wallet holds loud, no quiet |
+| 4 | The insider buys with 1 NEAR in the loud window | bought tokens are loud; `pool_near` rises by the full 1 NEAR, because the insider is the creator and `new` registered it |
+| 5 | The insider sends 1 unit to a wallet that is not registered. Then all 20 wallets call `storage_deposit` with 0.02 NEAR. Then the insider splits its whole loud balance across them with `ft_transfer` | the first transfer fails with `E_UNREGISTERED`; all 20 wallets are registered; every wallet holds loud, no quiet |
 | 6 | One wallet calls `sell()` | fails with `E_NO_QUIET` |
-| 7 | After the loud window the late buyer buys with 0.5 NEAR and sells half | holds quiet only; the sell succeeds and none of its receipts failed |
-| 8 | All 20 wallets `shout` their full balance; one calls `leave()` at once | 20 open exits, the leave fails with `E_NOTICE` |
+| 7 | After the loud window the late buyer buys with 0.5 NEAR and sells half | holds quiet only; the buy registers the buyer and `pool_near` rises by 0.48 NEAR; the sell succeeds and none of its receipts failed |
+| 8 | All 20 wallets `shout` their full balance; one calls `leave()` at once and then `hush()` on the same exit | 20 open exits; the leave fails with `E_NOTICE`; the hush fails with `E_NOTICE_BINDING` and the exit stays open |
 | 9 | After the notice all 20 wallets call `leave()` in rounds for one full cap window | at least one fill; calls that executed and failed did so with `E_CAP` (or `E_EXPIRED` at the end); no successful leave has a failed receipt or a `payout_failed` event. Calls that were not executed and calls whose outcome stayed unknown are counted apart and do not fail the step |
 | 10 | Compare what left with the cap, measured over the full cap window | `sold_total <= bucket_at_start + cap_units * elapsed / cap_window_ns` (SPEC invariant 4), and the conditions listed below |
 
 Step 1: the root account is created by the faucet service, with a transaction that the faucet signs. If the faucet's HTTP answer carries a transaction hash, it is recorded in the step's `txs` as returned (its `outcome` is `unknown` unless the answer also carries a status); the script does not look that transaction up. If the answer carries none, `txs` stays empty and the step text says that the faucet's own transaction is not recorded. Top-up accounts are handled the same way. In the saved `web/receipts.json` the faucet did return a hash and a status, so step 1 lists that transaction with the outcome `success`, as returned.
 
 Step 2 fails if the token account has an access key, if its `code_hash` differs from the hash of the wasm that the build job produced, or if `get_params` differs from the intended preset. The comparison covers the nine constructor values of SPEC section 3 and the two derived values `cap_units = total_supply * cap_bps / 10000` and `loud_until = launch_ts + loud_window_ns`.
+
+Storage (steps 2, 4, 5 and 7): an account pays 0.02 NEAR once to be registered, and only a registered account can receive tokens. The run pays this the way a user would.
+
+- The 20 wallets each call `storage_deposit` for themselves, all at the same time, right before the split. The deposit is exactly 0.02 NEAR, so nothing is refunded. Whether a wallet is registered is read from `is_registered`, not from the send result. A wallet that is still not registered sends once more; a deposit for a registered account is refunded in full.
+- The late buyer does nothing extra. Its first `buy` takes 0.02 NEAR out of the attached 0.5 NEAR and puts 0.48 NEAR into the pool.
+- The insider is the creator, and `new` registers the creator, so its buy pays nothing for storage.
+- The registrations run after the insider's buy, so they take no time from the 2 minute loud window. Only the reads of step 2 sit between the deploy and the buy. If the buy landed after the window, its tokens would be quiet and step 4 would fail.
+
+How a buy is checked: the script reads `is_registered(buyer)` and `get_state().pool_near` before the buy and `pool_near` again after it. The change must equal the attached NEAR, less 0.02 NEAR if the buyer was not registered. Nothing is computed from a local price formula. The `buy` event is read as well: its `near_in` and `storage_paid` must agree when they are present. A field that is missing is named in the step text and does not fail the step. Step 7 also needs `is_registered(late buyer)` to change from `false` to `true`.
+
+Step 8, the hush: a shout is binding. `hush` fails with `E_NOTICE_BINDING` for everyone, the owner included, until the exit has expired. The wallet whose early `leave` was refused calls `hush` on the same exit right after it. The step needs that call to fail with this code and the exit to be still open. `early_hush.before_ready` says whether the call landed before the notice ended; it has to fail either way, because the exit has not expired.
+
+Closing record: after step 10 the script reads the token account and `get_state` once more and writes `token_near.at_end` and `owed_total_at_end` (expected `"0"`: no payout failed). The same reading right after the deploy is in `token_near.at_deploy`. `spare` is the account balance minus `pool_near`, that is, the NEAR that is not pool liquidity. `storage_stake` is what the protocol locks for the account's state (code and records), and `free` is what is left after that and after `owed_total`. These values are recorded only: no step depends on them.
 
 Payouts (step 7 sell, step 9 leaves): the contract pays NEAR with a detached transfer followed by its own `on_payout` callback, so a failed payout does not change the top-level status of the call. The transfer shows as a failed entry of `receipts_outcome`, and the callback, which records the unpaid amount for `claim()`, logs a `payout_failed` event. The script therefore reads every entry of `receipts_outcome` of the final transaction result and the logs of each. A successful call counts as settled only when the result lists at least one receipt outcome, every one of them is a success, and no receipt log carries a `payout_failed` event. The amount paid is not compared with a quote; the check is that no receipt of the transaction failed and no payout was recorded as unpaid. `sell` and `leave` are sent with 80 Tgas, of which the contract reserves 10 Tgas for the callback.
 
@@ -86,6 +99,8 @@ Environment variables (all optional):
 
 `rpc.testnet.near.org` is not the first RPC because the NEAR docs (docs.near.org/api/rpc/providers) list the near.org endpoints as severely rate limited, and this run sends several hundred transactions.
 
+Funding: the root account pays for everything. The token account gets 10^19 yoctoNEAR per byte of wasm plus 0.5 NEAR. The insider gets 1.25 NEAR and the late buyer 0.65 NEAR. Each wallet gets 0.12 to 0.27 NEAR: 0.02 NEAR for its registration and the rest for gas. With a wasm of about 230 KB the run needs about 7.4 NEAR, and one faucet grant was 10 NEAR in the saved run.
+
 If one faucet grant is smaller than the run needs, the script creates up to three more faucet accounts and deletes each with the root as beneficiary.
 
 ## Files
@@ -94,7 +109,7 @@ If one faucet grant is smaller than the run needs, the script creates up to thre
 |---|---|
 | `proof.mjs` | the run |
 | `rpc.mjs` | JSON-RPC client with failover, no dependencies |
-| `lib.mjs` | pure helpers (amounts, budget, error codes, the cap bound and the step 10 verdict, receipt settlement, the preset comparison, base58) |
+| `lib.mjs` | pure helpers (amounts, budget, error codes, the buy check, the cap bound and the step 10 verdict, receipt settlement, the preset comparison, the split of the token account's NEAR, base58) |
 | `lib.test.mjs` | `node --test` for `lib.mjs`; runs in CI |
 | `package.json` | one pinned dependency, `near-api-js` 5.1.1, used for keys, actions and borsh encoding. Installed in Actions with `npm install --ignore-scripts` |
 
@@ -150,6 +165,7 @@ All token and NEAR amounts and all nanosecond timestamps are decimal strings.
           "account": "<signer>",            // null for a faucet transaction whose signer the faucet did not name
           "outcome": "success" | "failure" | "invalid" | "unknown",
           "error": "<text>" | null
+          // function calls only: "call": "<method>"   (buy, ft_transfer, storage_deposit, sell, shout, leave, hush)
           // only when the send was retried: "earlier_attempts": ["<hash>", ...]   (earlier broadcasts, oldest first)
           // after their lookup: "earlier_attempt_outcomes": [{ "hash", "outcome", "error" }]
           // only when a later lookup by hash confirmed an unconfirmed transaction: "resolved_late": true
@@ -164,8 +180,18 @@ All token and NEAR amounts and all nanosecond timestamps are decimal strings.
       ]
       // step 7 and 9 only: "payout_calls": 0 (successful paying calls), "payouts_settled": 0
       // step 9 only: "executed_failed": 0, "not_executed": 0, "unresolved": 0   (see "Outcomes")
+      // step 2 only: "storage": { "expected_min", "min", "max", "unregistered_account", "unregistered_balance": null,
+      //   "unregistered_is_registered": false, "creator_is_registered": true, "pass" }
+      // step 4 and 7 only: "buy": { "attached", "registered_before", "expected_storage_paid", "expected_near_in",
+      //   "pool_near_before", "pool_near_after", "pool_near_change", "event_near_in", "event_storage_paid", "pass" }
+      //   step 7 adds "registered_after" and "storage_balance_total"
       // step 5 only: "balances": [{ "account", "loud", "quiet" }]
+      // step 5 only: "unregistered_transfer": { "receiver", "registered_before", "amount", "hash", "outcome", "error_code", "pass" }
+      // step 5 only: "registration": { "deposit", "wallets": 20, "registered": 20 }
       // step 8 only: "exits": [{ "id", "account", "amount", "ready_at", "expires_at" }]
+      // step 8 only: "early_leave": { "account", "exit_id", "hash", "outcome", "error_code" }
+      // step 8 only: "early_hush": { "account", "exit_id", "hash", "outcome", "error_code", "block_timestamp",
+      //   "ready_at", "before_ready", "exit_still_open", "pass" }
     }
   ],
   "split": {
@@ -198,6 +224,11 @@ All token and NEAR amounts and all nanosecond timestamps are decimal strings.
   "unresolved_txs": 0 | null,               // transactions the script sent whose outcome stayed unknown, all steps
   "unresolved_hashes": ["<hash>"] | null,
   "unresolved_note": "<text>" | null,       // one plain paragraph when unresolved_txs > 0, else null
+  "token_near": {                           // NEAR of the token account, yoctoNEAR; each side is null if not read
+    "at_deploy": { "balance", "pool_near", "owed_total", "spare", "storage_bytes": 0, "storage_stake", "free" } | null,
+    "at_end": { ...same keys... } | null    // spare = balance - pool_near; free = spare - owed_total - storage_stake
+  },
+  "owed_total_at_end": "0" | null,          // get_state().owed_total after step 10
   "generated_at": "<ISO time>" | null
 }
 ```
@@ -206,6 +237,8 @@ All token and NEAR amounts and all nanosecond timestamps are decimal strings.
 
 Explorer links: `https://testnet.nearblocks.io/txns/<hash>` and `https://testnet.nearblocks.io/address/<account>`.
 
-The files in the repository start as placeholders with `"status": "pending"`. Keys are only ever added to the two files, never renamed or removed, so a file written by an earlier version of the script may lack the newer keys (`expected_code_hash`, `code_hash_match`, `params_match`, `param_mismatches`, `settled`, `payout_calls`, `payouts_settled`, `measured_ns`, `full_window`, `timestamps_valid`, `fail_reasons`, `executed_failed`, `not_executed`, `unresolved`, `unresolved_txs`, `unresolved_hashes`, `unresolved_note`, `earlier_attempts`, `earlier_attempt_outcomes`, `resolved_late`, `retried_as`).
+The files in the repository start as placeholders with `"status": "pending"`. Keys are only ever added to the two files, never renamed or removed, so a file written by an earlier version of the script may lack the newer keys (`expected_code_hash`, `code_hash_match`, `params_match`, `param_mismatches`, `settled`, `payout_calls`, `payouts_settled`, `measured_ns`, `full_window`, `timestamps_valid`, `fail_reasons`, `executed_failed`, `not_executed`, `unresolved`, `unresolved_txs`, `unresolved_hashes`, `unresolved_note`, `earlier_attempts`, `earlier_attempt_outcomes`, `resolved_late`, `retried_as`, `call`, `storage`, `buy`, `unregistered_transfer`, `registration`, `early_leave`, `early_hush`, `token_near`, `owed_total_at_end`).
+
+Step 5 holds 41 transactions in a run without retries: the refused transfer, 20 `storage_deposit` calls and 20 transfers. Step 8 holds 22: 20 shouts, the refused `leave` and the refused `hush`. The `call` key tells them apart.
 
 A file written before the unresolved count existed has no `unresolved_txs` key, and its step 9 text puts the calls with the outcome `unknown` under "not executed" together with the `invalid` ones. By the grouping above, those with a hash are unresolved. A reader of such a file gets the same number by counting the records with `"outcome": "unknown"` and a hash that the script sent (in step 1, a record the faucet returned is not one of them). Such a file has no `earlier_attempts` either: a send that was retried is recorded with its last attempt only.

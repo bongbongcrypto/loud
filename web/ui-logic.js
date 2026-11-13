@@ -19,7 +19,7 @@ export const RPC_URLS = Object.freeze([
   'https://near-testnet.drpc.org',
 ]);
 
-// ---------------------------------------------------------------- formatting
+// Formatting
 
 function group(digits) {
   return digits.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
@@ -134,7 +134,7 @@ export const isAccountId = (s) => typeof s === 'string' && ACCOUNT_RE.test(s);
 export const explorerTx = (hash) => (typeof hash === 'string' && HASH_RE.test(hash) ? `${EXPLORER}/txns/${hash}` : null);
 export const explorerAccount = (id) => (isAccountId(id) ? `${EXPLORER}/address/${id}` : null);
 
-// ---------------------------------------------------------------- parameters
+// Parameters
 
 // Display strings for the nine parameters of SPEC section 3.
 export function paramDisplay(p) {
@@ -154,7 +154,7 @@ export function paramDisplay(p) {
   };
 }
 
-// ---------------------------------------------------------------- exits and the board
+// Exits and the board
 
 const EXIT_KEYS = ['id', 'amount', 'remaining', 'shouted_at', 'ready_at', 'expires_at'];
 
@@ -169,11 +169,11 @@ export function normalizeExit(raw) {
 
 // NOTICE: shouted, notice running. BOARDING: leave is allowed now.
 // LEFT: fully sold through the door. EXPIRED: the exit window ran out.
-// HUSHED: the owner took the exit back before it expired.
+// hush only works on an expired exit, so a hushed exit keeps the EXPIRED status.
 export function exitStatus(ex, now) {
   const t = BigInt(now);
   if (ex.closed === 'left' || (ex.closed !== 'hushed' && ex.remaining === 0n)) return 'LEFT';
-  if (ex.closed === 'hushed') return ex.closed_at !== null && ex.closed_at > ex.expires_at ? 'EXPIRED' : 'HUSHED';
+  if (ex.closed === 'hushed') return 'EXPIRED';
   if (t < ex.ready_at) return 'NOTICE';
   if (t <= ex.expires_at) return 'BOARDING';
   return 'EXPIRED';
@@ -214,8 +214,11 @@ function statusDetail(ex, status, now) {
       ? `${fmtCompact(sold)} out, ${fmtDuration(left)} left`
       : `${fmtDuration(left)} left`;
   }
-  if (status === 'EXPIRED' || status === 'HUSHED') {
-    return ex.remaining > 0n ? `${fmtCompact(ex.remaining)} still loud` : '';
+  if (status === 'EXPIRED') {
+    if (ex.remaining === 0n) return '';
+    return ex.closed === 'hushed'
+      ? `${fmtCompact(ex.remaining)} returned, still loud`
+      : `${fmtCompact(ex.remaining)} locked until hush`;
   }
   return '';
 }
@@ -314,7 +317,7 @@ export function createBoardSim({ wallets = 36, seed = 7, stepNs = MIN } = {}) {
   };
 }
 
-// ---------------------------------------------------------------- split comparison
+// Split comparison
 
 export const SPLIT_HORIZON_NS = 6n * HOUR;
 export const WALLET_CHOICES = Object.freeze([1, 10, 100, 1000]);
@@ -380,7 +383,11 @@ export function runComparison({ wallets, shareBps }, cache = new Map()) {
     shareBps,
     horizonSec,
     stepSec: 60,
-    naive: { sellOutSec: sellOutSeconds(series.naive), price: priceStats(series.naive) },
+    naive: {
+      sellOutSec: sellOutSeconds(series.naive),
+      sellOutSecSingle: sellOutSeconds(single.naive),
+      price: priceStats(series.naive),
+    },
     per_wallet: {
       sellOutSec: sellOutSeconds(series.per_wallet),
       sellOutSecSingle: sellOutSeconds(single.per_wallet),
@@ -410,6 +417,48 @@ export function runComparison({ wallets, shareBps }, cache = new Map()) {
 
 const times = (x) => (Number.isInteger(x) ? `${x}x` : `${x.toFixed(1)}x`);
 const took = (sec, horizonSec) => (sec === null ? `more than ${fmtDuration(horizonSec)}` : fmtDuration(sec));
+
+// One short line per rule set for the large result display, every number taken
+// from the run. "same as 1 wallet" is printed only when the split run and the
+// single-wallet run differ by at most one unit per wallet at every minute
+// (rounding from dividing the position).
+export function resultHeadlines(stats) {
+  const { wallets: n, naive, per_wallet: pw, loud, horizonSec } = stats;
+  const who = n === 1 ? '1 wallet' : `${n} wallets`;
+  const horizon = fmtDuration(horizonSec);
+  const sold = (sec) => (sec === null ? `not sold out in ${horizon}` : `sold in ${fmtDuration(sec)}`);
+  const single = (sec, splitSec) => (sec === splitSec
+    ? '1 wallet: the same.'
+    : sec === null ? `1 wallet: not sold out in ${horizon}.` : `1 wallet took ${fmtDuration(sec)}.`);
+  const out = [{
+    rule: 'naive',
+    name: 'No rule',
+    line: `${who}: ${sold(naive.sellOutSec)}`,
+    sub: n === 1 ? 'One transaction.' : single(naive.sellOutSecSingle, naive.sellOutSec),
+  }];
+  out.push({
+    rule: 'per_wallet',
+    name: 'Per-wallet limits',
+    line: `${who}: ${sold(pw.sellOutSec)}`,
+    sub: n === 1
+      ? 'Pick 10 or more wallets and run again.'
+      : `${single(pw.sellOutSecSingle, pw.sellOutSec)}${pw.speedup !== null && pw.speedup > 1 ? ` Splitting made it ${times(pw.speedup)} faster.` : ''}`,
+  });
+  const out6h = `${fmtPct(loud.soldAtEnd)} out after ${horizon}`;
+  const first = loud.firstSaleSec === null
+    ? `Nothing sold in ${horizon}.`
+    : `Nothing sold before minute ${Math.round(loud.firstSaleSec / 60)}.`;
+  const same = n > 1 && loud.maxDiffUnits <= BigInt(n);
+  out.push({
+    rule: 'loud',
+    name: 'LOUD',
+    line: n === 1
+      ? `1 wallet: ${loud.sellOutSec === null ? out6h : sold(loud.sellOutSec)}`
+      : same ? `${who}: same as 1 wallet` : `${who}: ${out6h}, 1 wallet: ${fmtPct(loud.soldAtEndSingle)}`,
+    sub: n === 1 || !same ? first : `${loud.sellOutSec === null ? out6h : `Sold in ${fmtDuration(loud.sellOutSec)}`}. ${first}`,
+  });
+  return out;
+}
 
 // Plain result sentences, every number taken from the run.
 export function resultSentences(stats) {
@@ -467,7 +516,7 @@ export function resultTable(stats) {
   ];
 }
 
-// ---------------------------------------------------------------- chart geometry
+// Chart geometry
 
 export function linear(d0, d1, r0, r1) {
   const k = d1 === d0 ? 0 : (r1 - r0) / (d1 - d0);
@@ -487,7 +536,8 @@ export function pathFrom(points) {
   return d;
 }
 
-// Series cut to the first `minutes` after the insider starts: [[minute, value]].
+// Series cut to its first `minutes`: [[minute, value]]. Minute 0 is the end of
+// the launch window; the insider first acts one minute later.
 export function seriesPoints(series, key, minutes) {
   const t0 = series[0].t;
   const out = [];
@@ -509,7 +559,7 @@ export function niceTicks(max, count = 4) {
   return ticks;
 }
 
-// ---------------------------------------------------------------- sandbox
+// Sandbox
 
 export const SANDBOX_ACCOUNTS = Object.freeze(['you.testnet', 'you-2.testnet']);
 
@@ -576,7 +626,7 @@ export class Sandbox {
       (x) => this.token.shout(this.account, x, this.now),
       (id, x) => {
         const p = this.token.getParams();
-        return `Exit ${id} is on the board: ${fmtTokens(x)} LOUD escrowed. Leave opens at ${fmtSinceLaunch(this.now + p.notice_ns)} and closes at ${fmtSinceLaunch(this.now + p.notice_ns + p.exit_window_ns)}.`;
+        return `Exit ${id} is on the board: ${fmtTokens(x)} LOUD locked. Leave opens at ${fmtSinceLaunch(this.now + p.notice_ns)} and closes at ${fmtSinceLaunch(this.now + p.notice_ns + p.exit_window_ns)}. The shout cannot be taken back before then.`;
       });
   }
 
@@ -609,7 +659,7 @@ export class Sandbox {
       () => {
         const acc = this.token.getAccount(this.account);
         const free = acc.loud + acc.quiet;
-        if (free < 2n * UNIT) throw new Error('No free balance to send. Loud tokens in an open exit are escrowed; hush the exit first.');
+        if (free < 2n * UNIT) throw new Error('No free balance to send. Tokens in an open exit stay locked until they are sold or the exit expires.');
         return { amount: free / 2n };
       },
       ({ amount }) => this.token.transfer(this.account, to, amount, this.now),
@@ -629,8 +679,8 @@ export class Sandbox {
     const rows = boardRows(exits, this.now, { limit: Infinity }).map((r) => {
       const ex = exits.find((e) => e.id.toString() === r.id);
       const mine = ex.owner === this.account;
-      // Leave is offered on every open exit of the active account, so a visitor
-      // can try it during the notice or after expiry and read the engine error.
+      // Leave and Hush are offered on every open exit of the active account, so
+      // a visitor can press them at the wrong time and read the engine error.
       return { ...r, mine, canLeave: r.canHush && mine, canHush: r.canHush && mine };
     });
     const capFraction = Number((s.cap_available * 10000n) / s.cap_units) / 10000;
@@ -662,11 +712,27 @@ export class Sandbox {
       totalLeft: s.total_left,
       rows,
       log: this.log,
+      path: pathProgress(this.log),
     };
   }
 }
 
-// ---------------------------------------------------------------- chain views
+// Which of the six steps of the guided path the call log already shows, in
+// the order of the list on the page.
+export function pathProgress(log) {
+  const has = (test) => log.some(test);
+  const call = (name) => (x) => x.call.startsWith(name);
+  return [
+    has((x) => x.ok && call('buy')(x)),
+    has((x) => x.code === 'E_NO_QUIET'),
+    has((x) => x.ok && call('shout')(x)),
+    has((x) => x.code === 'E_NOTICE_BINDING'),
+    has((x) => x.ok && call('leave')(x)),
+    has((x) => x.ok && call('hush')(x)),
+  ];
+}
+
+// Chain views
 
 // Browser and Node 18+ both have btoa, atob and TextDecoder.
 // `blockId` (a block height) pins the view to that block; without it the
@@ -856,14 +922,14 @@ export function liveFacts(live) {
     ['Cap room now', `${fmtTokens(s.cap_available)} of ${fmtTokens(s.cap_units)} LOUD`],
     ['Loud supply outstanding', `${fmtTokens(s.loud_outstanding)} LOUD`],
     ['In open exits', `${fmtTokens(s.escrowed)} LOUD in ${s.open_exits} exits`],
-    ['Left through the door so far', `${fmtTokens(s.total_left)} LOUD in ${s.leave_count} leave calls`],
+    ['Sold through exits so far', `${fmtTokens(s.total_left)} LOUD in ${s.leave_count} leave calls`],
     ['Launch window', s.is_loud_window ? 'open' : 'closed'],
     ['Notice / exit window', `${fmtDuration(nsToSeconds(p.notice_ns))} / ${fmtDuration(nsToSeconds(p.exit_window_ns))}`],
     ['Cap', `${fmtBps(p.cap_bps)} of supply per ${fmtDuration(nsToSeconds(p.cap_window_ns))}`],
   ];
 }
 
-// ---------------------------------------------------------------- proof view model
+// Proof view model
 
 const text = (v) => (v === null || v === undefined ? '' : String(v));
 const stateOf = (o) => (o && (o.status === 'ok' || o.status === 'failed') ? o.status : 'pending');
@@ -897,7 +963,7 @@ export function deploymentView(dep) {
   if (typeof d.code_hash_match === 'boolean') add('Code hash equals the hash of the built wasm', d.code_hash_match ? 'yes' : 'no');
   if (typeof d.params_match === 'boolean') add('On-chain parameters equal the intended ones', d.params_match ? 'yes' : 'no');
   add('Wasm sha256', d.wasm ? `${text(d.wasm.sha256)} (${text(d.wasm.bytes)} bytes)` : '');
-  add('CI run that produced this', runUrl ? `run ${run.run_id}` : '', runUrl);
+  add('Automated run that produced this', runUrl ? `run ${run.run_id}` : '', runUrl);
   add('Commit', repo && /^[0-9a-f]{7,40}$/.test(text(run.commit)) ? run.commit.slice(0, 12) : '',
     repo && /^[0-9a-f]{7,40}$/.test(text(run.commit)) ? `https://github.com/${repo}/commit/${run.commit}` : null);
   return {
@@ -905,6 +971,9 @@ export function deploymentView(dep) {
     token,
     zeroKeys,
     keysKnown: Boolean(token) && keysKnown,
+    keyCount: keysKnown ? d.access_keys.length : null,
+    tokenHref: token ? safeUrl(ex.token) || explorerAccount(token) : null,
+    txHref: safeUrl(ex.tx) || explorerTx(d.tx),
     headline: state === 'pending'
       ? 'Pending. The token is not deployed yet, or the proof run has not been committed.'
       : state === 'ok' && zeroKeys
@@ -975,9 +1044,33 @@ function txView(tx, faucet = false) {
     unresolved,
     unsettled,
     round: t.round === undefined || t.round === null ? '' : text(t.round),
+    // The contract method of a function call; older files do not name it.
+    call: typeof t.call === 'string' && /^[a-z_]{1,40}$/.test(t.call) ? t.call : '',
     note,
     earlier,
   };
+}
+
+// The token account's NEAR as the proof run read it (receipts key `token_near`),
+// split into pool liquidity, unpaid payouts, the protocol's storage lock and
+// what is left. Empty when the file has no such reading.
+function tokenNearRows(reading, when) {
+  const t = reading && typeof reading === 'object' ? reading : {};
+  const amount = (v) => {
+    const s = text(v);
+    if (!/^-?[0-9]+$/.test(s)) return null;
+    return s.startsWith('-') ? `-${fmtNear(BigInt(s.slice(1)))}` : fmtNear(BigInt(s));
+  };
+  const [balance, pool, owed, stake, free] = [t.balance, t.pool_near, t.owed_total, t.storage_stake, t.free].map(amount);
+  if ([balance, pool, owed, stake, free].includes(null)) return [];
+  const bytes = Number.isInteger(t.storage_bytes) ? ` (${group(String(t.storage_bytes))} bytes of code and records)` : '';
+  return [
+    [`Balance of the token account ${when}`, `${balance} NEAR`],
+    ['Of that, pool liquidity (pool_near)', `${pool} NEAR`],
+    ['Owed for failed payouts', `${owed} NEAR`],
+    ['Locked by the protocol for storage', `${stake} NEAR${bytes}`],
+    ['Left after all three', `${free} NEAR`],
+  ];
 }
 
 const isCount = (v) => Number.isInteger(v) && v >= 0;
@@ -1015,7 +1108,7 @@ export function receiptsView(rec) {
         expect: text(s.expect),
         got: text(s.got),
         gotNote: oldText
-          ? `Added by this page: the recorded text above comes from a script version that put calls with an unconfirmed outcome under "not executed". ${unresolvedRecords} of the calls in this step ${unresolvedRecords === 1 ? 'was sent and has' : 'were sent and have'} no confirmed outcome; it is not known whether ${unresolvedRecords === 1 ? 'it' : 'each of them'} never executed or executed and failed.`
+          ? `Note: the recorded text above counts calls with an unconfirmed outcome under "not executed". ${unresolvedRecords} of the calls in this step ${unresolvedRecords === 1 ? 'was sent and has' : 'were sent and have'} no confirmed outcome; it is not known whether ${unresolvedRecords === 1 ? 'it' : 'each of them'} never executed or executed and failed.`
           : '',
         result: s.ok === true ? 'PASS' : 'FAIL',
         txs,
@@ -1033,6 +1126,7 @@ export function receiptsView(rec) {
   }
   const split = {
     have: haveSplit,
+    wallets: /^\d+$/.test(text(sp.wallets)) ? text(sp.wallets) : '',
     result: !haveSplit ? 'PENDING' : sp.pass === true ? 'PASS' : 'FAIL',
     sentence: !haveSplit
       ? 'No split measurement yet.'
@@ -1062,6 +1156,11 @@ export function receiptsView(rec) {
   const reasons = (Array.isArray(sp.fail_reasons) ? sp.fail_reasons : []).map((x) => text(x).slice(0, 200)).filter(Boolean);
   if (haveSplit && sp.pass !== true && reasons.length) split.rows.push(['Why the check did not pass', reasons.join('; ')]);
   const passed = steps.filter((s) => s.result === 'PASS').length;
+  // The proof script that checks storage registration and binding shouts writes
+  // `token_near` into the file before its first step. A file without the key was
+  // recorded by an earlier script, against a contract that had neither rule.
+  const hasNearKey = Object.hasOwn(r, 'token_near');
+  const near = r.token_near && typeof r.token_near === 'object' ? r.token_near : {};
   // The script's own count when the file has one (it leaves out transactions the faucet
   // signed and includes earlier broadcasts of retried sends); otherwise counted from the records.
   const unresolved = scriptCounts ? r.unresolved_txs : steps.reduce((n, s) => n + s.unresolved, 0);
@@ -1082,9 +1181,74 @@ export function receiptsView(rec) {
     unresolved,
     unresolvedHashes: Array.isArray(r.unresolved_hashes) ? r.unresolved_hashes.map(text).filter(Boolean) : [],
     split,
+    scopeNote: state === 'pending' || hasNearKey ? ''
+      : 'This run was recorded before two later rules: each account pays for its storage, and a shout cannot be cancelled. It checks neither. Unit tests cover both until the run is repeated.',
+    tokenNear: [...tokenNearRows(near.at_deploy, 'right after the deploy'), ...tokenNearRows(near.at_end, 'at the end of the run')],
     error: text(r.error),
     generatedAt: text(r.generated_at),
   };
+}
+
+const isoDay = (stamp) => (/^\d{4}-\d{2}-\d{2}T/.test(stamp) ? stamp.slice(0, 10) : '');
+
+// The three checks the proof section shows first (a refused sell, the shouts,
+// the cap), and the others, which the page folds. If a file has none of the
+// three, every check is shown.
+export const KEY_CHECKS = Object.freeze(['6', '8', '10']);
+export function splitChecks(steps) {
+  const key = steps.filter((s) => KEY_CHECKS.includes(s.n));
+  return key.length ? { key, rest: steps.filter((s) => !KEY_CHECKS.includes(s.n)) } : { key: steps, rest: [] };
+}
+
+// The three large lines at the top of the proof section, from deploymentView
+// and receiptsView. Each one has a state (ok | failed | pending), so a failed
+// run, a key on the account or a missing file never reads as a pass.
+export function proofHeadlines(d, r) {
+  const total = r.steps.length;
+  const passed = r.steps.filter((s) => s.result === 'PASS').length;
+  const day = isoDay(r.generatedAt || d.generatedAt);
+  const allPassed = r.state === 'ok' && total > 0 && passed === total;
+  const unresolved = r.unresolved === 0 ? ''
+    : ` ${r.unresolved} transaction${r.unresolved === 1 ? ' was' : 's were'} sent with no confirmed outcome.`;
+  const checks = r.state === 'pending' || total === 0
+    ? { key: 'checks', state: 'pending', big: 'No run recorded yet', small: 'receipts.json holds no proof run.' }
+    : {
+      key: 'checks',
+      state: allPassed ? 'ok' : 'failed',
+      big: `${passed} of ${total} checks passed`,
+      small: allPassed
+        ? `on NEAR testnet${day ? `, ${day}` : ''}.${unresolved}`
+        : `The run did not pass.${r.error ? ` It stopped early: ${r.error}` : ''}${unresolved}`,
+    };
+  checks.href = d.txHref;
+  checks.linkText = 'The deploy transaction in the explorer';
+
+  const keys = !d.keysKnown
+    ? { key: 'keys', state: 'pending', big: 'Access keys not checked yet', small: 'deployment.json holds no key list.' }
+    : d.zeroKeys
+      ? { key: 'keys', state: 'ok', big: '0 access keys', small: 'on the token account, so nobody can sign for it.' }
+      : {
+        key: 'keys',
+        state: 'failed',
+        big: d.keyCount === 0 ? 'Key check not confirmed' : `${d.keyCount} access key${d.keyCount === 1 ? '' : 's'}`,
+        small: 'on the token account. The zero-key claim does not hold for this deployment.',
+      };
+  keys.href = d.tokenHref;
+  keys.linkText = d.token ? `${d.token} in the explorer` : '';
+
+  const sp = r.split;
+  const who = sp.wallets ? `${sp.wallets} wallets` : 'Many wallets';
+  const dump = !sp.have
+    ? { key: 'dump', state: 'pending', big: 'No dump measured yet', small: 'receipts.json holds no split measurement.' }
+    : {
+      key: 'dump',
+      state: sp.result === 'PASS' ? 'ok' : 'failed',
+      big: sp.result === 'PASS' ? `${who} tried to dump. The cap held.` : `${who} tried to dump. The cap check failed.`,
+      small: sp.sentence,
+    };
+  dump.href = sp.have ? 'receipts.json' : null;
+  dump.linkText = 'Every transaction, in receipts.json';
+  return [checks, keys, dump];
 }
 
 // Source repository, when the page is served from GitHub Pages.
