@@ -70,7 +70,7 @@ jobs:
 
       - name: cargo test (loud-math, loud)
         working-directory: contracts
-        run: cargo test --workspace
+        run: cargo test --workspace --locked
 
       - name: Install cargo-near ${{ env.CARGO_NEAR_VERSION }}
         # Official release installer, pinned to one version.
@@ -81,11 +81,10 @@ jobs:
 
       - name: Build the contract wasm
         # --no-abi: the ABI is not used and would need schema derives on every type.
-        # No --locked: the repository has no Cargo.lock.
         working-directory: contracts/loud
         run: |
           rm -rf "$RUNNER_TEMP/near-out"
-          cargo near build non-reproducible-wasm --no-abi --out-dir "$RUNNER_TEMP/near-out"
+          cargo near build non-reproducible-wasm --locked --no-abi --out-dir "$RUNNER_TEMP/near-out"
 
       - name: Collect and check the wasm
         run: |
