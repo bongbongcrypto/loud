@@ -58,7 +58,7 @@ The testnet token runs a faster demo preset (launch window 2 min, notice 1 min, 
 
 ## Simulation
 
-`node sim/run.mjs` runs the page's rule engine for 60 days against no rule and against a per-wallet limit: four scenarios, nine seeds each. How holders behave is an assumption. Nobody measured it. Full tables and assumptions: [sim/RESULTS.md](sim/RESULTS.md).
+`node sim/run.mjs` runs the page's rule engine for 60 days against no rule and against a per-wallet limit (0.5% of supply per sale, one sale per wallet per 60 s, a much looser budget than the LOUD cap even for one wallet): four scenarios, nine seeds each. How holders behave is an assumption. Nobody measured it. Full tables and assumptions: [sim/RESULTS.md](sim/RESULTS.md).
 
 Insiders dump 13.6% of supply from 30 wallets at 24 h:
 
@@ -102,10 +102,10 @@ Under LOUD, holders in both cases also get 30 minutes of public notice before th
 <details>
 <summary>Contract-level limits</summary>
 
-- **Other pools.** `ft_transfer_call` refuses loud tokens. Quiet tokens can be sent with it. The receiving contract gets a fixed 30 Tgas for its `ft_on_transfer`, and if that is not enough the contract takes back whatever the receiver still holds.
+- **Other pools.** `ft_transfer_call` refuses loud tokens. Quiet tokens can be sent with it. The receiving contract gets a fixed 30 Tgas for its `ft_on_transfer`, and if that is not enough the contract takes the tokens back, up to what the receiver still holds.
 - **Small positions leave in one call.** What fits the cap room sells in one `leave` after notice if the pool can pay. A full cap plus one refill lets out up to 1% of supply in an hour.
 - **When the pool cannot pay.** `sell` fails with `E_POOL_EMPTY`, and `leave` fills only what the pool can pay.
-- **The 0.03 NEAR storage fee is never refunded.** Anything paid above it comes back at once. There is no withdraw and no unregister. A transfer to an unregistered account fails with `E_UNREGISTERED`. The 0.03 NEAR covers the account's records and eight open exits, the most one account can have.
+- **The 0.03 NEAR storage fee is never refunded.** A `storage_deposit` above it is refunded at once. On a first buy the fee comes out of the attached NEAR and the rest buys tokens. There is no withdraw and no unregister. A transfer to an unregistered account fails with `E_UNREGISTERED`. The 0.03 NEAR covers the account's records and eight open exits, the most one account can have.
 - **Failed payouts.** A payout whose transfer fails is recorded and collected with `claim`. The record depends on a callback that can itself fail, and then nothing is recorded.
 - **More than 100 open exits.** `get_exits` then pages in storage order, so a reader can skip or repeat an exit.
 - **Not built.** There is no trading fee, no liquidity migration, no audit and no mainnet token.
