@@ -1,8 +1,54 @@
 # Replay data
 
-This folder holds the real data sets used by `sim/replay.mjs`. **It currently holds none.**
+This folder holds the real data sets used by `sim/replay.mjs`. `node sim/replay.mjs` reads every `.json` file here and writes `sim/REPLAY.md`.
 
-Each data set is one JSON file written by `node sim/replay.mjs --fetch ...`:
+| File | Launch | Source | What the file holds |
+|---|---|---|---|
+| `case-1.json` | pump.fun mint `7oE8o8kS6iyn5GyGhaBoi2HNz9M9m6n7VEdUWaxpump`, 2026-06-15 | [Bitquery report](https://bitquery.io/investigations/pump-fun-snipers-bundles) | The 1,001 sales of the four wallets named in the Bitquery report as bundled wallets. They bought 79.13% of supply in the creation block and sold all of it within 1,060 s. |
+| `case-2.json` | RKC, pump.fun mint `7HgfXftRBBqsYtAEYcqjGLQrNJLL6Tww9ek4rE3Apump`, 2026-05-11 | [Lookonchain post](https://x.com/lookonchain/status/2054007728872603911) | The 1,143 sales of the ten wallets Lookonchain attributes to the developer. They bought 39.52% of supply in the first 184 s and sold all of it within 1,791 s. |
+
+What each source states, and what it leaves out, is written in the file under `sources`. Three points matter when reading the numbers:
+
+- The Bitquery report says 79% and 18 minutes. The 18 minutes covers five wallets. The file measures the four bundled wallets: 79.13% and 1,060 s. The fifth wallet and the dev wallet are listed under `other_wallets_in_report` and are left out of the schedule.
+- The Lookonchain post gives the ten wallets and the 39.52%, but no mint address and no timing. The mint is derived: it is the only pump.fun mint all ten wallets bought that day, and they bought the 395.18M tokens the post states. The timing is measured here.
+- The ten RKC wallets bought over about three minutes. They were not in one block.
+
+## Where the sales come from
+
+Solana public RPC, `api.mainnet-beta.solana.com`, no key: `getSignaturesForAddress` on each wallet's token account, then `getTransaction` for every signature. A sale is a transaction in which the wallet's token balance fell and its SOL balance rose. The token amount is the exact balance change. No token left these wallets by plain transfer to an outside address.
+
+## Format: `sell_schedule`
+
+```
+{
+  "kind": "sell_schedule",
+  "label": "name of the launch",
+  "chain": "solana",
+  "token": { "address": "mint", "launchpad": "pump.fun", "total_supply": 1000000000, "decimals": 6 },
+  "launch_ts": 1781531897,
+  "launch_iso": "2026-06-15T13:58:17Z",
+  "sources": [{ "url": "public report", "publisher": "who and when", "what_it_states": "..." }],
+  "bundle": {
+    "described_as": "how the source describes the wallets",
+    "share_bps_reported": 7900, "wallets_reported": 4,
+    "wallets": ["as listed by the source"],
+    "share_bps_measured": 7913.37,
+    "buy_timing": "...", "last_buy_s": 0, "first_sell_s": 138, "last_sell_s": 1060
+  },
+  "aggregated_by_minute": [{ "minute": 2, "share_of_supply_bps": 282.3464 }, ...],
+  "cumulative": { "1m": { "tokens": 0, "supply_bps": 0, "pct_of_bundle": 0 }, "5m": ..., "24h": ... },
+  "per_wallet": { "<wallet>": { "bought": 0, "sold": 0, "first_sell_s": 0, "last_sell_s": 0, "sells": 0, "first_sell_tx": "...", "last_sell_tx": "..." } },
+  "data_source": "...",
+  "caveats": ["..."],
+  "sells": [[seconds_since_launch, index_into_bundle_wallets, tokens_sold], ...]
+}
+```
+
+The replay reads `aggregated_by_minute`, the wallet count and `bundle.last_buy_s`. Minute `m` holds the sales from `m * 60` to `m * 60 + 59` seconds after launch. `sells` is every sale, kept so that the schedule can be recomputed; the tests do that. Transaction signatures are kept only for each wallet's first and last sale, to keep the files small.
+
+## Format: `ohlcv_minute`
+
+The older input kind, minute candles of a pool, still works. No file of this kind is in the folder: candles do not say who traded, and the two schedules above do.
 
 ```
 {
@@ -18,26 +64,12 @@ Each data set is one JSON file written by `node sim/replay.mjs --fetch ...`:
 }
 ```
 
-`candles` come from the API unchanged, sorted by time. `documented` is typed in by hand from a public report and must cite it.
-
-## Why there is no data set yet (checked 2026-11-13)
-
-The goal was to replay one real, publicly documented bundled memecoin dump from minute-level data that is free and needs no key.
-
-| Source | Request | Answer |
-|---|---|---|
-| GeckoTerminal public API | minute OHLCV of the first candidate pool tried, HAWK / SOL `ExyGVXVRvUjJryo65vYUhLACcxhwYztKqa7jXqiT2tvr` (created 2024-12-04) with `before_timestamp=1733371200` | HTTP 401: the public API only serves the past 180 days |
-| DexPaprika | 1-minute OHLCV of the same pool, no key | `plan_required`: intervals below 1 hour need an API key |
-| DexPaprika | 1-hour OHLCV of the same pool, no key | `plan_required`: history beyond the last 24 hours needs an API key |
-| DefiLlama `coins.llama.fi/chart` | 5-minute prices of the HAWK and LIBRA tokens around their launches | empty result |
-
-Launches inside the 180-day window: public reports of bundled supply were found (press summaries of Bubblemaps posts from July to September 2026), but none of them both named a token address and documented the sales. Several unrelated tokens share each ticker, so matching a pool to a report would have been a guess. No data set was added on that basis.
-
-The download path itself works: it was run against the live API for a recent pool and returned valid minute candles. That file was not kept, because the pool could not be tied to a public report.
+`node sim/replay.mjs --fetch --network <network> --pool <pool> --hours 6 --label "<name>" --bundled-bps <bps> --wallets <n> --doc-url <report url>` writes such a file from the GeckoTerminal public API. `--from <ISO time>` starts later than the pool creation. The public API only serves the last 180 days.
 
 ## Adding a data set
 
-1. Find a public report that names the token address and states the bundle share and wallet count.
-2. Find the launch pool on GeckoTerminal (the launch must be within the last 180 days, or use a key with another provider and write the same JSON format).
-3. Run `node sim/replay.mjs --fetch --network <network> --pool <pool> --hours 6 --label "<name>" --bundled-bps <bps> --wallets <n> --doc-url <report url>`.
-4. Run `node sim/replay.mjs` to regenerate `sim/REPLAY.md`.
+1. Find a public report that names the wallets, and the token or enough to derive it.
+2. Collect every sale of those wallets from a public RPC and write a `sell_schedule` file.
+3. Run `node sim/replay.mjs` to write `sim/REPLAY.md` again, then `node --test sim/replay.test.mjs`.
+
+`--data <folder>` reads data files from another folder and `--out <folder>` writes `REPLAY.md` into another folder.

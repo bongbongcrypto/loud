@@ -454,6 +454,10 @@ fieldset input:focus-visible + span { outline: 2px solid var(--accent); outline-
 .verdicts li[data-rule="loud"] .v-rule { color: var(--warm); }
 .verdicts li[data-rule="loud"] .v-line { color: var(--amber); font-family: var(--mono); font-size: clamp(20px, 2.4vw, 28px); letter-spacing: 0.02em; }
 .verdicts li[data-rule="loud"] .v-sub { color: var(--dim); }
+/* one real launch, set in the same lines */
+.row-body h3.real-head { font-family: var(--serif); font-size: 23px; line-height: 1.3; letter-spacing: 0; text-transform: none; margin-top: 34px; }
+.row-body > .real-head + .real-case { margin-top: 12px; }
+.real-src code { font-size: 12.5px; overflow-wrap: anywhere; }
 
 .result li { padding: 6px 0; border-bottom: 1px solid var(--rule); }
 .result li:first-child { border-top: 1px solid var(--rule); }

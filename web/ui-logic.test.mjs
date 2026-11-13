@@ -1058,3 +1058,46 @@ test('proof: a run recorded before storage and binding shouts says what it does 
   assert.deepEqual(stopped.tokenNear, []);
   assert.equal(L.receiptsView({ status: 'pending' }).scopeNote, '');
 });
+
+test('real launch: the lines on the page carry the numbers of the case file and sim/REPLAY.md', () => {
+  const html = read('./index.html');
+  const data = JSON.parse(read('../sim/replay-data/case-1.json'));
+  const replay = read('../sim/REPLAY.md');
+  // The part of REPLAY.md about this launch.
+  const from = replay.indexOf(`## ${data.label}`);
+  assert.ok(from > 0);
+  const part = replay.slice(from, replay.indexOf('\n## ', from + 1));
+  const row = (label) => {
+    const line = part.split('\n').find((l) => l.startsWith(`| ${label} |`));
+    assert.ok(line, `REPLAY.md has no row "${label}"`);
+    return line.split('|').slice(2, -1).map((c) => c.trim());
+  };
+  // Cells are "share of the bundle (share of supply)"; columns are on chain, no rule, per-wallet, LOUD.
+  const ofBundle = (cell) => cell.split(' ')[0];
+  const onChain10 = ofBundle(row('10 min')[0]);
+  const loud60 = ofBundle(row('60 min')[3]);
+  const loudDone = row('all sold after')[3];
+  const notice = part.match(/Holders see the exit (\d+) minutes before the first unit sells/)[1];
+  // Measured figures, from the case file.
+  const wallets = data.bundle.wallets.length;
+  const bought = Math.round(data.bundle.share_bps_measured / 100);
+  const soldIn = Math.ceil(data.bundle.last_sell_s / 60);
+  assert.equal(data.bundle.last_buy_s, 0);
+  assert.equal(onChain10, `${data.cumulative['10m'].pct_of_bundle.toFixed(2)}%`);
+
+  const at = html.indexOf('<h3 class="real-head" id="real-h">It happened like this on pump.fun</h3>');
+  assert.ok(at > html.indexOf('id="split"') && at < html.indexOf('id="sandbox"'));
+  const block = html.slice(at, html.indexOf('</section>', at));
+  assert.ok(block.includes(`<b class="v-line">${wallets} wallets bought ${bought}% of the supply</b>`));
+  assert.ok(block.includes(`<span class="v-sub">In the block that created the token, on 15 June ${data.launch_iso.slice(0, 4)}.</span>`));
+  assert.equal(data.launch_iso.slice(0, 10), '2026-06-15');
+  assert.ok(block.includes(`<b class="v-line">They sold all of it in ${soldIn} minutes</b>`));
+  assert.ok(block.includes(`<span class="v-sub">${onChain10} of it was gone after 10 minutes.</span>`));
+  assert.ok(block.includes(`<li data-rule="loud"><span class="v-rule">Under LOUD</span><b class="v-line">${loud60} of it out after 60 minutes</b>`));
+  assert.ok(block.includes(`<span class="v-sub">${notice} minutes of public notice first. Selling all of it would take ${loudDone}.</span>`));
+  // The source, the mint, and the line that says which part is a model.
+  assert.ok(block.includes(`href="${data.sources[0].url}"`));
+  assert.ok(block.includes(`<code>${data.token.address}</code>`));
+  assert.match(block, /The first two lines are measured on chain\. The LOUD line is a replay of the same sales through the rule engine/);
+  assert.equal(notice, String(Number(PRESETS.standard.notice_ns / MIN)));
+});

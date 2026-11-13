@@ -35,6 +35,7 @@ Run from the repository root. The Node rows need Node 22 or newer and nothing in
 | `(cd contracts/loud && cargo near build non-reproducible-wasm --locked --no-abi)` with cargo-near 0.23.0 | One wasm of about 0.2 MB. [CI](.github/workflows/ci.yml) runs both Rust steps on every push. |
 | Live page, "Run the split attack": run it with 1 wallet, then with 100 | The LOUD line stays the same. With more wallets the per-wallet rule sells the whole position sooner. |
 | Live page, "Play the token by hand" | The same error codes the contract returns, such as `E_NO_QUIET` for selling loud tokens directly and `E_NOTICE` for leaving early. |
+| `node sim/replay.mjs` | Writes `sim/REPLAY.md` again from the two measured sell schedules in `sim/replay-data/`. |
 | Live page, "Testnet proof" | The token account, proof that nobody holds a key to it, and every recorded transaction on the explorer. The data is in [web/deployment.json](web/deployment.json) and [web/receipts.json](web/receipts.json); the steps are in [scripts/proof/README.md](scripts/proof/README.md). |
 | `node sim/run.mjs` (about 2 min) | Writes `sim/results.json` and `sim/RESULTS.md` again, byte for byte the same. |
 | `python3 -m http.server -d web 8000` | The same page at http://localhost:8000, served from static files with no build step. |
@@ -67,7 +68,20 @@ Insiders dump 13.6% of supply from 30 wallets on day 1:
 
 LOUD does worse than no rule at all when nobody dumps. Its largest 1-hour drop is 14.0% against 11.0% in a calm launch and 14.0% against 10.7% in a slow bleed, because we assume holders rush out when they see a shout. With that rush set to zero the day-1 drop is 8.8%, and at three times the assumed rush it is 39.2%. A loose setting (2% per hour, 10 min notice) drops 44.2%, about the same as no rule.
 
-Not tested against real market data. Every number here comes from the simulation; [sim/REPLAY.md](sim/REPLAY.md) lists the data sources that were tried.
+Every number in this section comes from the simulation. The next section replays two real dumps.
+
+## Replay of two real bundle dumps
+
+Two pump.fun launches where a group of wallets bought early and sold everything within half an hour. Their sales were read from the chain and offered, minute by minute, to LOUD's standard rule in the same rule engine.
+
+| Launch | | Bundle sold after 10 min | After 60 min | All sold after |
+|---|---|---|---|---|
+| Mint `7oE8o8kS6iyn5GyGhaBoi2HNz9M9m6n7VEdUWaxpump`, 2026-06-15. 4 wallets named in the [Bitquery report](https://bitquery.io/investigations/pump-fun-snipers-bundles). Measured: they bought 79.13% of supply in the creation block | on chain | 53.85% | 100.00% | 17.7 min |
+| | LOUD | 0.00% | 0.63% | 158.9 h (6.6 days) |
+| RKC, mint `7HgfXftRBBqsYtAEYcqjGLQrNJLL6Tww9ek4rE3Apump`, 2026-05-11. 10 wallets Lookonchain attributes to the developer ([post](https://x.com/lookonchain/status/2054007728872603911)). Measured: they bought 39.52% of supply within 184 s of launch | on chain | 90.03% | 100.00% | 29.9 min |
+| | LOUD | 0.00% | 1.27% | 79.3 h (3.3 days) |
+
+Under LOUD, holders in both cases also get 30 minutes of public notice before the first sale. The on-chain rows are measured. The LOUD rows are model output: a model pool, nobody else trading, and a bundle that bought inside the launch window, as both did. The RKC mint is derived from the wallets in the post. Full tables: [sim/REPLAY.md](sim/REPLAY.md), rebuilt by `node sim/replay.mjs`.
 
 ## Limits
 
@@ -100,7 +114,7 @@ Not tested against real market data. Every number here comes from the simulation
 | `contracts/loud` | The token: NEP-141, the two balances, the built-in pool and the exits. |
 | `web/engine.js` | The same rules in JavaScript, used by the page and the simulator. It keeps no registration and charges no storage. |
 | `web/` | The static page, no build step. |
-| `sim/` | The 60-day simulation. |
+| `sim/` | The 60-day simulation, and the replay of two real launches with its data. |
 | `scripts/proof` | The testnet run. |
 
 ## Libraries and AI use
