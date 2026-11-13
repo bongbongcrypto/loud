@@ -3,7 +3,7 @@
 **A NEAR memecoin whose creator and launch buyers have to announce a sale before they make it. Splitting the bag across 100 wallets sells it no faster.**
 
 - Live page: https://bongbongcrypto.github.io/loud/
-- Testnet token: [t.loud-mwet47mba97e26.testnet](https://testnet.nearblocks.io/address/t.loud-mwet47mba97e26.testnet), no access keys, demo preset, recorded 2026-11-13. Every transaction: [Testnet proof](https://bongbongcrypto.github.io/loud/#proof).
+- Testnet token: <!-- proof:token -->[t.loud-mwet47mba97e26.testnet](https://testnet.nearblocks.io/address/t.loud-mwet47mba97e26.testnet), no access keys, demo preset, recorded 2026-11-13<!-- /proof:token -->. Every transaction: [Testnet proof](https://bongbongcrypto.github.io/loud/#proof).
 - Contract: [contracts/loud/src/lib.rs](contracts/loud/src/lib.rs). Exact rules and numbers: [SPEC.md](SPEC.md).
 
 Built at NEAR HACKATHON, memecoins track. Testnet only. Unaudited.
@@ -30,7 +30,7 @@ Run from the repository root. The Node rows need Node 22 or newer and nothing in
 
 | Do | See |
 |---|---|
-| `node --test web/*.test.mjs sim/*.test.mjs scripts/proof/*.test.mjs` | All tests pass. Under LOUD, 1, 7, 20 and 100 wallets sell the same amount at every step, within rounding. Under a per-wallet limit, 100 wallets sell 100 times as much per minute as 1 while they still hold tokens. |
+| `node --test web/*.test.mjs sim/*.test.mjs scripts/proof/*.test.mjs scripts/*.test.mjs` | All tests pass. Under LOUD, 1, 7, 20 and 100 wallets sell the same amount at every step, within rounding. Under a per-wallet limit, 100 wallets sell 100 times as much per minute as 1 while they still hold tokens. |
 | `(cd contracts && cargo test --workspace)` | All tests pass. `split_test_one_wallet_vs_one_hundred` compares 1 wallet with 100. |
 | `(cd contracts/loud && cargo near build non-reproducible-wasm --locked --no-abi)` with cargo-near 0.23.0 | One wasm of about 0.2 MB. [CI](.github/workflows/ci.yml) runs both Rust steps on every push. |
 | Live page, "Run the split attack": run it with 1 wallet, then with 100 | The LOUD line stays the same. With more wallets the per-wallet rule sells the whole position sooner. |
@@ -39,7 +39,7 @@ Run from the repository root. The Node rows need Node 22 or newer and nothing in
 | `node sim/run.mjs` (about 2 min) | Writes `sim/results.json` and `sim/RESULTS.md` again, byte for byte the same. |
 | `python3 -m http.server -d web 8000` | The same page at http://localhost:8000, served from static files with no build step. |
 
-The testnet token runs a faster demo preset (launch window 2 min, notice 1 min, exit window 10 min, cap 0.5% per 10 min) and was built from commit `abf36a7`, named in `deployment.json` as `run.commit`. Two rules came after that commit: a shout cannot be cancelled, and each account pays for its storage. Unit tests cover both until [the run](.github/workflows/proof.yml) is repeated.
+The testnet token runs a faster demo preset (launch window 2 min, notice 1 min, exit window 10 min, cap 0.5% per 10 min)<!-- proof:commit --> and was built from commit `abf36a7`, named in `deployment.json` as `run.commit`<!-- /proof:commit -->.<!-- proof:scope --> Two rules came after that commit: a shout cannot be cancelled, and each account pays for its storage. Unit tests cover both until [the run](.github/workflows/proof.yml) is repeated.<!-- /proof:scope -->
 
 ## What the track asked for
 

@@ -123,6 +123,10 @@ export function shortHash(hash) {
   return s.length <= 14 ? s : `${s.slice(0, 6)}…${s.slice(-6)}`;
 }
 
+// Text from the data files, for static HTML (text nodes and double-quoted attributes).
+export const escapeHtml = (value) => String(value ?? '')
+  .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+
 // Only https links from data files are rendered as links.
 export function safeUrl(u) {
   return typeof u === 'string' && /^https:\/\/[^\s"'<>]+$/.test(u) ? u : null;

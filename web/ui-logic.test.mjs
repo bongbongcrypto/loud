@@ -870,36 +870,61 @@ test('index.html: the static text makes no claim the contract does not back', ()
 test('index.html: the proof lines readable without the page script are the recorded run', () => {
   const html = read('./index.html');
   const json = (name) => JSON.parse(read(name));
-  const d = L.deploymentView(json('./deployment.json'));
+  const dep = json('./deployment.json');
+  const d = L.deploymentView(dep);
   const r = L.receiptsView(json('./receipts.json'));
+  const esc = L.escapeHtml;
+  // A line without a target has no link, as on the page.
+  const anchor = (href, label) => (href ? `<a href="${esc(href)}" rel="noopener">${esc(label)}</a>` : '');
   const slice = (id, end) => html.slice(html.indexOf(`id="${id}"`), html.indexOf(end, html.indexOf(`id="${id}"`)));
   // The three large lines, exactly as the page script renders them.
   const facts = slice('proof-facts', '</ul>');
-  for (const x of L.proofHeadlines(d, r)) {
-    assert.ok(facts.includes(`<li data-state="${x.state}"><b>${x.big}</b><span>${x.small}</span><a href="${x.href}" rel="noopener">${x.linkText}</a></li>`), `static proof line: ${x.key}`);
+  const heads = L.proofHeadlines(d, r);
+  for (const x of heads) {
+    assert.ok(facts.includes(`<li data-state="${x.state}"><b>${esc(x.big)}</b><span>${esc(x.small)}</span>${anchor(x.href, x.linkText)}</li>`), `static proof line: ${x.key}`);
   }
   // The summary rows name the token and the result.
-  assert.ok(slice('sum-token', '</dd>').includes(`<a href="${d.tokenHref}" rel="noopener">${d.token}</a>`));
-  const heads = L.proofHeadlines(d, r);
-  assert.ok(slice('sum-proof', '</dd>').includes(`${heads[0].big}. ${heads[2].big} `));
+  assert.ok(slice('sum-token', '</dd>').includes(d.token ? anchor(d.tokenHref, d.token) : '>Not deployed yet.'));
+  assert.ok(slice('sum-proof', '</dd>').includes(`${esc(heads[0].big)}. ${esc(heads[2].big)} `));
   // What the run does not check is said in the static text whenever the view model says it.
   assert.equal(slice('sum-proof', '</dd>').includes('Recorded before two later rules, listed under Testnet proof.'), Boolean(r.scopeNote));
-  assert.equal(slice('proof-scope', '</p>'), `id="proof-scope"${r.scopeNote ? '' : ' hidden'}>${r.scopeNote}`);
-  assert.ok(html.includes(`<p class="state" id="dep-state" data-state="${d.state}">${d.headline}</p>`));
-  assert.ok(html.includes(`id="split-proof-state" data-state="ok">${r.split.result}. ${r.split.sentence}</p>`));
-  assert.ok(html.includes(`<span id="proof-stamp">Recorded ${r.generatedAt}.</span>`));
+  assert.equal(slice('proof-scope', '</p>'), `id="proof-scope"${r.scopeNote ? '' : ' hidden'}>${esc(r.scopeNote)}`);
+  // The sentence under "The checks" is shown when it adds something to the large line.
+  const quiet = r.state === 'ok' && r.unresolved === 0 && !r.error;
+  assert.equal(slice('rec-state', '</p>'), quiet
+    ? 'id="rec-state" data-state="pending" hidden>'
+    : `id="rec-state" data-state="${r.state}">${esc(r.error ? `${r.headline} The run stopped early: ${r.error}` : r.headline)}`);
+  assert.ok(html.includes(`<p class="state" id="dep-state" data-state="${d.state}">${esc(d.headline)}</p>`));
+  // The dump line carries its own state; without a measurement it has no result word.
+  const spState = r.split.result === 'PASS' ? 'ok' : r.split.result === 'FAIL' ? 'failed' : 'pending';
+  assert.ok(html.includes(`id="split-proof-state" data-state="${spState}">${esc(r.split.have ? `${r.split.result}. ${r.split.sentence}` : r.split.sentence)}</p>`));
+  const stamp = r.generatedAt || d.generatedAt;
+  assert.ok(html.includes(`<span id="proof-stamp">${stamp ? `Recorded ${esc(stamp)}.` : 'Not recorded yet.'}</span>`));
   // Every recorded check has a static row with its number and result, three of them shown first.
   const { key, rest } = L.splitChecks(r.steps);
-  assert.deepEqual(key.map((s) => s.n), [...L.KEY_CHECKS]);
+  if (r.steps.length === 10) assert.deepEqual(key.map((s) => s.n), [...L.KEY_CHECKS]);
   const rowsOf = (id) => [...slice(id, '</table>').matchAll(/<tr><td>(\d+)\. [^<]+<span class="expect">Expected: [^<]+<\/span><\/td><td class="res" data-result="(\w+)">\2<\/td><\/tr>/g)].map((m) => [m[1], m[2]]);
   assert.deepEqual(rowsOf('steps-key'), key.map((s) => [s.n, s.result]));
   assert.deepEqual(rowsOf('steps-table'), rest.map((s) => [s.n, s.result]));
+  // No other row is left over, and the folded list is hidden when it is empty.
+  assert.equal((slice('steps-key', '</table>') + slice('steps-table', '</table>')).split('<tr><td>').length - 1, r.steps.length);
+  assert.equal(slice('steps-rest', '>'), `id="steps-rest"${rest.length ? '' : ' hidden'}`);
   // The README names the same token account and the same day.
   const readme = read('../README.md');
-  assert.ok(readme.includes(`[${d.token}](${d.tokenHref})`));
-  assert.ok(readme.includes(`recorded ${r.generatedAt.slice(0, 10)}`));
+  const day = /^\d{4}-\d{2}-\d{2}T/.test(stamp) ? stamp.slice(0, 10) : '';
+  if (d.token) {
+    assert.ok(readme.includes(`[${d.token}](${d.tokenHref})`));
+    if (day) assert.ok(readme.includes(`, recorded ${day}`));
+    // "No access keys" and a clean result are said only when the files say so.
+    assert.equal(/\), no access keys/.test(readme), d.zeroKeys);
+    assert.equal(readme.includes(', the last run did not pass<!--'), !(d.state === 'ok' && r.state === 'ok'));
+  } else {
+    assert.ok(readme.includes('Testnet token: <!-- proof:token -->none recorded by the last run<!--'));
+  }
   // The README names the commit the token was built from, and says so when rules came after it.
-  assert.ok(readme.includes(`built from commit \`${json('./deployment.json').run.commit.slice(0, 7)}\``));
+  const commit = dep.run && typeof dep.run.commit === 'string' && /^[0-9a-f]{7,40}$/.test(dep.run.commit) ? dep.run.commit.slice(0, 7) : '';
+  assert.equal(readme.includes('built from commit'), Boolean(commit));
+  if (commit) assert.ok(readme.includes(`built from commit \`${commit}\``));
   assert.equal(readme.includes('Two rules came after that commit'), Boolean(r.scopeNote));
 });
 

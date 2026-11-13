@@ -35,7 +35,7 @@ jobs:
       - name: node --test (dependency-free JS)
         run: |
           shopt -s nullglob
-          files=(web/*.test.mjs sim/*.test.mjs scripts/proof/*.test.mjs)
+          files=(web/*.test.mjs sim/*.test.mjs scripts/proof/*.test.mjs scripts/*.test.mjs)
           if [ ${#files[@]} -eq 0 ]; then
             echo "no test files found"
             exit 0

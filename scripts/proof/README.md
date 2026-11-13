@@ -84,7 +84,7 @@ The script exits non-zero if any expectation fails. It writes both files in ever
 
 ## Run
 
-GitHub: Actions, workflow `proof`, "Run workflow". Input `preset` accepts `demo` only (the `standard` preset takes longer than the job limit). The `build` job builds the wasm; the `proof` job downloads it, runs the script with a read-only token and uploads the two JSON files as an artifact; the `record` job, which runs no npm code, commits them as `github-actions[bot]`. A failed run is committed only when the input `commit_on_failure` is set, so a failed re-run does not replace an earlier good result. A run takes about 17 minutes after the build.
+GitHub: Actions, workflow `proof`, "Run workflow". Input `preset` accepts `demo` only (the `standard` preset takes longer than the job limit). The `build` job builds the wasm; the `proof` job downloads it, runs the script with a read-only token and uploads the two JSON files as an artifact; the `record` job, which runs no npm code, runs `node scripts/sync-proof-text.mjs` (no dependency) to write the recorded run into the plain text of `web/index.html` and `README.md`, and commits the four files as `github-actions[bot]`. A failed run is committed only when the input `commit_on_failure` is set, so a failed re-run does not replace an earlier good result. A run takes about 17 minutes after the build.
 
 Environment variables (all optional):
 

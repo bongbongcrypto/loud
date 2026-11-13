@@ -1,12 +1,14 @@
 name: proof
 
 # Deploys LOUD to NEAR testnet, runs the checks of SPEC section 8 on chain and commits
-# web/deployment.json and web/receipts.json. Manual trigger only. No secrets: every key
+# web/deployment.json and web/receipts.json, together with the lines of web/index.html
+# and README.md that repeat them. Manual trigger only. No secrets: every key
 # is generated inside the job and kept in memory. See scripts/proof/README.md.
 #
 # The job that installs and runs npm code (proof) has a read-only token and no stored
 # git credentials. It hands the two result files to the record job as an artifact; only
-# the record job can write to the repository, and it runs no npm code.
+# the record job can write to the repository, and it runs no npm code: its one script,
+# scripts/sync-proof-text.mjs, has no dependency and nothing is installed there.
 
 on:
   workflow_dispatch:
@@ -96,13 +98,21 @@ jobs:
           name: proof-results
           path: web
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      # The page and the README repeat the recorded run as plain text.
+      - name: Write the recorded run into the static text
+        run: node scripts/sync-proof-text.mjs
+
       - name: Commit
         env:
           STATUS: ${{ needs.proof.result }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add web/deployment.json web/receipts.json
+          git add web/deployment.json web/receipts.json web/index.html README.md
           if git diff --cached --quiet; then
             echo "result files unchanged"
             exit 0
