@@ -732,8 +732,19 @@ async function main() {
     s5.txs.push(txRecord(r));
     if (r.outcome !== 'success') log(`ft_transfer to ${wallets[i].id}: ${r.outcome} ${r.error}`);
   }
-  await readUntil(() => account(wallets[WALLETS - 1].id), (a) => BigInt(a.loud) === parts[WALLETS - 1]);
-  const balances = await Promise.all(wallets.map((w) => account(w.id)));
+  await readUntil(() => account(wallets[WALLETS - 1].id), (a) => BigInt(a.loud) === parts[WALLETS - 1], 6);
+  let balances = await Promise.all(wallets.map((w) => account(w.id)));
+  // The chain decides here too. A transfer whose outcome never came back and whose
+  // tokens did not arrive is sent once more; the earlier send is listed above.
+  for (let i = 0; i < WALLETS; i++) {
+    if (BigInt(balances[i].loud) === parts[i]) continue;
+    checkDeadline('splitting');
+    log(`ft_transfer to ${wallets[i].id} did not arrive; sending once more`);
+    const r = await call(insider, token, 'ft_transfer', { receiver_id: wallets[i].id, amount: parts[i].toString() }, { deposit: ONE_YOCTO });
+    s5.txs.push(txRecord(r));
+    await readUntil(() => account(wallets[i].id), (a) => BigInt(a.loud) === parts[i], 6);
+  }
+  balances = await Promise.all(wallets.map((w) => account(w.id)));
   const insiderAfter = await account(insider.id);
   s5.balances = wallets.map((w, i) => ({ account: w.id, loud: String(balances[i].loud), quiet: String(balances[i].quiet) }));
   const loudOk = balances.every((b, i) => BigInt(b.loud) === parts[i] && BigInt(b.quiet) === 0n);
