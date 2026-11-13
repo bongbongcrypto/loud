@@ -1,6 +1,8 @@
 # LOUD
 
-**A NEAR memecoin whose creator and launch buyers have to announce a sale before they make it. Splitting the bag across 100 wallets sells it no faster.**
+**A NEAR memecoin whose launch tokens can't hit the pool without warning. A hundred wallets get no more room than one.**
+
+Launch tokens are the creator allocation and tokens bought in the launch window. They can be sold into the token's own pool only after a public notice, and all of those sales share one cap.
 
 - Live page: https://bongbongcrypto.github.io/loud/
 - Testnet token: <!-- proof:token -->[t.loud-mwf63eou6bc318.testnet](https://testnet.nearblocks.io/address/t.loud-mwf63eou6bc318.testnet), no access keys, demo preset, recorded 2026-11-13<!-- /proof:token -->. Every transaction: [Testnet proof](https://bongbongcrypto.github.io/loud/#proof).
@@ -10,19 +12,19 @@ Built at NEAR HACKATHON, memecoins track. Testnet only. Unaudited.
 
 ## The problem
 
-The creator and the launch buyers hold the cheap early supply. Most anti-dump rules limit each wallet, so an insider splits the bag across 100 wallets and sells all of it in the same minute. Everyone else finds out from the chart.
+The creator and the launch buyers hold the cheap early supply. A per-wallet sell limit, the rule modelled here, caps each wallet, so an insider splits the bag across 100 wallets and sells all of it in the same minute. Everyone else finds out from the chart.
 
 ## How it works
 
 1. Tokens bought during the launch window, and the creator allocation, are **loud**. Later buys are **quiet** and sell at once. The tag travels with the tokens through every transfer.
-2. Loud tokens cannot be sold directly. The holder calls `shout`, which locks them and posts a public notice, then `leave` when the notice ends.
+2. Loud tokens cannot use `sell`. To sell into the pool the holder calls `shout`, which locks them and posts a public notice, then `leave` when the notice ends.
 3. Every wallet's `leave` draws on one shared cap. More wallets never mean more room.
-4. A shout cannot be cancelled. Tokens that are not sold stay locked for 90 min, and then `hush` returns them, still loud.
-5. Every wallet but the creator's pays a one-time 0.02 NEAR storage fee. Nobody, the creator included, can change or pause the token: it has no owner method and its account has no access key.
+4. A shout cannot be cancelled. Unsold tokens stay locked until the exit ends, and then `hush` returns them, still loud.
+5. Every wallet but the creator's needs a one-time 0.03 NEAR storage fee. Nobody, the creator included, can change or pause the token: it has no owner method and its account has no access key.
 
 Standard preset: 1,000,000,000 supply, 5% creator, launch window 10 min, notice 30 min, exit window 60 min, cap 0.5% of supply per 60 min.
 
-LOUD limits how fast early supply can be sold on its defined path, no matter how many wallets it is split across. The path is the token's own pool, and every sale on it is public in advance. It does not stop a price from falling.
+LOUD limits how fast early supply can be sold on its defined path, no matter how many wallets it is split across. The path is the token's own pool, and every sale of loud tokens into it is public in advance. Tokens sold there and bought back after the launch window are quiet and off the path ([Limits](#limits)). It does not stop a price from falling.
 
 ## Check it yourself
 
@@ -30,7 +32,7 @@ Run from the repository root. The Node rows need Node 22 or newer and nothing in
 
 | Do | See |
 |---|---|
-| `node --test web/*.test.mjs sim/*.test.mjs scripts/proof/*.test.mjs scripts/*.test.mjs` | All tests pass. Under LOUD, 1, 7, 20 and 100 wallets sell the same amount at every step, within rounding. Under a per-wallet limit, 100 wallets sell 100 times as much per minute as 1 while they still hold tokens. |
+| `node --test web/*.test.mjs sim/*.test.mjs scripts/proof/*.test.mjs scripts/*.test.mjs` | All tests pass. Under LOUD, 1, 7, 20 and 100 wallets sell the same amount at every step, within rounding. Under a per-wallet limit, 100 wallets sell 100 times as much per minute as 1 when each holds enough to use its whole limit; the test uses a 50% position. A 5% position is gone in 1 minute against 10. |
 | `(cd contracts && cargo test --workspace)` | All tests pass. `split_test_one_wallet_vs_one_hundred` compares 1 wallet with 100. |
 | `(cd contracts/loud && cargo near build non-reproducible-wasm --locked --no-abi)` with cargo-near 0.23.0 | One wasm of about 0.2 MB. [CI](.github/workflows/ci.yml) runs both Rust steps on every push. |
 | Live page, "Run the split attack": run it with 1 wallet, then with 100 | The LOUD line stays the same. With more wallets the per-wallet rule sells the whole position sooner. |
@@ -40,7 +42,7 @@ Run from the repository root. The Node rows need Node 22 or newer and nothing in
 | `node sim/run.mjs` (about 2 min) | Writes `sim/results.json` and `sim/RESULTS.md` again, byte for byte the same. |
 | `python3 -m http.server -d web 8000` | The same page at http://localhost:8000, served from static files with no build step. |
 
-The testnet token runs a faster demo preset (launch window 2 min, notice 1 min, exit window 10 min, cap 0.5% per 10 min)<!-- proof:commit --> and was built from commit `845805a`, named in `deployment.json` as `run.commit`<!-- /proof:commit -->.<!-- proof:scope --><!-- /proof:scope -->
+The testnet token runs a faster demo preset (launch window 2 min, notice 1 min, exit window 10 min, cap 0.5% per 10 min)<!-- proof:commit --> and was built from commit `845805a`, named in `deployment.json` as `run.commit`<!-- /proof:commit -->.<!-- proof:scope --><!-- /proof:scope --> That build charges 0.02 NEAR for storage. The source now charges 0.03.
 
 ## What the track asked for
 
@@ -56,17 +58,19 @@ The testnet token runs a faster demo preset (launch window 2 min, notice 1 min, 
 
 ## Simulation
 
-`node sim/run.mjs` runs the page's rule engine for 60 days against no rule and against a per-wallet limit: four scenarios, nine seeds each. How holders behave is assumed, not measured. Full tables and assumptions: [sim/RESULTS.md](sim/RESULTS.md).
+`node sim/run.mjs` runs the page's rule engine for 60 days against no rule and against a per-wallet limit: four scenarios, nine seeds each. How holders behave is an assumption. Nobody measured it. Full tables and assumptions: [sim/RESULTS.md](sim/RESULTS.md).
 
-Insiders dump 13.6% of supply from 30 wallets on day 1:
+Insiders dump 13.6% of supply from 30 wallets at 24 h:
 
-| Rule | Largest 1-hour price drop | Time to sell the early supply | Early-supply sales announced in advance | Holder's sell price 1 min in, vs before |
-|---|---|---|---|---|
-| No rule | 44.6% | at once | 0% | 61.9% |
-| Per-wallet limit | 44.6% | at once | 0% | 61.9% |
-| LOUD | 19.5% | 27.1 h | 100% | 100.0% |
+| Rule | Largest 1-hour price fall after the first 12 hours | Time until the modelled seller has sold 99.9% of early supply | Early-supply sales announced in advance | Holder quote 1 min after the first sign | Worst holder quote within 30 min |
+|---|---|---|---|---|---|
+| No rule | 44.6% | at once | 0% | 61.9% | 58.9% |
+| Per-wallet limit | 44.6% | at once | 0% | 61.9% | 58.9% |
+| LOUD | 19.5% | 27.1 h | 100% | 100.0% | 84.9% |
 
-LOUD does worse than no rule at all when nobody dumps. Its largest 1-hour drop is 14.0% against 11.0% in a calm launch and 14.0% against 10.7% in a slow bleed, because we assume holders rush out when they see a shout. With that rush set to zero the day-1 drop is 8.8%, and at three times the assumed rush it is 39.2%. A loose setting (2% per hour, 10 min notice) drops 44.2%, about the same as no rule.
+Each cell is the median of 9 seeds. The holder quote is the price for selling 0.01% of supply, as a share of the price just before the first sign. That sign is the first shout under LOUD and the first sale under the other rules. Nobody in the run makes that sale. The announced column is 100% under LOUD by construction. The LOUD seller goes through the notice and the cap and does not buy back.
+
+Standard LOUD does worse than no rule when early supply does not dump. By the same 1-hour measure it falls 14.0% against 11.0% in a calm launch, where early supply never sells, and 14.0% against 10.7% in a slow bleed, where it sells a twentieth a day. In the calm launch the cause is an assumption: holders rush out when they see a shout. With that rush set to zero the day-1 dump scenario gives 8.8%, and at three times the assumed rush 39.2%. A loose setting (2% per hour, 10 min notice) gives 44.2%, about the same as no rule.
 
 Every number in this section comes from the simulation. The next section replays two real dumps.
 
@@ -81,25 +85,27 @@ Two pump.fun launches where a group of wallets bought early and sold everything 
 | RKC, mint `7HgfXftRBBqsYtAEYcqjGLQrNJLL6Tww9ek4rE3Apump`, 2026-05-11. 10 wallets Lookonchain attributes to the developer ([post](https://x.com/lookonchain/status/2054007728872603911)). Measured: they bought 39.52% of supply within 184 s of launch | on chain | 90.03% | 100.00% | 29.9 min |
 | | LOUD | 0.00% | 1.27% | 79.3 h (3.3 days) |
 
-Under LOUD, holders in both cases also get 30 minutes of public notice before the first sale. The on-chain rows are measured. The LOUD rows are model output: a model pool, nobody else trading, and a bundle that bought inside the launch window, as both did. The RKC mint is derived from the wallets in the post. Full tables: [sim/REPLAY.md](sim/REPLAY.md), rebuilt by `node sim/replay.mjs`.
+Under LOUD, holders in both cases also get 30 minutes of public notice before the first sale. The on-chain rows are measured. The LOUD rows are model output: a model pool, nobody else selling, and a bundle that bought inside the launch window, as both did. The replay assumes the bundle sells through the notice and the cap and does not buy back. The RKC mint is derived from the wallets in the post. Full tables: [sim/REPLAY.md](sim/REPLAY.md), rebuilt by `node sim/replay.mjs`.
 
 ## Limits
 
-- **Waiting out the launch window avoids the tag.** Someone who buys right after it gets quiet tokens with no notice and no cap. The creator allocation is always loud, and so are honest launch-window buyers.
-- **Side deals.** Loud tokens can still be sent wallet to wallet, so private sales and wrapper contracts stay possible. The buyer's tokens are loud too.
-- **A shout does not force a sale.** A holder can shout, sell nothing and take the tokens back after 90 min. The lock is the only cost.
+- **Leave, then buy back.** Once the launch window is over, a holder can sell loud tokens through the notice and the cap and, in the same transaction, buy the same amount back with NEAR of their own. The pool ends where it started, within rounding, and the holder now owns quiet tokens, which sell with no notice and no cap. So the cap sets how fast early supply can be sold or converted. It does not stop a later dump of tokens bought back at the market price. Every conversion still shows on chain as a shout and a leave.
+- **A standing notice.** A holder can keep exits open one after another, so some exit is always ready. The notice then says a sale may come, with no exact time.
+- **Side deals and wrappers.** Loud tokens can be sent with a plain transfer to another registered account. That covers a private sale, and it covers a contract that issues its own token against them. Whoever buys that wrapper token holds no tag.
+- **Waiting out the launch window avoids the tag.** Someone who buys right after it gets quiet tokens with no notice and no cap. The creator allocation starts loud, and so do the tokens of honest launch-window buyers.
+- **A shout does not force a sale.** A holder can shout, sell nothing and take the tokens back after the exit expires. There is no penalty beyond gas and the lock.
 - **A notice can trigger a rush.** Quiet holders can sell before a shouted exit is ready.
 - **The creator allocation is unbacked.** It is minted without payment, so its proceeds come from buyers' NEAR. The last sellers may be unable to sell.
 - **First come, first served.** There is no queue. One holder who keeps calling `leave` can take every refill and starve the others until their exits expire.
-- **Sybil resistance.** The shared cap is the whole defence. The contract cannot tell people apart and offers no per-person fairness.
+- **Sybil resistance.** The shared cap is the whole defence. More accounts add no room under it. They do add exit slots, eight per account. The contract cannot tell people apart and offers no per-person fairness.
 
 <details>
 <summary>Contract-level limits</summary>
 
-- **Other pools.** `ft_transfer_call` refuses loud tokens, so they cannot be deposited into a DEX. Other venues decide which quiet tokens they accept.
-- **Small positions leave in one call.** Anything that fits in the cap room sells in a single `leave` after its notice. A full cap plus one refill lets out up to 1% of supply in an hour.
+- **Other pools.** `ft_transfer_call` refuses loud tokens. Other venues decide which quiet tokens they accept.
+- **Small positions leave in one call.** What fits the cap room sells in one `leave` after notice if the pool can pay. A full cap plus one refill lets out up to 1% of supply in an hour.
 - **When the pool cannot pay.** `sell` fails with `E_POOL_EMPTY`, and `leave` fills only what the pool can pay.
-- **Storage is never refunded.** There is no withdraw and no unregister. A transfer to an account that has not paid fails with `E_UNREGISTERED`. The payment covers five open exits; a sixth to eighth locks under 0.008 NEAR of the token account's balance until it closes.
+- **Storage is never refunded.** There is no withdraw and no unregister. A transfer to an unregistered account fails with `E_UNREGISTERED`. The 0.03 NEAR covers the account's records and eight open exits, the most one account can have.
 - **Failed payouts.** A payout whose transfer fails is recorded and collected with `claim`. The record depends on a callback that can itself fail, and then nothing is recorded.
 - **More than 100 open exits.** `get_exits` then pages in storage order, so a reader can skip or repeat an exit.
 - **Not built.** There is no trading fee, no liquidity migration, no audit and no mainnet token.
@@ -119,7 +125,7 @@ Under LOUD, holders in both cases also get 30 minutes of public notice before th
 
 ## Libraries and AI use
 
-- Contract: [near-sdk](https://github.com/near/near-sdk-rs) 5.30.1, the only external crate. Built with cargo-near 0.23.0 on Rust 1.95.0.
+- Contract: [near-sdk](https://github.com/near/near-sdk-rs) 5.30.1, the only direct external crate. Built with cargo-near 0.23.0 on Rust 1.95.0.
 - Proof run: [near-api-js](https://github.com/near/near-api-js) 5.1.1 for keys and signing, used only by the testnet run.
 - Page, engine, simulator and RPC client: no dependency.
 - The code, tests and text were written with Claude Code, an AI coding tool, directed and checked by the author.

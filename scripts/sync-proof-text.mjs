@@ -32,7 +32,7 @@ export const CHECK_TEXT = Object.freeze({
   6: ['One wallet tries a plain sell', 'refused, because loud tokens cannot be sold directly (E_NO_QUIET)'],
   7: ['Late buyer buys after the launch window, sells half', 'quiet tokens only; the sell goes through'],
   8: ['All 20 wallets shout; one tries to leave at once', '20 open exits; the early leave is refused (E_NOTICE)'],
-  9: ['All 20 wallets call leave for one cap window', 'some sells go through; the rest are refused because the cap is full (E_CAP) or the exit ran out (E_EXPIRED)'],
+  9: ['All 20 wallets call leave for one cap window', 'some sells go through; the rest are refused because the cap has no room left (E_CAP) or the exit ran out (E_EXPIRED)'],
   10: ['What left, against the cap', 'no more than the cap allows'],
 });
 

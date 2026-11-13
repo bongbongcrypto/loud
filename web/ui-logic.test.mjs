@@ -69,8 +69,8 @@ test('index.html states the SPEC claim and the standard preset values', () => {
   assert.ok(html.includes('0.5% of supply per 60 min'));
   // A shout stays locked for the notice plus the exit window.
   const lockMin = Number((PRESETS.standard.notice_ns + PRESETS.standard.exit_window_ns) / MIN);
-  assert.ok(html.includes(`until the exit expires, ${lockMin} min later.`));
-  assert.ok(html.includes(`The ${lockMin} min lock is the only cost.`));
+  assert.ok(html.includes(`the exit expires ${lockMin} min after the shout, and they stay locked until someone calls <code>hush</code>.`));
+  assert.ok(html.includes(`There is no penalty beyond gas and the ${lockMin} min lock.`));
   // The hero is the kicker, the headline and one line on why, nothing else.
   const lede = html.slice(html.indexOf('<section class="lede"'), html.indexOf('</section>', html.indexOf('<section class="lede"')));
   assert.equal((lede.match(/<p[ >]/g) || []).length, 2);
@@ -103,7 +103,7 @@ test('comparison: per-wallet speed depends on the wallet count, LOUD does not', 
   assert.equal(a.loud.price.dropAfter1Min, 0);
   assert.ok(a.naive.price.dropAfter1Min > 0.5);
 
-  // 5% of supply, 100 wallets: holdings limit the first round, so the multiple is 10, not 100.
+  // 5% of supply, 100 wallets: each wallet holds less than its limit, so the multiple is 10.
   const b = L.runComparison({ wallets: 100, shareBps: 500 }, cache).stats;
   assert.equal(b.per_wallet.sellOutSecSingle, 10 * 60);
   assert.equal(b.per_wallet.sellOutSec, 60);
@@ -288,6 +288,9 @@ test('sandbox: the guided path shows the real errors', () => {
   assert.equal(r.ok, false);
   assert.equal(r.code, 'E_NOTICE_BINDING');
   assert.ok(r.message.startsWith('E_NOTICE_BINDING: '));
+  // The time in the error is minutes since launch, with no nanosecond count.
+  assert.match(r.message, /90 min/);
+  assert.doesNotMatch(r.message, /\d{9,}/);
   assert.equal(sb.view().escrowed, 86363636363636363636363636n);
   assert.deepEqual(sb.view().path, [true, true, true, true, false, false]);
 
@@ -299,6 +302,8 @@ test('sandbox: the guided path shows the real errors', () => {
   assert.match(r.message, /^Partial fill: 2,500,000 LOUD/);
   r = sb.leave('1');
   assert.equal(r.code, 'E_CAP');
+  assert.match(r.message, /room returns/);
+  assert.doesNotMatch(r.message, /\d{9,}/);
   v = sb.view();
   assert.equal(v.capAvailable, 0n);
   assert.match(v.nextRoomText, /^The cap is empty and refills continuously/);
@@ -861,7 +866,7 @@ test('index.html: the static text makes no claim the contract does not back', ()
   // A shout cannot be cancelled, it does not force a sale, and storage is paid per account.
   assert.match(html, /<b>A shout cannot be cancelled\.<\/b> The tokens stay locked until they are sold/);
   assert.match(html, /<dt>A shout is not a sale<\/dt>/);
-  assert.match(html, /Storage costs 0\.02 NEAR per account/);
+  assert.match(html, /Storage costs 0\.03 NEAR per account/);
   // One word per thing in the reader's text: cap and exit.
   const visible = html.replace(/<[^>]+>/g, ' ');
   assert.ok(!/\bbucket\b|\bthe door\b|\bescrow/i.test(visible));
@@ -980,6 +985,8 @@ test('index.html: the static result lines are what the engine computes for the d
     assert.ok(html.includes(`<tr data-rule="${rules[i]}"><td>${row.label}</td><td>${row.single}</td><td>${row.split}${sub(row.note)}</td><td>${row.drop1}</td><td>${row.dropMax}${sub('sale still running')}</td></tr>`), `static table row for ${rules[i]}`);
   });
   assert.match(html, /<th scope="col">Same, 100 wallets<\/th>/);
+  assert.match(html, /<th scope="col">Price fall after 1 min, 100 wallets<\/th>/);
+  assert.match(html, /<th scope="col">Largest price fall in 6 h, 100 wallets<\/th>/);
 });
 
 test('result lines: every choice of share and wallets', () => {
@@ -1098,6 +1105,6 @@ test('real launch: the lines on the page carry the numbers of the case file and 
   // The source, the mint, and the line that says which part is a model.
   assert.ok(block.includes(`href="${data.sources[0].url}"`));
   assert.ok(block.includes(`<code>${data.token.address}</code>`));
-  assert.match(block, /The first two lines are measured on chain\. The LOUD line is a replay of the same sales through the rule engine/);
+  assert.match(block, /The first two lines are measured on chain\. The LOUD line replays the same sales through the rule engine/);
   assert.equal(notice, String(Number(PRESETS.standard.notice_ns / MIN)));
 });

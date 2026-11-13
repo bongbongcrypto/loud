@@ -14,7 +14,7 @@ const E18: u128 = 1_000_000_000_000_000_000;
 const NEAR: u128 = 1_000_000_000_000_000_000_000_000;
 const MINUTE: u64 = 60 * SECOND_NS;
 /// The storage fee, written out so a change of the constant shows up here.
-const STORAGE_FEE: u128 = 20_000_000_000_000_000_000_000;
+const STORAGE_FEE: u128 = 30_000_000_000_000_000_000_000;
 const T0: u64 = 1_700_000_000 * SECOND_NS;
 
 fn acc(name: &str) -> AccountId {
@@ -669,6 +669,38 @@ fn shout_accepts_a_whole_balance_below_the_dust_floor() {
     hush(&mut c, &tiny, expired, id);
     assert_eq!(bal(&c, &tiny), (1, 0));
     assert_eq!(state(&c, expired).escrowed.0, 0);
+}
+
+#[test]
+fn shout_below_the_dust_floor_needs_an_account_with_no_open_exit() {
+    let cfg = standard();
+    let mut c = deploy(&cfg);
+    let ts = T0 + SECOND_NS;
+    let dust = 1_000 * E18;
+    buy(&mut c, &acc("minnow.test"), ts, NEAR);
+    let small = acc("small.test");
+    register(&mut c, &small, ts);
+    at(&creator(), ts, 1);
+    c.transfer_loud(small.clone(), U128(2 * dust - 1));
+
+    // One exit is open. What is left is the whole balance and below the
+    // floor: refused while that exit is open.
+    let first = shout(&mut c, &small, ts, dust);
+    assert_eq!(bal(&c, &small), (dust - 1, 0));
+    at(&small, ts, 1);
+    expect_fail("E_DUST", || c.shout(U128(dust - 1)));
+    assert_eq!(bal(&c, &small), (dust - 1, 0));
+    assert_eq!(c.get_account(small.clone()).exits.len(), 1);
+
+    // The open exit sells out and closes. Now the remainder is accepted.
+    let ready = ts + cfg.notice;
+    assert_eq!(leave(&mut c, &small, ready, first), dust);
+    assert!(c.get_account(small.clone()).exits.is_empty());
+    let second = shout(&mut c, &small, ready, dust - 1);
+    assert_eq!(bal(&c, &small), (0, 0));
+    let exits = c.get_account(small.clone()).exits;
+    assert_eq!(exits.len(), 1);
+    assert_eq!((exits[0].id.0, exits[0].remaining.0), (second, dust - 1));
 }
 
 #[test]

@@ -14,12 +14,12 @@ The step numbers are the ones used in `receipts.json`. Step 3 runs before step 2
 | n | Step | Expectation |
 |---|---|---|
 | 1 | Create a fresh root account `loud-<random>.testnet` through the testnet faucet | account exists and holds enough NEAR |
-| 2 | Create `t.<root>` in one batch transaction: CreateAccount, Transfer, DeployContract, FunctionCall `new` (demo preset, creator = insider). No AddKey | `view_access_key_list` is empty; the on-chain `code_hash` equals base58(sha256) of the built wasm; `get_params` equals the preset; `storage_balance_bounds().min` is 0.02 NEAR; `storage_balance_of` of an account that is not registered is `null`; the creator is registered |
+| 2 | Create `t.<root>` in one batch transaction: CreateAccount, Transfer, DeployContract, FunctionCall `new` (demo preset, creator = insider). No AddKey | `view_access_key_list` is empty; the on-chain `code_hash` equals base58(sha256) of the built wasm; `get_params` equals the preset; `storage_balance_bounds().min` is 0.03 NEAR; `storage_balance_of` of an account that is not registered is `null`; the creator is registered |
 | 3 | Create `insider`, `w01`..`w20` and `late` under the root | 22 accounts |
 | 4 | The insider buys with 1 NEAR in the loud window | bought tokens are loud; `pool_near` rises by the full 1 NEAR, because the insider is the creator and `new` registered it |
-| 5 | The insider sends 1 unit to a wallet that is not registered. Then all 20 wallets call `storage_deposit` with 0.02 NEAR. Then the insider splits its whole loud balance across them with `ft_transfer` | the first transfer fails with `E_UNREGISTERED`; all 20 wallets are registered; every wallet holds loud, no quiet |
+| 5 | The insider sends 1 unit to a wallet that is not registered. Then all 20 wallets call `storage_deposit` with 0.03 NEAR. Then the insider splits its whole loud balance across them with `ft_transfer` | the first transfer fails with `E_UNREGISTERED`; all 20 wallets are registered; every wallet holds loud, no quiet |
 | 6 | One wallet calls `sell()` | fails with `E_NO_QUIET` |
-| 7 | After the loud window the late buyer buys with 0.5 NEAR and sells half | holds quiet only; the buy registers the buyer and `pool_near` rises by 0.48 NEAR; the sell succeeds and none of its receipts failed |
+| 7 | After the loud window the late buyer buys with 0.5 NEAR and sells half | holds quiet only; the buy registers the buyer and `pool_near` rises by 0.47 NEAR; the sell succeeds and none of its receipts failed |
 | 8 | All 20 wallets `shout` their full balance; one calls `leave()` at once and then `hush()` on the same exit | 20 open exits; the leave fails with `E_NOTICE`; the hush fails with `E_NOTICE_BINDING` and the exit stays open |
 | 9 | After the notice all 20 wallets call `leave()` in rounds for one full cap window | at least one fill; calls that executed and failed did so with `E_CAP` (or `E_EXPIRED` at the end); no successful leave has a failed receipt or a `payout_failed` event. Calls that were not executed and calls whose outcome stayed unknown are counted apart and do not fail the step |
 | 10 | Compare what left with the cap, measured over the full cap window | `sold_total <= bucket_at_start + cap_units * elapsed / cap_window_ns` (SPEC invariant 4), and the conditions listed below |
@@ -28,14 +28,14 @@ Step 1: the root account is created by the faucet service, with a transaction th
 
 Step 2 fails if the token account has an access key, if its `code_hash` differs from the hash of the wasm that the build job produced, or if `get_params` differs from the intended preset. The comparison covers the nine constructor values of SPEC section 3 and the two derived values `cap_units = total_supply * cap_bps / 10000` and `loud_until = launch_ts + loud_window_ns`.
 
-Storage (steps 2, 4, 5 and 7): an account pays 0.02 NEAR once to be registered, and only a registered account can receive tokens. The run pays this the way a user would.
+Storage (steps 2, 4, 5 and 7): an account pays 0.03 NEAR once to be registered, and only a registered account can receive tokens. The run pays this the way a user would.
 
-- The 20 wallets each call `storage_deposit` for themselves, all at the same time, right before the split. The deposit is exactly 0.02 NEAR, so nothing is refunded. Whether a wallet is registered is read from `is_registered`, not from the send result. A wallet that is still not registered sends once more; a deposit for a registered account is refunded in full.
-- The late buyer does nothing extra. Its first `buy` takes 0.02 NEAR out of the attached 0.5 NEAR and puts 0.48 NEAR into the pool.
+- The 20 wallets each call `storage_deposit` for themselves, all at the same time, right before the split. The deposit is exactly 0.03 NEAR, so nothing is refunded. Whether a wallet is registered is read from `is_registered`, not from the send result. A wallet that is still not registered sends once more; a deposit for a registered account is refunded in full.
+- The late buyer does nothing extra. Its first `buy` takes 0.03 NEAR out of the attached 0.5 NEAR and puts 0.47 NEAR into the pool.
 - The insider is the creator, and `new` registers the creator, so its buy pays nothing for storage.
 - The registrations run after the insider's buy, so they take no time from the 2 minute loud window. Only the reads of step 2 sit between the deploy and the buy. If the buy landed after the window, its tokens would be quiet and step 4 would fail.
 
-How a buy is checked: the script reads `is_registered(buyer)` and `get_state().pool_near` before the buy and `pool_near` again after it. The change must equal the attached NEAR, less 0.02 NEAR if the buyer was not registered. Nothing is computed from a local price formula. The `buy` event is read as well: its `near_in` and `storage_paid` must agree when they are present. A field that is missing is named in the step text and does not fail the step. Step 7 also needs `is_registered(late buyer)` to change from `false` to `true`.
+How a buy is checked: the script reads `is_registered(buyer)` and `get_state().pool_near` before the buy and `pool_near` again after it. The change must equal the attached NEAR, less 0.03 NEAR if the buyer was not registered. Nothing is computed from a local price formula. The `buy` event is read as well: its `near_in` and `storage_paid` must agree when they are present. A field that is missing is named in the step text and does not fail the step. Step 7 also needs `is_registered(late buyer)` to change from `false` to `true`.
 
 Step 8, the hush: a shout is binding. `hush` fails with `E_NOTICE_BINDING` for everyone, the owner included, until the exit has expired. The wallet whose early `leave` was refused calls `hush` on the same exit right after it. The step needs that call to fail with this code and the exit to be still open. `early_hush.before_ready` says whether the call landed before the notice ended; it has to fail either way, because the exit has not expired.
 
@@ -99,7 +99,7 @@ Environment variables (all optional):
 
 `rpc.testnet.near.org` is not the first RPC because the NEAR docs (docs.near.org/api/rpc/providers) list the near.org endpoints as severely rate limited, and this run sends several hundred transactions.
 
-Funding: the root account pays for everything. The token account gets 10^19 yoctoNEAR per byte of wasm plus 0.5 NEAR. The insider gets 1.25 NEAR and the late buyer 0.65 NEAR. Each wallet gets 0.12 to 0.27 NEAR: 0.02 NEAR for its registration and the rest for gas. With a wasm of about 230 KB the run needs about 7.4 NEAR, and one faucet grant was 10 NEAR in the saved run.
+Funding: the root account pays for everything. The token account gets 10^19 yoctoNEAR per byte of wasm plus 0.5 NEAR. The insider gets 1.25 NEAR and the late buyer 0.65 NEAR. Each wallet gets 0.13 to 0.28 NEAR: 0.03 NEAR for its registration and the rest for gas. With a wasm of about 230 KB the run needs about 7.6 NEAR, and one faucet grant was 10 NEAR in the saved run.
 
 If one faucet grant is smaller than the run needs, the script creates up to three more faucet accounts and deletes each with the root as beneficiary.
 

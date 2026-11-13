@@ -209,6 +209,56 @@ test('shout: a whole loud balance below the dust floor can be shouted; a part of
   checkInvariants(t);
 });
 
+test('shout: below the dust floor the account must have no other open exit', () => {
+  const t = seeded();
+  t.transferLoud(CREATOR, 'small', 2n * DUST - 1n, 11n * MIN);
+  // One exit is open. What is left is the whole balance and below the floor.
+  const first = t.shout('small', DUST, 11n * MIN);
+  assert.equal(t.getAccount('small').loud, DUST - 1n);
+  assert.throws(() => t.shout('small', DUST - 1n, 11n * MIN), (e) => code('E_DUST')(e) &&
+    e.message.includes(`${DUST} units`) && e.message.includes(`${DUST - 1n} units`) && /you have 1 open/.test(e.message));
+  assert.equal(t.getAccount('small').loud, DUST - 1n);
+  assert.equal(t.getAccount('small').exits.length, 1);
+  // With no open exit the message counts zero and a part is still refused.
+  t.transferLoud(CREATOR, 'other', DUST - 1n, 11n * MIN);
+  assert.throws(() => t.shout('other', DUST - 2n, 11n * MIN), (e) => code('E_DUST')(e) && /you have 0 open/.test(e.message));
+  // The open exit sells out and closes. Now the remainder is accepted.
+  assert.equal(t.leave('small', first, 0n, 41n * MIN), DUST);
+  assert.equal(t.getAccount('small').exits.length, 0);
+  const second = t.shout('small', DUST - 1n, 41n * MIN);
+  assert.equal(t.getAccount('small').loud, 0n);
+  assert.deepEqual(t.getAccount('small').exits.map((ex) => [ex.id, ex.remaining]), [[second, DUST - 1n]]);
+  // Eight open exits and a remainder below the floor: E_DUST comes first.
+  for (let i = 0; i < 8; i++) t.shout(CREATOR, DUST, 41n * MIN);
+  const all = t.getAccount(CREATOR).loud;
+  t.transferLoud(CREATOR, 'other', all - 1n, 41n * MIN);
+  assert.throws(() => t.shout(CREATOR, 1n, 41n * MIN), code('E_DUST'));
+  checkInvariants(t);
+});
+
+test('error messages give times since launch', () => {
+  const launch = 1_700_000_000n * SEC;
+  const t = new LoudToken(P, launch);
+  t.buy('early', 5n * NEAR, 0n, launch + 1n * MIN);
+  for (let i = 0; i < 10; i++) t.buy(`holder-${i}`, 20n * NEAR, 0n, launch + 10n * MIN);
+  // Shouted at minute 11: ready at 41, expires at 101.
+  const a = t.shout(CREATOR, 3n * CAP, launch + 11n * MIN);
+  assert.throws(() => t.hush(CREATOR, a, launch + 50n * MIN), (e) => code('E_NOTICE_BINDING')(e) &&
+    e.message === 'E_NOTICE_BINDING: a shout cannot be taken back; this exit expires 101 min after launch and can be closed after that');
+  // Part of a second is rounded up to the next whole second.
+  const b = t.shout(CREATOR, DUST, launch + 11n * MIN + 30n * SEC + 1n);
+  assert.throws(() => t.hush(CREATOR, b, launch + 50n * MIN), (e) => code('E_NOTICE_BINDING')(e) &&
+    /expires 101 min 31 s after launch/.test(e.message) && !/\d{7,}/.test(e.message));
+  // The first leave empties the bucket. Room is back one nanosecond later,
+  // and the message rounds that up to the next whole second.
+  const now = launch + 41n * MIN;
+  assert.ok(t.leave(CREATOR, a, 0n, now) > 0n);
+  assert.throws(() => t.leave(CREATOR, a, 0n, now), (e) => code('E_CAP')(e) &&
+    e.message === 'E_CAP: the global cap has no room right now; room returns 41 min 1 s after launch');
+  assert.equal(t.getState(now).next_room_ts, now + 1n);
+  assert.ok(t.leave(CREATOR, a, 0n, now + 1n * SEC) > 0n);
+});
+
 test('leave: min_near_out is scaled to the part filled; a full fill keeps the plain limit', () => {
   const t = seeded();
   const amount = 3n * CAP;

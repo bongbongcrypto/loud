@@ -536,7 +536,7 @@ async function main() {
   // Step 2: token account in one batch transaction, no AddKey
   const s2 = addStep(2, 'Create, fund, deploy and initialise the token account in one transaction with no access key',
     'view_access_key_list returns an empty list; the on-chain code hash equals the hash of the built wasm; get_params equals the preset; '
-    + 'storage_balance_bounds().min is 0.02 NEAR, storage_balance_of() of an account that is not registered is null, and the creator is registered');
+    + 'storage_balance_bounds().min is 0.03 NEAR, storage_balance_of() of an account that is not registered is null, and the creator is registered');
   const token = `t.${root.id}`;
   const params = presetParams(PRESET, insider.id);
   deployment.token_account = token;
@@ -688,7 +688,7 @@ async function main() {
   // Step 5: split across the wallets
   const s5 = addStep(5, `The insider splits its whole loud balance across ${WALLETS} wallets with ft_transfer`,
     'every wallet holds loud tokens and no quiet tokens; the insider holds 0. Before the split: a transfer of 1 unit to a wallet '
-    + 'that is not registered fails with E_UNREGISTERED, then every wallet registers itself with storage_deposit (0.02 NEAR)');
+    + 'that is not registered fails with E_UNREGISTERED, then every wallet registers itself with storage_deposit (0.03 NEAR)');
   // An account has to be registered before it can receive tokens. First the refusal: one
   // unit to a wallet that has not paid its registration yet.
   const probeTo = wallets[0];
@@ -761,7 +761,7 @@ async function main() {
 
   // Step 7: a late buyer stays quiet and can sell at once
   const s7 = addStep(7, 'After the loud window a late buyer buys with 0.5 NEAR and sells half at once',
-    'the late buyer holds quiet tokens only; its first buy registers it: 0.02 NEAR of the deposit pays the registration and pool_near rises by the rest; '
+    'the late buyer holds quiet tokens only; its first buy registers it: 0.03 NEAR of the deposit pays the registration and pool_near rises by the rest; '
     + 'the sell succeeds and none of its receipts failed');
   await waitChainTime(loudUntil + 1n, 'the end of the loud window');
   const [lateRegistered, state7] = await Promise.all([view('is_registered', { account_id: late.id }), view('get_state')]);

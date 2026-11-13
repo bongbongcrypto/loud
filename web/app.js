@@ -398,7 +398,10 @@ function renderSplit() {
     h('b', { class: 'v-line', text: x.line }),
     h('span', { class: 'v-sub', text: x.sub }))));
   $('#split-result').replaceChildren(...L.resultSentences(r.stats).map((x) => h('li', { 'data-rule': x.rule, text: x.text })));
-  $('#split-table thead th:nth-child(3)').textContent = n === 1 ? 'Same, one wallet' : `Same, ${n} wallets`;
+  const nWallets = n === 1 ? 'one wallet' : `${n} wallets`;
+  $('#split-table thead th:nth-child(3)').textContent = `Same, ${nWallets}`;
+  $('#split-table thead th:nth-child(4)').textContent = `Price fall after 1 min, ${nWallets}`;
+  $('#split-table thead th:nth-child(5)').textContent = `Largest price fall in ${L.fmtDuration(r.stats.horizonSec)}, ${nWallets}`;
   $('#split-table tbody').replaceChildren(...L.resultTable(r.stats).map((row, i) => h('tr', { 'data-rule': ['naive', 'per_wallet', 'loud'][i] },
     h('td', { text: row.label }),
     h('td', { text: row.single }),
@@ -461,9 +464,9 @@ const HINTS = {
   E_NO_QUIET: 'Loud tokens cannot be sold directly. Shout them, wait for the notice, then leave.',
   E_NOTICE: 'Skip time with the clock buttons, then press Leave again.',
   E_EXPIRED: 'Press Hush to take the tokens back. They are still loud. Then shout again.',
-  E_NOTICE_BINDING: 'A shout cannot be cancelled. Leave when the notice is over, or skip past the exit window and hush then. The number in the message is engine time in nanoseconds.',
+  E_NOTICE_BINDING: 'A shout cannot be cancelled. Leave when the notice is over, or skip past the exit window and hush then.',
   E_NO_LOUD: 'Shout takes loud tokens only. Quiet tokens can simply be sold.',
-  E_DUST: 'A shout must be at least one millionth of supply, which is 1,000 LOUD here, unless it is your whole loud balance.',
+  E_DUST: 'A shout must be at least one millionth of supply, which is 1,000 LOUD here. A smaller shout must be your whole loud balance, with no other exit of yours open.',
   E_TOO_MANY: 'Finish an exit, or let one expire and hush it.',
   E_POOL_EMPTY: 'The pool does not hold enough NEAR to pay for this amount.',
   E_DEPOSIT: 'Buy with at least 0.001 NEAR.',
@@ -505,7 +508,7 @@ function renderSandbox() {
   } else {
     box.dataset.ok = String(e.ok);
     let hint = e.ok ? '' : (HINTS[e.code] || '');
-    if (e.code === 'E_CAP') hint = `${v.nextRoomText || 'Room is back'}. Skip a few minutes and leave again. The timestamp in the message is engine time in nanoseconds.`;
+    if (e.code === 'E_CAP') hint = `${v.nextRoomText || 'Room is back'}. Skip a few minutes and leave again.`;
     if (!e.ok && /units/.test(e.message)) hint += ' The engine counts in units: 1 LOUD is 10^18 units.';
     put(box,
       h('p', { class: 'call', text: `${L.fmtSinceLaunch(e.t)}  ${e.account}  ${e.call}  ${e.ok ? 'ok' : 'rejected'}` }),

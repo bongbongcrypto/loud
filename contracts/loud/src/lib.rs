@@ -38,7 +38,7 @@ const MIN_BUY_YOCTO: u128 = 10u128.pow(21);
 const DUST_DIVISOR: u128 = 1_000_000;
 const MAX_EXITS_PER_ACCOUNT: usize = 8;
 const MAX_EXITS_PAGE: u32 = 100;
-/// One-time storage fee per account: 0.02 NEAR, which pays for 2,000 bytes
+/// One-time storage fee per account: 0.03 NEAR, which pays for 3,000 bytes
 /// at 10^19 yoctoNEAR per byte. It is kept for good; there is no
 /// unregister.
 ///
@@ -55,13 +55,12 @@ const MAX_EXITS_PAGE: u32 = 100;
 /// total                   277 + 5L + n * (206 + L)
 /// ```
 ///
-/// With the longest id that is 597 bytes plus 270 per open exit: 1,947
-/// bytes with five open exits, so the fee covers the account and five
-/// exits. The full eight exits take 2,757 bytes. The 757 bytes above the
-/// fee (under 0.008 NEAR) are locked from the token account's spare
-/// balance until the exits close. An account that goes that far has paid
-/// 0.02 NEAR it never gets back, so it pays more than it locks.
-const STORAGE_MIN_YOCTO: u128 = 20_000_000_000_000_000_000_000;
+/// The exit record sits in a map that hashes its key, so that key is 32
+/// bytes whatever the id. With the longest account id the total is 597
+/// bytes plus 270 per open exit. An account can hold eight open exits,
+/// which makes 2,757 bytes. The fee pays for 3,000, so every account
+/// covers its own records and all eight open exits.
+const STORAGE_MIN_YOCTO: u128 = 30_000_000_000_000_000_000_000;
 /// Metadata sits in the root state, which every call reads, callbacks with
 /// fixed gas included. The limits keep that read small.
 const MAX_NAME_BYTES: usize = 64;
@@ -451,7 +450,7 @@ impl Loud {
         let near_in = match deposit.checked_sub(storage_paid) {
             Some(v) if v >= MIN_BUY_YOCTO => v,
             _ if storage_paid > 0 => fail(
-                "E_DEPOSIT: attach at least 0.001 NEAR plus the one-time 0.02 NEAR storage fee of a new account",
+                "E_DEPOSIT: attach at least 0.001 NEAR plus the one-time 0.03 NEAR storage fee of a new account",
             ),
             _ => fail("E_DEPOSIT: attach at least 0.001 NEAR"),
         };
@@ -537,7 +536,9 @@ impl Loud {
 
     /// Announces an exit and escrows the tokens. Returns the exit id.
     /// An amount below the dust floor is accepted only when it is the
-    /// caller's whole loud balance, so a small remainder is never stuck.
+    /// caller's whole loud balance and the caller has no other open exit.
+    /// A small remainder can still leave once the caller's other exits
+    /// are closed.
     #[payable]
     pub fn shout(&mut self, amount: U128) -> U64 {
         let now = self.touch();
@@ -552,13 +553,13 @@ impl Loud {
             ));
         }
         let dust = self.total_supply / DUST_DIVISOR;
-        if amount < dust && amount != loud {
+        let mut ids = self.exit_ids(&caller);
+        if amount < dust && (amount != loud || !ids.is_empty()) {
             fail(&format!(
-                "E_DUST: a shout must be at least {} units, or your whole loud balance of {} units",
-                dust, loud
+                "E_DUST: shout at least {} units. A smaller shout must be your whole loud balance ({} units) with no other open exit (you have {} open)",
+                dust, loud, ids.len()
             ));
         }
-        let mut ids = self.exit_ids(&caller);
         if ids.len() >= MAX_EXITS_PER_ACCOUNT {
             fail("E_TOO_MANY: at most 8 open exits per account");
         }
@@ -1000,7 +1001,7 @@ impl Loud {
         } else {
             let rest = match deposit.checked_sub(STORAGE_MIN_YOCTO) {
                 Some(v) => v,
-                None => fail("E_STORAGE: attach at least 0.02 NEAR to register an account"),
+                None => fail("E_STORAGE: attach at least 0.03 NEAR to register an account"),
             };
             self.registered.insert(account);
             rest

@@ -663,7 +663,7 @@ export class Sandbox {
       () => {
         const acc = this.token.getAccount(this.account);
         const free = acc.loud + acc.quiet;
-        if (free < 2n * UNIT) throw new Error('No free balance to send. Tokens in an open exit stay locked until they are sold or the exit expires.');
+        if (free < 2n * UNIT) throw new Error('No free balance to send. Tokens in an open exit stay locked until they are sold or hush returns them.');
         return { amount: free / 2n };
       },
       ({ amount }) => this.token.transfer(this.account, to, amount, this.now),

@@ -359,6 +359,15 @@ export class LoudToken extends Pool {
     return ex;
   }
 
+  // A timestamp as time since launch for error messages: "101 min" or
+  // "101 min 30 s". Part of a second counts as a whole one, so the call
+  // works once the engine clock has passed the printed time.
+  _sinceLaunch(ts) {
+    const s = (ts - this.launch_ts + SEC - 1n) / SEC;
+    const rest = s % 60n;
+    return rest === 0n ? `${s / 60n} min` : `${s / 60n} min ${rest} s`;
+  }
+
   _openExitsOf(account) {
     const out = [];
     for (const ex of this.exits.values()) if (ex.owner === account) out.push(ex);
@@ -411,11 +420,14 @@ export class LoudToken extends Pool {
       const x = big(amount, 'amount');
       const held = this._loudOf(account);
       if (x === 0n || x > held) fail('E_NO_LOUD', `you hold ${held} loud units`);
-      // A whole balance below the dust floor may be shouted, so it is never stuck.
-      if (x < this.dust_units && x !== held) {
-        fail('E_DUST', `shout at least ${this.dust_units} units, or your whole loud balance of ${held} units`);
+      // Below the dust floor only a whole balance may be shouted, and only by
+      // an account with no other open exit.
+      const open = this._openExitsOf(account).length;
+      if (x < this.dust_units && (x !== held || open > 0)) {
+        fail('E_DUST', `shout at least ${this.dust_units} units. A smaller shout must be your whole loud balance ` +
+          `(${held} units) with no other open exit (you have ${open} open)`);
       }
-      if (this._openExitsOf(account).length >= MAX_EXITS_PER_ACCOUNT) {
+      if (open >= MAX_EXITS_PER_ACCOUNT) {
         fail('E_TOO_MANY', `at most ${MAX_EXITS_PER_ACCOUNT} open exits per account`);
       }
       const id = this.next_exit_id;
@@ -457,7 +469,9 @@ export class LoudToken extends Pool {
       }
       if (t > ex.expires_at) fail('E_EXPIRED', 'exit window is over; hush and shout again');
       let fill = min(ex.remaining, this.bucket_units);
-      if (fill === 0n) fail('E_CAP', `the global cap has no room right now; room returns at ${this._nextRoomTs(t)}`);
+      if (fill === 0n) {
+        fail('E_CAP', `the global cap has no room right now; room returns ${this._sinceLaunch(this._nextRoomTs(t))} after launch`);
+      }
       // Same as the contract: if the pool cannot pay for all of it, fill what it can pay for.
       if (this.quoteSell(fill) > this.pool_near) {
         fill = min(fill, this.maxSellable());
@@ -488,7 +502,8 @@ export class LoudToken extends Pool {
       // A shout is binding: nobody takes it back before the exit has expired,
       // the owner included. After that anyone may close it.
       if (t <= ex.expires_at) {
-        fail('E_NOTICE_BINDING', `a shout cannot be taken back; this exit can be closed after ${ex.expires_at}`);
+        fail('E_NOTICE_BINDING', 'a shout cannot be taken back; this exit expires ' +
+          `${this._sinceLaunch(ex.expires_at)} after launch and can be closed after that`);
       }
       const back = ex.remaining;
       this.loud.set(ex.owner, this._loudOf(ex.owner) + back);
@@ -751,7 +766,8 @@ export class PerWalletToken extends NaiveToken {
 // _shout() waits for the current batch to near its expiry before it shouts
 // again, so near the end of a position the cap can have room while no exit is
 // open. It never shouts less than dust_units: the token accepts a smaller shout
-// only for a wallet's whole loud balance, and this driver does not use that.
+// only for the whole loud balance of a wallet with no other open exit, and
+// this driver does not use that.
 // It keeps one batch of exits ready at all times: a new batch is shouted early
 // enough to become ready before the previous one expires, and each batch is
 // sized to the most the cap could release during one exit window.

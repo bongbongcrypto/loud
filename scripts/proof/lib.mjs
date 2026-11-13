@@ -5,9 +5,9 @@ export const YOCTO = 10n ** 24n;
 export const TGAS = 10n ** 12n;
 export const ONE_TOKEN = 10n ** 18n;
 export const STORAGE_PER_BYTE = 10n ** 19n; // yoctoNEAR per byte of account storage
-// What one account pays the token once to be registered (SPEC section 7, NEP-145): 0.02 NEAR.
+// What one account pays the token once to be registered (SPEC section 7, NEP-145): 0.03 NEAR.
 // The contract has the same constant; step 2 compares it with storage_balance_bounds().min.
-export const STORAGE_MIN_YOCTO = 20_000_000_000_000_000_000_000n;
+export const STORAGE_MIN_YOCTO = 30_000_000_000_000_000_000_000n;
 export const EXPLORER = 'https://testnet.nearblocks.io';
 
 // "1.5" -> 1500000000000000000000000n

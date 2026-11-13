@@ -3,11 +3,11 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>LOUD: early supply shouts before it sells</title>
-<meta name="description" content="LOUD is an NEP-141 memecoin on NEAR testnet. Tokens bought at launch must give public notice before they sell, and all such sales share one cap, so splitting a position across wallets gains nothing.">
+<title>LOUD: launch tokens can't hit the pool without warning</title>
+<meta name="description" content="LOUD is an NEP-141 memecoin on NEAR testnet. The creator allocation and tokens bought in the launch window can be sold into the token's own pool only after a public notice, and all such sales share one cap, however many wallets hold them.">
 <meta property="og:type" content="website">
-<meta property="og:title" content="LOUD: early supply shouts before it sells">
-<meta property="og:description" content="A NEAR memecoin whose launch tokens must announce a sale before they make it. A hundred wallets sell no faster than one.">
+<meta property="og:title" content="LOUD: launch tokens can't hit the pool without warning">
+<meta property="og:description" content="A NEAR memecoin whose launch tokens can't hit the pool without warning. A hundred wallets get no more room than one.">
 <meta name="color-scheme" content="light">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%231e1d1b'/%3E%3Crect x='3' y='4' width='3' height='8' fill='%23f2b23e'/%3E%3Crect x='3' y='10' width='10' height='2' fill='%23f2b23e'/%3E%3C/svg%3E">
 <link rel="stylesheet" href="styles.css">
@@ -31,8 +31,8 @@
 
 <section class="lede" aria-labelledby="title">
   <p class="kicker">Memecoin on NEAR testnet</p>
-  <h1 id="title">Launch tokens announce a sale before they make it. A hundred wallets sell no faster than one.</h1>
-  <p class="claim">Per-wallet sell limits fail: an insider splits the bag across 100 wallets. Here every launch token sells through one shared limit, after public notice.</p>
+  <h1 id="title">Launch tokens can't hit the pool without warning. A hundred wallets get no more room than one.</h1>
+  <p class="claim">A per-wallet sell limit breaks when an insider splits the bag across 100 wallets. Here the creator allocation and tokens bought in the launch window sell into the token's own pool only after a public notice, and all of those sales share one cap.</p>
 </section>
 
 <section class="board" id="board" aria-labelledby="board-title">
@@ -44,7 +44,7 @@
       <button type="button" id="src-live" aria-pressed="false" disabled>Testnet snapshot</button>
     </div>
   </div>
-  <p class="board-sub">Each row is a sale of launch tokens, announced before it can happen.</p>
+  <p class="board-sub">Each row is an announced exit of launch tokens. It may end unsold.</p>
   <div class="board-scroll">
     <table class="board-table" id="hero-table">
       <thead>
@@ -81,11 +81,11 @@
 
 <section class="summary" aria-label="Summary">
   <dl>
-    <div><dt>What it is</dt><dd>An NEP-141 memecoin. Tokens bought at launch must give public notice before they sell, and all such sales share one cap.</dd></div>
+    <div><dt>What it is</dt><dd>An NEP-141 memecoin. The creator allocation and tokens bought in the launch window can be sold into the token's own pool only after a public notice, and all such sales share one cap.</dd></div>
     <div><dt>Network</dt><dd>NEAR testnet</dd></div>
     <div><dt>Token account</dt><dd id="sum-token"><a href="https://testnet.nearblocks.io/address/t.loud-mwf63eou6bc318.testnet" rel="noopener">t.loud-mwf63eou6bc318.testnet</a></dd></div>
     <div><dt>Proof</dt><dd id="sum-proof">10 of 10 checks passed. 20 wallets tried to dump. The cap held. <a href="https://testnet.nearblocks.io/txns/uBKXZFBmyyq2874ya3fpDitbiTMds3XvRM5idDo6j4G" rel="noopener">The deploy transaction in the explorer</a></dd></div>
-    <div><dt>Claim</dt><dd>LOUD limits how fast early supply can be sold on its defined path, no matter how many wallets it is split across. It does not prevent fraud. <a href="#limits">Read the limits</a></dd></div>
+    <div><dt>Claim</dt><dd>LOUD limits how fast early supply can be sold on its defined path, no matter how many wallets it is split across. It does not prevent fraud. The path is the token's own pool. Tokens sold there and bought back after the launch window are off it. <a href="#limits">Read the limits</a></dd></div>
     <div><dt>Source</dt><dd><a id="sum-source" href="https://github.com/bongbongcrypto/loud">Contract, specification and tests on GitHub</a></dd></div>
   </dl>
 </section>
@@ -95,7 +95,7 @@
     <h2 id="rule-h">The rule</h2>
   </div>
   <div class="row-body">
-    <p class="say">Buy at launch and your tokens are loud. Loud tokens sell in three steps. Tokens bought later are quiet and sell at once.</p>
+    <p class="say">Buy at launch and your tokens are loud. Loud tokens sell into the pool in three steps. Tokens bought later are quiet and sell at once.</p>
     <ol class="door">
       <li class="door-shout">
         <b>Shout</b>
@@ -110,9 +110,9 @@
         <span>Sell into the token's own pool, as far as the cap has room.</span>
       </li>
     </ol>
-    <p class="law"><b>A shout cannot be cancelled.</b> The tokens stay locked until they are sold or until the exit expires, 90 min later.</p>
+    <p class="law"><b>A shout cannot be cancelled.</b> The tokens stay locked until they are sold. If they are not sold, the exit expires 90 min after the shout, and they stay locked until someone calls <code>hush</code>.</p>
     <p class="law"><b>One cap for everyone.</b> All loud sales share one cap that refills at 0.5% of supply per 60 min. A hundred wallets get the same room as one.</p>
-    <p class="law"><b>No insider list.</b> The contract never decides who is an insider. It only knows when a token left the pool.</p>
+    <p class="law"><b>No insider list.</b> The contract never decides who is an insider. It only tags launch-window buys. The creator allocation is loud from the start.</p>
     <details class="fine-print">
       <summary>The fine print</summary>
       <ul class="plain">
@@ -120,7 +120,7 @@
         <li>The rule covers sales into the token's own pool. Other ways out are listed under <a href="#limits">Limits</a>.</li>
         <li>Only the shouted amount is locked.</li>
         <li>An expired exit holds its tokens until <code>hush</code> returns them to the owner, still loud. Anyone can call <code>hush</code> on an expired exit.</li>
-        <li>The cap starts empty. At most 1% of supply can leave in any 60 min, and 12.5% in any 24 hours.</li>
+        <li>The cap starts empty. At most 1% of supply can leave as loud tokens in any 60 min, and 12.5% in any 24 hours.</li>
         <li>A position smaller than the cap room leaves in one call once its notice is over, if the pool can pay.</li>
         <li>Loud tokens cannot use <code>sell</code> or <code>ft_transfer_call</code>.</li>
         <li>Nobody can pause, upgrade or re-tune the token. It has no owner method, and its account has zero access keys.</li>
@@ -134,7 +134,7 @@
     <h2 id="split-h">Run the split attack</h2>
   </div>
   <div class="row-body">
-    <p class="say">Most anti-dump rules limit each wallet, so a dumper uses more wallets. Try it.</p>
+    <p class="say">A per-wallet sell limit caps each wallet, so a dumper uses more wallets. Try it.</p>
     <form id="split-form" class="controls">
       <fieldset>
         <legend>Insider share of supply</legend>
@@ -188,8 +188,8 @@
             <th scope="col">Rule set</th>
             <th scope="col">Time to sell it all, one wallet</th>
             <th scope="col">Same, 100 wallets</th>
-            <th scope="col">Price fall after 1 min</th>
-            <th scope="col">Largest price fall in 6 h</th>
+            <th scope="col">Price fall after 1 min, 100 wallets</th>
+            <th scope="col">Largest price fall in 6 h, 100 wallets</th>
           </tr>
         </thead>
         <tbody>
@@ -207,10 +207,10 @@
         <li>Standard parameters, with the creator allocation set to the chosen share and split evenly as loud tokens.</li>
         <li>Thirty holders buy 300 NEAR of tokens when the launch window ends. That is minute 0. The insider first acts at minute 1.</li>
         <li>With no rule or with per-wallet limits it sells all each wallet may, once a minute. Per-wallet limits: at most 0.5% of supply per sale, one sale per wallet per 60 s.</li>
-        <li>Under LOUD it shouts at minute 1 and first sells at minute 31. It shouts in batches. A sharper seller could be faster, but never past the cap.</li>
+        <li>Under LOUD it shouts at minute 1 and first sells at minute 31. It shouts in batches and does not buy back. A sharper seller could be faster.</li>
         <li>Nobody reacts in this run: no holder sells on seeing a shout, and nobody buys the dip.</li>
         <li>The LOUD sale is still running when the chart ends. LOUD changes how fast and how publicly early supply sells. The price can still fall.</li>
-        <li>Same rule engine as the tests. It charges no storage; on chain every wallet but the creator's also pays 0.02 NEAR once.</li>
+        <li>Same rule engine as the tests. It charges no storage; on chain every wallet but the creator's also needs 0.03 NEAR once.</li>
       </ul>
     </details>
 
@@ -220,7 +220,7 @@
       <li><span class="v-rule">On chain</span><b class="v-line">They sold all of it in 18 minutes</b><span class="v-sub">53.85% of it was gone after 10 minutes.</span></li>
       <li data-rule="loud"><span class="v-rule">Under LOUD</span><b class="v-line">0.63% of it out after 60 minutes</b><span class="v-sub">30 minutes of public notice first. Selling all of it would take 158.9 h (6.6 days).</span></li>
     </ul>
-    <p class="fine real-src">The first two lines are measured on chain. The LOUD line is a replay of the same sales through the rule engine with the standard parameters, a model in which nobody else trades. Source: <a href="https://bitquery.io/investigations/pump-fun-snipers-bundles" rel="noopener">the Bitquery report on pump.fun bundles</a>, which names the wallets. Mint <code>7oE8o8kS6iyn5GyGhaBoi2HNz9M9m6n7VEdUWaxpump</code>. <a href="https://github.com/bongbongcrypto/loud/blob/main/sim/REPLAY.md">The full replay tables and a second launch</a></p>
+    <p class="fine real-src">The first two lines are measured on chain. The LOUD line replays the same sales through the rule engine with the standard notice and cap, a model in which nobody else sells. The replay assumes the bundle sells through the notice and the cap and does not buy back. Source: <a href="https://bitquery.io/investigations/pump-fun-snipers-bundles" rel="noopener">the Bitquery report on pump.fun bundles</a>, which names the wallets. Mint <code>7oE8o8kS6iyn5GyGhaBoi2HNz9M9m6n7VEdUWaxpump</code>. <a href="https://github.com/bongbongcrypto/loud/blob/main/sim/REPLAY.md">The full replay tables and a second launch</a></p>
   </div>
 </section>
 
@@ -323,7 +323,7 @@
       <summary>What the sandbox leaves out</summary>
       <ul class="plain">
         <li>It is a private copy of the rule engine inside this page, with no chain behind it. The error texts are the engine's own.</li>
-        <li>The engine charges no storage. On chain a first buy also pays 0.02 NEAR, and a transfer to a wallet that has not paid is refused (<code>E_UNREGISTERED</code>).</li>
+        <li>The engine charges no storage. On chain a buy by an unregistered wallet also pays 0.03 NEAR, and a transfer to one is refused (<code>E_UNREGISTERED</code>).</li>
       </ul>
     </details>
   </div>
@@ -376,7 +376,7 @@
             <tr><td>4. Insider buys in the launch window <span class="expect">Expected: tokens are loud</span></td><td class="res" data-result="PASS">PASS</td></tr>
             <tr><td>5. Insider splits across 20 wallets <span class="expect">Expected: every wallet holds loud tokens only</span></td><td class="res" data-result="PASS">PASS</td></tr>
             <tr><td>7. Late buyer buys after the launch window, sells half <span class="expect">Expected: quiet tokens only; the sell goes through</span></td><td class="res" data-result="PASS">PASS</td></tr>
-            <tr><td>9. All 20 wallets call leave for one cap window <span class="expect">Expected: some sells go through; the rest are refused because the cap is full (E_CAP) or the exit ran out (E_EXPIRED)</span></td><td class="res" data-result="PASS">PASS</td></tr>
+            <tr><td>9. All 20 wallets call leave for one cap window <span class="expect">Expected: some sells go through; the rest are refused because the cap has no room left (E_CAP) or the exit ran out (E_EXPIRED)</span></td><td class="res" data-result="PASS">PASS</td></tr>
           </tbody>
         </table>
       </div>
@@ -415,25 +415,29 @@
   <div class="row-body">
     <p class="say">LOUD slows one exit and makes it public. The rest is still possible.</p>
     <dl class="limits">
-      <div><dt>Side deals</dt>
-      <dd>Loud tokens can still be sent wallet to wallet, wrapped, or sold privately. The tag moves with them, so the buyer's tokens are loud too.</dd></div>
+      <div><dt>Leave, then buy back</dt>
+      <dd>Once the launch window is over, a holder can sell loud tokens through the notice and the cap and, in the same transaction, buy the same amount back with NEAR of their own. The pool ends where it started, within rounding, and the holder now owns quiet tokens, which sell with no notice and no cap. So the cap sets how fast early supply can be sold or converted. It does not stop a later dump of tokens bought back at the market price. Every conversion still shows on chain as a shout and a leave.</dd></div>
+      <div><dt>A standing notice</dt>
+      <dd>A holder can keep exits open one after another, so some exit is always ready. The notice then says a sale may come, with no exact time.</dd></div>
+      <div><dt>Side deals and wrappers</dt>
+      <dd>Loud tokens can be sent with a plain transfer to another registered account. That covers a private sale, and it covers a contract that issues its own token against them. Whoever buys that wrapper token holds no tag.</dd></div>
       <div><dt>Other pools</dt>
-      <dd>Loud tokens cannot be deposited into a DEX: <code>ft_transfer_call</code> refuses them. Quiet tokens can go to any venue that takes them.</dd></div>
+      <dd><code>ft_transfer_call</code> refuses loud tokens. Quiet tokens can go to any venue that takes them.</dd></div>
       <div><dt>Waiting out the launch window avoids the tag</dt>
-      <dd>Only buys inside the launch window are loud. A sniper who waits until it ends gets quiet tokens at the going price, with no notice and no cap. The creator allocation is always loud.</dd></div>
+      <dd>Only buys inside the launch window are loud. A sniper who waits until it ends gets quiet tokens at the going price, with no notice and no cap. The creator allocation starts loud.</dd></div>
       <div><dt>Early honest buyers are loud too</dt>
       <dd>Anyone who buys in the launch window sells by the same rule.</dd></div>
       <div><dt>A shout is not a sale</dt>
-      <dd>A holder can shout, sell nothing and get the tokens back once the exit has expired. The 90 min lock is the only cost.</dd></div>
+      <dd>A holder can shout, sell nothing and get the tokens back once the exit has expired. There is no penalty beyond gas and the 90 min lock.</dd></div>
       <div><dt>A notice can start a rush</dt>
       <dd>Quiet holders can sell before a shouted exit is ready. That is what the notice is for, and it can speed up a sell-off.</dd></div>
       <div><dt>First come, first served</dt>
       <dd>No queue and no fair split. A holder who keeps calling <code>leave</code> can take every refill until the others' exits expire and they must shout again.</dd></div>
       <div><dt>Sybil resistance</dt>
-      <dd>The cap is shared, so extra accounts gain nothing. That is the whole defence: the contract cannot tell people apart or split the room fairly.</dd></div>
+      <dd>The cap is shared, so more accounts add no room under it. They do add exit slots, eight per account. The shared cap is the whole defence: the contract cannot tell people apart or split the room fairly.</dd></div>
       <div><dt>The creator allocation is unbacked</dt>
       <dd>It is minted without a NEAR payment, so every NEAR it takes out came from buyers. Once the creator has left, the pool may be unable to pay everyone else, and the last sellers can be stuck.</dd></div>
-      <div><dt>Storage costs 0.02 NEAR per account</dt>
+      <div><dt>Storage costs 0.03 NEAR per account</dt>
       <dd>Each account pays it once, on its first buy or through <code>storage_deposit</code>, and never gets it back. Only the creator is registered free.</dd></div>
       <div><dt>Not built</dt>
       <dd>Testnet only and unaudited. There is no trading fee and no liquidity migration.</dd></div>
@@ -444,11 +448,11 @@
         <div><dt>When the pool cannot pay</dt>
         <dd><code>sell</code> is refused (<code>E_POOL_EMPTY</code>), and <code>leave</code> fills only the part the pool can pay.</dd></div>
         <div><dt>What the storage payment covers</dt>
-        <dd>The account's balances and five open exits. A sixth to eighth open exit locks under 0.008 NEAR of the token account's own balance until it closes. There is no withdraw and no unregister. A transfer to an account that has not paid is refused (<code>E_UNREGISTERED</code>). Anyone can pay for any account.</dd></div>
+        <dd>The account's balances and eight open exits, the most one account can have. There is no withdraw and no unregister. A transfer to an unregistered account is refused (<code>E_UNREGISTERED</code>). Anyone can pay for any account.</dd></div>
         <div><dt>Tiny exits</dt>
-        <dd>Anyone can pay 0.02 NEAR per account to put a tiny exit on the board. An exit too small to pay out cannot be filled and returns through <code>hush</code> after it expires.</dd></div>
+        <dd>An account can shout a whole loud balance below the minimum size when it has no other open exit. So a tiny row on the board costs 0.03 NEAR per account. An exit too small to pay out cannot be filled and returns through <code>hush</code> after it expires.</dd></div>
         <div><dt>More than 100 open exits</dt>
-        <dd>The contract then pages the list in storage order, and a reader can skip or repeat an exit that closes between two reads.</dd></div>
+        <dd>The contract then pages the list in storage order, and a reader can skip or repeat exits when the list changes mid-read.</dd></div>
         <div><dt>Failed payouts</dt>
         <dd>If a payout transfer fails after its call succeeded, the contract records the amount and the account collects it with <code>claim</code>. Nothing retries on its own, and the record is lost if that recording step itself fails.</dd></div>
       </dl>

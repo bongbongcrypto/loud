@@ -43,25 +43,25 @@ test('splitEvenly keeps the exact total', () => {
 test('budget scales wallet funding and reports a shortfall', () => {
   const rich = budget({ wasmBytes: 300_000, balance: 100n * YOCTO });
   assert.equal(rich.ok, true);
-  assert.equal(rich.perWallet, nearToYocto('0.27'));
+  assert.equal(rich.perWallet, nearToYocto('0.28'));
   assert.equal(rich.registration, STORAGE_MIN_YOCTO);
   assert.equal(rich.tokenDeposit, nearToYocto('3.5'));
   const ten = budget({ wasmBytes: 300_000, balance: 10n * YOCTO });
   assert.equal(ten.ok, true);
   // Every wallet gets its registration payment on top of the NEAR it needs for gas.
-  assert.ok(ten.perWallet >= nearToYocto('0.12') && ten.perWallet <= nearToYocto('0.27'));
+  assert.ok(ten.perWallet >= nearToYocto('0.13') && ten.perWallet <= nearToYocto('0.28'));
   const total = ten.tokenDeposit + ten.insider + ten.late + ten.rootReserve + ten.perWallet * 20n;
   assert.ok(total <= 10n * YOCTO);
   const poor = budget({ wasmBytes: 300_000, balance: 5n * YOCTO });
   assert.equal(poor.ok, false);
   assert.ok(poor.need > 5n * YOCTO);
-  // 3.5 token + 1.25 insider + 0.65 late + 0.3 root + 20 * (0.1 gas + 0.02 registration)
-  assert.equal(poor.need, nearToYocto('8.1'));
+  // 3.5 token + 1.25 insider + 0.65 late + 0.3 root + 20 * (0.1 gas + 0.03 registration)
+  assert.equal(poor.need, nearToYocto('8.3'));
 });
 
-test('STORAGE_MIN_YOCTO is 0.02 NEAR', () => {
-  assert.equal(STORAGE_MIN_YOCTO, nearToYocto('0.02'));
-  assert.equal(STORAGE_MIN_YOCTO.toString(), '20000000000000000000000');
+test('STORAGE_MIN_YOCTO is 0.03 NEAR', () => {
+  assert.equal(STORAGE_MIN_YOCTO, nearToYocto('0.03'));
+  assert.equal(STORAGE_MIN_YOCTO.toString(), '30000000000000000000000');
 });
 
 test('errorCode keeps the codes of this run apart', () => {
@@ -76,9 +76,9 @@ test('buyEvent reads the buy event and leaves absent fields null', () => {
   const line = (data) => `EVENT_JSON:${JSON.stringify({ standard: 'loud', version: '1.0.0', event: 'buy', data: [data] })}`;
   const full = buyEvent([
     'EVENT_JSON:{"standard":"nep141","version":"1.0.0","event":"ft_transfer","data":[{"amount":"5"}]}',
-    line({ account: 'a.testnet', near_in: '480000000000000000000000', storage_paid: '20000000000000000000000', tokens_out: '77', loud: false }),
+    line({ account: 'a.testnet', near_in: '470000000000000000000000', storage_paid: '30000000000000000000000', tokens_out: '77', loud: false }),
   ]);
-  assert.deepEqual(full, { nearIn: nearToYocto('0.48'), storagePaid: STORAGE_MIN_YOCTO, tokensOut: 77n, loud: false });
+  assert.deepEqual(full, { nearIn: nearToYocto('0.47'), storagePaid: STORAGE_MIN_YOCTO, tokensOut: 77n, loud: false });
   const old = buyEvent([line({ account: 'a.testnet', near_in: '1000', tokens_out: '5', loud: true })]);
   assert.equal(old.storagePaid, null);
   assert.equal(old.nearIn, 1000n);
@@ -94,7 +94,7 @@ test('buyEvent reads the buy event and leaves absent fields null', () => {
 
 test('evaluateBuy: a first buy pays the registration out of the deposit', () => {
   const half = nearToYocto('0.5');
-  const net = nearToYocto('0.48');
+  const net = nearToYocto('0.47');
   const event = { nearIn: net, storagePaid: STORAGE_MIN_YOCTO, tokensOut: 1n, loud: false };
   const first = evaluateBuy({ attached: half, registeredBefore: false, poolNearBefore: '1000', poolNearAfter: (1000n + net).toString(), event });
   assert.equal(first.pass, true);
@@ -134,7 +134,7 @@ test('evaluateBuy: a first buy pays the registration out of the deposit', () => 
 
 test('evaluateBuy: the event is evidence, the pool change decides', () => {
   const half = nearToYocto('0.5');
-  const net = nearToYocto('0.48');
+  const net = nearToYocto('0.47');
   const base = { attached: half, registeredBefore: false, poolNearBefore: 0n, poolNearAfter: net };
   // An absent event or an absent field is named, and does not fail the check.
   const noEvent = evaluateBuy({ ...base, event: null });
