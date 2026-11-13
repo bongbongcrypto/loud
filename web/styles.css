@@ -216,6 +216,9 @@ tr[data-status="LEFT"] td, tr[data-status="HUSHED"] td { color: var(--dim); }
   @keyframes flip-in { from { transform: rotateX(-90deg); } to { transform: rotateX(0); } }
 }
 
+.board-scope { padding-top: 10px; font-size: 12px; line-height: 1.45; color: var(--dim); }
+.board-scope button { margin-left: 8px; padding: 3px 8px; min-height: 26px; }
+
 .board-foot {
   display: flex;
   flex-wrap: wrap;

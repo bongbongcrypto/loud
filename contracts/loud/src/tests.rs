@@ -725,6 +725,98 @@ fn ft_transfer_takes_quiet_first_and_moves_the_tag() {
     assert_eq!(bal(&c, &bob), (loud_part, 0));
 }
 
+/// Sum of `ft_balance_of` over `accounts`, read at block time `ts`.
+fn ft_sum(c: &Loud, ts: u64, accounts: &[AccountId]) -> u128 {
+    at(&token(), ts, 0);
+    let mut sum = 0u128;
+    for a in accounts.iter() {
+        sum += c.ft_balance_of(a.clone()).0;
+    }
+    sum
+}
+
+/// Conservation through the public NEP-141 views: the token account's own
+/// balance is the pool inventory plus the escrow, and all balances together
+/// equal `ft_total_supply` after every kind of call.
+#[test]
+fn ft_balances_add_up_to_the_total_supply() {
+    let cfg = standard();
+    let mut c = deploy(&cfg);
+    let early = acc("early.test");
+    let late = acc("late.test");
+    let friend = acc("friend.test");
+    let everyone = [creator(), early.clone(), late.clone(), friend.clone(), token()];
+    let supply = c.ft_total_supply().0;
+    assert_eq!(supply, cfg.supply);
+
+    // After `new`: the pool mint is the token account's balance.
+    assert_eq!(c.ft_balance_of(token()).0, 950_000_000 * E18);
+    assert_eq!(ft_sum(&c, T0, &everyone), supply);
+
+    // A loud buy in the launch window and a quiet buy after it.
+    let loud_bought = buy(&mut c, &early, T0 + SECOND_NS, 1_000 * NEAR);
+    assert_eq!(c.ft_balance_of(token()).0, 950_000_000 * E18 - loud_bought);
+    assert_eq!(ft_sum(&c, T0 + SECOND_NS, &everyone), supply);
+    let t1 = T0 + 11 * MINUTE;
+    let quiet_bought = buy(&mut c, &late, t1, 10 * NEAR);
+    assert_eq!(bal(&c, &late), (0, quiet_bought));
+    assert_eq!(ft_sum(&c, t1, &everyone), supply);
+
+    // shout: the escrow counts as the token account's balance.
+    let pool_before = state(&c, t1).pool_tokens.0;
+    let id = shout(&mut c, &creator(), t1, 20_000_000 * E18);
+    assert_eq!(c.ft_balance_of(creator()).0, 30_000_000 * E18);
+    assert_eq!(c.ft_balance_of(token()).0, pool_before + 20_000_000 * E18);
+    assert_eq!(ft_sum(&c, t1, &everyone), supply);
+
+    // Transfers between accounts, loud and quiet.
+    at(&late, t1, 1);
+    c.ft_transfer(friend.clone(), U128(quiet_bought / 4), None);
+    at(&creator(), t1, 1);
+    c.transfer_loud(friend.clone(), U128(1_000_000 * E18));
+    assert_eq!(c.ft_balance_of(friend.clone()).0, quiet_bought / 4 + 1_000_000 * E18);
+    assert_eq!(ft_sum(&c, t1, &everyone), supply);
+
+    // A transfer to the token account itself is added to its balance.
+    at(&late, t1, 1);
+    c.ft_transfer(token(), U128(quiet_bought / 4), None);
+    let s = state(&c, t1);
+    assert_eq!(
+        c.ft_balance_of(token()).0,
+        s.pool_tokens.0 + s.escrowed.0 + quiet_bought / 4
+    );
+    assert_eq!(ft_sum(&c, t1, &everyone), supply);
+
+    // Partial leave: the cap has room for less than the exit.
+    let ready = t1 + cfg.notice;
+    let filled = leave(&mut c, &creator(), ready, id);
+    assert!(filled > 0 && filled < 20_000_000 * E18, "filled {filled}");
+    let s = state(&c, ready);
+    assert_eq!(s.escrowed.0, 20_000_000 * E18 - filled);
+    assert_eq!(
+        c.ft_balance_of(token()).0,
+        s.pool_tokens.0 + s.escrowed.0 + quiet_bought / 4
+    );
+    assert_eq!(ft_sum(&c, ready, &everyone), supply);
+
+    // hush: the rest of the escrow goes back to the owner.
+    hush(&mut c, &creator(), ready, id);
+    let s = state(&c, ready);
+    assert_eq!(s.escrowed.0, 0);
+    assert_eq!(c.ft_balance_of(creator()).0, 49_000_000 * E18 - filled);
+    assert_eq!(c.ft_balance_of(token()).0, s.pool_tokens.0 + quiet_bought / 4);
+    assert_eq!(ft_sum(&c, ready, &everyone), supply);
+
+    // A quiet sell returns the tokens to the pool.
+    let rest = quiet_bought - 2 * (quiet_bought / 4);
+    assert_eq!(bal(&c, &late), (0, rest));
+    sell(&mut c, &late, ready, rest);
+    assert_eq!(c.ft_balance_of(late.clone()).0, 0);
+    assert_eq!(ft_sum(&c, ready, &everyone), supply);
+    let s = state(&c, ready);
+    assert_eq!(c.ft_balance_of(token()).0, s.pool_tokens.0 + quiet_bought / 4);
+}
+
 #[test]
 fn ft_transfer_checks() {
     let (mut c, alice, loud, quiet, ts) = alice_with_both();

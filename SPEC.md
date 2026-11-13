@@ -9,7 +9,7 @@ LOUD is an NEP-141 memecoin with one mechanic: **early supply can leave, but it 
 - Tokens bought during the launch window, and the creator allocation, are **loud**. Everything else is **quiet**.
 - The tag belongs to the tokens, not to the wallet. Moving loud tokens to another account moves the tag with them.
 - Loud tokens have exactly one way out: **shout** (public notice, tokens escrowed) → wait the notice period → **leave** (sell into the built-in pool), and all leaves together share **one global cap** (a refill bucket owned by the token).
-- Tokens sold through that door become quiet. Anyone who buys from the pool after the launch window gets quiet tokens, so ordinary buyers never inherit a tag from the pool.
+- Tokens sold through that door go back into the pool. Anyone who buys from the pool after the launch window gets quiet tokens, so ordinary buyers never inherit a tag from the pool. A purchase during the launch window is always loud: in a preset where an exit can become ready inside the launch window (notice shorter than the launch window, as in `demo`), tokens that left through the door are loud again when bought in that window.
 - The contract never decides who is an insider. It only knows when a token left the pool.
 
 Claim (use this wording everywhere): *LOUD limits how fast early supply can be sold on its defined path, no matter how many wallets it is split across.* It does not prevent fraud. Limits are in section 9.
@@ -114,7 +114,7 @@ Errors are panics whose message starts with the code in brackets, for example `E
 - `ft_transfer(receiver_id, amount, memo?)` — 1 yocto. Sender ≠ receiver. Takes **quiet first, then loud** from the sender; the receiver gets the same split (loud stays loud). `E_BALANCE` if `amount > loud + quiet`. Event: NEP-141 `ft_transfer`, plus `tag_move { from, to, loud_amount }` when `loud_amount > 0`.
 - `transfer_loud(receiver_id, amount)` — 1 yocto. Moves loud explicitly (for OTC). `E_NO_LOUD`.
 - `ft_transfer_call(receiver_id, amount, memo?, msg)` — 1 yocto. **Quiet only** (`E_QUIET_DOOR`: loud tokens cannot go into other contracts through `ft_transfer_call`). Standard `ft_on_transfer` + `ft_resolve_transfer`; refunds go back as quiet. Gas: 30 Tgas for `ft_on_transfer`, 10 Tgas for resolve.
-- `ft_total_supply`, `ft_balance_of` (= loud + quiet), `ft_metadata` (spec `ft-1.0.0`, decimals 18).
+- `ft_total_supply`, `ft_balance_of` (= loud + quiet; for the token account itself `pool_tokens + escrowed` is added, because the NEP-141 events name it as the owner of the pool inventory and the escrow, so all balances sum to `ft_total_supply`), `ft_metadata` (spec `ft-1.0.0`, decimals 18).
 - Storage management (NEP-145), minimal so wallets work: `storage_balance_bounds` returns min = max = 0.00125 NEAR; `storage_deposit` registers nothing and refunds the full deposit; `storage_balance_of` returns `{ total: bounds.min, available: "0" }` for every account. Accounts are created implicitly; the contract pays storage. This is a stated testnet simplification (section 9).
 
 ### Views
@@ -146,6 +146,6 @@ No owner, no pause, no upgrade method, no parameter setter. The token account is
 - **Early honest buyers are loud too.** Anyone who buys in the launch window accepts the door. The page says so before the buy.
 - **Notice can trigger a rush.** Quiet holders can sell before a shouted exit becomes ready. That is the intended information, and it can also accelerate a sell-off.
 - **No identity.** The contract does not know who is an insider and does not try to.
-- **The creator allocation is unbacked.** It is minted without a NEAR payment, so every NEAR it receives through the door comes from buyers. After the creator has left, the pool cannot pay the formula price to all remaining holders: the last sellers get less, down to nothing, by up to the creator's proceeds. `sell` and `leave` pay out only what the pool holds.
+- **The creator allocation is unbacked.** It is minted without a NEAR payment, so every NEAR it receives through the door comes from buyers. After the creator has left, the pool cannot pay the formula price to all remaining holders; the shortfall is at most the creator's proceeds. `sell` fails with `E_POOL_EMPTY` when the pool cannot pay the formula amount, and `leave` fills only the part the pool can pay. So the last sellers may be unable to sell part or all of their tokens.
 - **Testnet simplifications.** The contract pays account storage: every new balance entry locks about 0.00125 NEAR of the token account's balance, and that balance also holds `pool_near`. Dust transfers to fresh accounts can therefore use up the spare balance and make `sell`/`leave` payouts fail until anyone sends NEAR to the token account. The deploy leaves a reserve for this, and it is not a defence on mainnet. The code is unaudited, there is no fee and no liquidity migration.
 - **Sybil resistance.** The cap is global, so more accounts never mean more exit room. That is the whole sybil defence; there is no per-person fairness.

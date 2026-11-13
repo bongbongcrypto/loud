@@ -782,9 +782,16 @@ impl Loud {
         U128(self.total_supply)
     }
 
-    /// Loud plus quiet. Tokens escrowed in open exits are not included.
+    /// Loud plus quiet. For the token account itself the pool inventory and
+    /// the tokens escrowed in open exits are added: the `ft_mint` and
+    /// `ft_transfer` events name this account as their owner, so the sum of
+    /// all balances equals `ft_total_supply`.
     pub fn ft_balance_of(&self, account_id: AccountId) -> U128 {
-        U128(self.loud_of(&account_id) + self.quiet_of(&account_id))
+        let mut balance = self.loud_of(&account_id) + self.quiet_of(&account_id);
+        if account_id == env::current_account_id() {
+            balance += self.pool_tokens + self.escrowed;
+        }
+        U128(balance)
     }
 
     pub fn ft_metadata(&self) -> FungibleTokenMetadata {

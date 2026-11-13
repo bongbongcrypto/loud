@@ -163,12 +163,37 @@ const hero = {
   paused: false,
   timer: null,
   live: null,
+  showAll: { sim: false, live: false },
+  scope: null,
 };
+
+// The line under the board that says how many exits the rows cover, with a
+// button to show all of them. Built once so a tick does not replace the button.
+function heroScope(view, sentence) {
+  const box = $('#hero-scope');
+  if (!hero.scope) {
+    const text = h('span');
+    const btn = h('button', { type: 'button' });
+    btn.addEventListener('click', () => {
+      hero.showAll[hero.source] = !hero.showAll[hero.source];
+      if (hero.source === 'sim') heroRenderSim();
+      else heroRenderLive();
+    });
+    box.replaceChildren(text, ' ', btn);
+    hero.scope = { text, btn };
+  }
+  box.hidden = !sentence;
+  setText(hero.scope.text, sentence);
+  hero.scope.btn.hidden = !view.expandable;
+  setText(hero.scope.btn, hero.showAll[hero.source] ? 'Show fewer' : `Show all ${view.total}`);
+}
 
 function heroRenderSim() {
   const sim = hero.sim;
   const st = sim.state();
-  hero.board.update(L.boardRows(sim.exits(), sim.now, { limit: 9 }), 'No exits yet.', 'sim');
+  const view = L.boardView(sim.exits(), sim.now, { limit: 9, showAll: hero.showAll.sim });
+  hero.board.update(view.rows, 'No exits yet.', 'sim');
+  heroScope(view, view.total ? `${L.boardScope(view)} Simulated exits, not chain data.` : '');
   setText($('#board-clock-label'), 'Engine clock');
   setText($('#board-clock'), L.fmtSinceLaunch(sim.now));
   setCap($('#hero-cap-bar'), $('#hero-cap-text'), Number((st.cap_available * 1000n) / st.cap_units) / 1000,
@@ -179,11 +204,16 @@ function heroRenderLive() {
   const live = hero.live;
   if (!live) return;
   const st = live.state;
+  const view = L.boardView(live.exits, st.now, { clock: L.fmtUtcTime, limit: 12, showAll: hero.showAll.live });
   hero.board.update(
-    L.boardRows(live.exits, st.now, { clock: L.fmtUtcTime, limit: 12 }),
-    'No open exits on chain right now. The contract stores open exits only; the completed ones are in the receipts under Testnet proof.',
+    view.rows,
+    'No open exits on chain in this snapshot. The contract stores open exits only. The receipts under Testnet proof cover the saved proof run only; exits completed outside that run are not listed on this page.',
     'live',
   );
+  const whole = live.exitsCapped
+    ? ` The page stopped reading after ${live.exits.length} exits; get_state reports ${st.open_exits} open.`
+    : Number(st.open_exits) !== live.exits.length ? ` get_state reports ${st.open_exits} open.` : '';
+  heroScope(view, view.total ? `${L.boardScope(view, { openOnly: true })}${whole} Completed exits are not stored by the contract.` : '');
   setText($('#board-clock-label'), 'Chain time, UTC');
   setText($('#board-clock'), L.fmtUtcTime(st.now));
   setCap($('#hero-cap-bar'), $('#hero-cap-text'), Number((st.cap_available * 1000n) / st.cap_units) / 1000,
@@ -222,7 +252,8 @@ function heroSetSource(source) {
     setText($('#hero-note'), SIM_NOTE);
     heroRenderSim();
   } else {
-    setText($('#hero-note'), 'Read from the deployed token with get_state and get_exits. Times are block times. Demo preset on testnet.');
+    const b = hero.live ? hero.live.block : null;
+    setText($('#hero-note'), `Snapshot of the deployed token, read with get_state and get_exits${b && b.pinned ? ` at block ${b.height}` : ''}. It does not update on its own; "read again" under Testnet proof takes a new one. Times are block times. Demo preset on testnet.`);
     heroRenderLive();
   }
   heroSchedule();
@@ -544,7 +575,7 @@ function txList(txs) {
   // Step 9 can hold several hundred entries; build them when opened.
   details.addEventListener('toggle', () => {
     if (!details.open || list.childElementCount) return;
-    list.replaceChildren(...txs.map((t) => h('li', { class: t.outcome === 'success' ? '' : 'bad' },
+    list.replaceChildren(...txs.map((t) => h('li', { class: t.outcome === 'success' && !t.unsettled ? '' : 'bad' },
       link(t.href, t.short), ` ${L.shortAccount(t.account, 28)} ${t.round ? `round ${t.round} ` : ''}${t.outcome}${t.note ? `, ${t.note}` : ''}`)));
   });
   return details;
@@ -596,14 +627,17 @@ async function loadLive(token) {
     const live = await L.fetchLive(window.fetch.bind(window), token);
     hero.live = live;
     state.dataset.state = 'ok';
-    setText(state, `Read from ${token} at the last final block.`);
+    setText(state, L.liveSummary(live, token));
     facts($('#live-facts'), L.liveFacts(live).map(([label, value]) => ({ label, value })));
     btn.disabled = false;
-    setText(btn, 'Testnet: live');
-    if (hero.source === 'live') heroRenderLive();
+    setText(btn, 'Testnet: snapshot');
+    if (hero.source === 'live') heroSetSource('live');
   } catch (e) {
     state.dataset.state = 'failed';
-    setText(state, `Could not read the token from NEAR testnet RPC in this browser (${e.message}). The receipts below do not depend on it.`);
+    const kept = hero.live
+      ? ` The board and the facts below still show the earlier snapshot (chain time ${L.fmtUtcDate(hero.live.state.now)} ${L.fmtUtcTime(hero.live.state.now)} UTC).`
+      : '';
+    setText(state, `Could not read the token from NEAR testnet RPC in this browser (${e.message}).${kept} The receipts below do not depend on it.`);
     if (!hero.live) setText(btn, 'Testnet: unreachable');
   }
 }

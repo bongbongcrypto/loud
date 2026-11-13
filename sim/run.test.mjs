@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { runScenario, runAll, toMarkdown, main, RULE_ROWS, SCENARIOS } from './run.mjs';
+import { runScenario, runAll, toMarkdown, main, QuietSeller, RULE_ROWS, SCENARIOS } from './run.mjs';
+import { LoudToken, PRESETS, NEAR, SEC, MIN } from '../web/engine.js';
 
 test('a run reproduces exactly for the same seed and differs for another', () => {
   const a = runScenario({ scenario: 'bundle_dump', rule: 'loud', days: 2, seed: 3 });
@@ -64,4 +65,26 @@ test('main writes results.json and RESULTS.md', () => {
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test('a quiet seller the pool cannot pay in full keeps its remainder and sells it later', () => {
+  const token = new LoudToken({ ...PRESETS.standard, cap_bps: 1000n, cap_window_ns: MIN, notice_ns: 30n * SEC }, 0n);
+  const creator = PRESETS.standard.creator;
+  const have = token.buy('holder', NEAR / 100n, 0n, 10n * MIN);
+  // The unbacked creator allocation takes about half of the pool's NEAR.
+  const id = token.shout(creator, have / 2n, 10n * MIN);
+  token.leave(creator, id, 0n, 10n * MIN + 30n * SEC);
+
+  const s = new QuietSeller(token, 'holder');
+  const first = s.step(11n * MIN);
+  assert.ok(first > 0n && first < have, 'only part of the balance is payable');
+  assert.equal(s.holdings(), have - first);
+  // Nothing more is payable yet: the step sells nothing and does not throw.
+  assert.equal(s.step(12n * MIN), 0n);
+  assert.equal(s.holdings(), have - first);
+  // A new buyer brings NEAR; the queued remainder sells on the next step.
+  token.buy('buyer', NEAR, 0n, 13n * MIN);
+  assert.equal(s.step(14n * MIN), have - first);
+  assert.equal(s.holdings(), 0n);
+  assert.equal(s.sold, have);
 });

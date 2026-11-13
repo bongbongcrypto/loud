@@ -136,27 +136,64 @@ export function capBound({ bucketAtStart, capUnits, t0, t1, capWindowNs }) {
   return BigInt(bucketAtStart) + (BigInt(capUnits) * dt) / BigInt(capWindowNs);
 }
 
-// Final check of the split run. `attempts` are leave attempts with { filled, block_timestamp }.
+// Final check of the split run. `attempts` are leave attempts with
+// { filled, block_timestamp, settled }. `pass` needs all of:
+//   - the contract counter change is known and equals the sum of the per-transaction fills,
+//   - at least one fill, each with a block time inside [t0, t1],
+//   - the measurement covers the full cap window: t1 - t0 >= cap_window_ns (no tolerance;
+//     the run waits for chain time to reach the window end before it closes the measurement),
+//   - no fill whose payout receipts failed (settled === false),
+//   - sold_total <= bound (SPEC invariant 4) and sold_in_window <= bucket_at_start + cap_units.
+// `reasons` lists every condition that did not hold.
 export function evaluateSplit({ attempts, bucketAtStart, capUnits, capWindowNs, t0, t1, totalLeftDelta }) {
-  const windowEnd = BigInt(t0) + BigInt(capWindowNs);
+  const start = BigInt(t0);
+  const end = BigInt(t1);
+  const windowNs = BigInt(capWindowNs);
+  const windowEnd = start + windowNs;
   let receiptsSum = 0n;
   let soldInWindow = 0n;
   let fills = 0;
+  let fillsWithoutTime = 0;
+  let fillsOutsideMeasurement = 0;
+  let unsettledFills = 0;
   for (const a of attempts) {
     if (a.filled === null || a.filled === undefined) continue;
     const f = BigInt(a.filled);
     if (f === 0n) continue;
     fills += 1;
     receiptsSum += f;
-    if (a.block_timestamp === null || a.block_timestamp === undefined || BigInt(a.block_timestamp) <= windowEnd) {
+    if (a.settled === false) unsettledFills += 1;
+    if (a.block_timestamp === null || a.block_timestamp === undefined) {
+      // Without a block time the fill cannot be placed outside the window, so it counts inside.
+      fillsWithoutTime += 1;
       soldInWindow += f;
+      continue;
     }
+    const ts = BigInt(a.block_timestamp);
+    if (ts < start || ts > end) fillsOutsideMeasurement += 1;
+    if (ts <= windowEnd) soldInWindow += f;
   }
+  const counterKnown = totalLeftDelta !== null && totalLeftDelta !== undefined;
   // The contract counter is the authority; receipts are the per-transaction evidence.
-  const soldTotal = totalLeftDelta === null || totalLeftDelta === undefined ? receiptsSum : BigInt(totalLeftDelta);
+  const soldTotal = counterKnown ? BigInt(totalLeftDelta) : receiptsSum;
+  const receiptsMatchCounter = counterKnown && soldTotal === receiptsSum;
+  const measuredNs = end > start ? end - start : 0n;
+  const fullWindow = windowNs > 0n && measuredNs >= windowNs;
+  const timestampsValid = start > 0n && end > start && fillsWithoutTime === 0 && fillsOutsideMeasurement === 0;
   const bound = capBound({ bucketAtStart, capUnits, t0, t1, capWindowNs });
   const looseBound = BigInt(bucketAtStart) + BigInt(capUnits);
-  const pass = soldTotal > 0n && soldTotal <= bound && soldInWindow <= looseBound;
+  const reasons = [];
+  if (!counterKnown) reasons.push('the contract counter was not read');
+  else if (!receiptsMatchCounter) reasons.push(`the receipts sum ${receiptsSum} differs from the contract counter change ${soldTotal}`);
+  if (fills === 0) reasons.push('no leave call filled');
+  if (soldTotal <= 0n) reasons.push('nothing left according to the contract counter');
+  if (fillsWithoutTime > 0) reasons.push(`${fillsWithoutTime} fills have no block time`);
+  if (fillsOutsideMeasurement > 0) reasons.push(`${fillsOutsideMeasurement} fills lie outside the measured interval`);
+  if (!(start > 0n && end > start)) reasons.push('the measurement interval is empty');
+  if (!fullWindow) reasons.push(`measured ${measuredNs} ns, less than the cap window of ${windowNs} ns`);
+  if (unsettledFills > 0) reasons.push(`${unsettledFills} fills have a failed payout receipt`);
+  if (soldTotal > bound) reasons.push(`sold ${soldTotal} is above the bound ${bound}`);
+  if (soldInWindow > looseBound) reasons.push(`sold in the window ${soldInWindow} is above ${looseBound}`);
   return {
     fills,
     receiptsSum,
@@ -165,9 +202,117 @@ export function evaluateSplit({ attempts, bucketAtStart, capUnits, capWindowNs, 
     bound,
     looseBound,
     windowEnd,
-    receiptsMatchCounter: soldTotal === receiptsSum,
-    pass,
+    measuredNs,
+    fullWindow,
+    timestampsValid,
+    unsettledFills,
+    counterKnown,
+    receiptsMatchCounter,
+    reasons,
+    pass: reasons.length === 0,
   };
+}
+
+// Settlement of one transaction result (RPC `send_tx` / `tx` with wait_until FINAL).
+// The contract pays NEAR with a detached transfer, so a failed payout does not change
+// the top-level status; it shows only as a failed entry of `receipts_outcome`.
+// `settled`: the top-level status is a success, there is at least one receipt outcome,
+// and every receipt outcome is a success (SuccessValue or SuccessReceiptId).
+export function receiptSettlement(result) {
+  const outcomes = Array.isArray(result?.receipts_outcome) ? result.receipts_outcome : [];
+  const failed = [];
+  for (const r of outcomes) {
+    const st = r?.outcome?.status;
+    const ok = st !== null && typeof st === 'object'
+      && (typeof st.SuccessValue === 'string' || typeof st.SuccessReceiptId === 'string');
+    if (ok) continue;
+    const why = st !== null && typeof st === 'object' && st.Failure !== undefined ? st.Failure : (st ?? 'no status');
+    failed.push({ receipt_id: r?.id ?? null, executor: r?.outcome?.executor_id ?? null, error: failureText(why) });
+  }
+  const top = result?.status;
+  const topOk = top !== null && typeof top === 'object' && typeof top.SuccessValue === 'string';
+  return { receipts: outcomes.length, failed, settled: topOk && outcomes.length > 0 && failed.length === 0 };
+}
+
+const B58_ALPHABET = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
+
+// Base58 (Bitcoin alphabet, as NEAR uses for hashes) of a byte array.
+export function base58Encode(bytes) {
+  const src = Uint8Array.from(bytes);
+  let zeros = 0;
+  while (zeros < src.length && src[zeros] === 0) zeros += 1;
+  let n = 0n;
+  for (const b of src) n = n * 256n + BigInt(b);
+  let out = '';
+  while (n > 0n) {
+    out = B58_ALPHABET[Number(n % 58n)] + out;
+    n /= 58n;
+  }
+  return '1'.repeat(zeros) + out;
+}
+
+// A NEAR transaction hash: base58 of 32 bytes.
+export const isTxHash = (v) => typeof v === 'string' && /^[1-9A-HJ-NP-Za-km-z]{43,44}$/.test(v);
+
+// Transaction identifier in a faucet response body, if it carries one. The response
+// shape is not documented, so this reads the usual places of an RPC transaction result
+// and returns null for anything else (plain text, HTML, an empty body).
+// -> { hash, account, outcome, error } in the shape of a receipts.json transaction, or null.
+export function faucetTx(body) {
+  let doc;
+  try {
+    doc = JSON.parse(body);
+  } catch {
+    return null;
+  }
+  if (isTxHash(doc)) return { hash: doc, account: null, outcome: 'unknown', error: null };
+  if (doc === null || typeof doc !== 'object') return null;
+  const inner = doc.result !== null && typeof doc.result === 'object' ? doc.result : {};
+  const hash = [
+    doc.transaction?.hash, doc.transaction_outcome?.id, inner.transaction?.hash, inner.transaction_outcome?.id,
+    doc.txHash, doc.tx_hash, doc.transactionHash, doc.transaction_hash, doc.hash,
+  ].find(isTxHash);
+  if (!hash) return null;
+  const signer = doc.transaction?.signer_id ?? inner.transaction?.signer_id;
+  const st = doc.status ?? inner.status;
+  let outcome = 'unknown';
+  let error = null;
+  if (st !== null && typeof st === 'object') {
+    if (st.Failure !== undefined) {
+      outcome = 'failure';
+      error = failureText(st.Failure);
+    } else if (typeof st.SuccessValue === 'string') {
+      outcome = 'success';
+    }
+  }
+  return { hash, account: typeof signer === 'string' ? signer : null, outcome, error };
+}
+
+// Constructor arguments that get_params() must return unchanged (SPEC section 3).
+export const PARAM_KEYS = [
+  'total_supply', 'creator', 'creator_alloc_bps', 'virtual_near', 'loud_window_ns',
+  'notice_ns', 'exit_window_ns', 'cap_bps', 'cap_window_ns',
+];
+
+// Differences between the intended constructor arguments and the on-chain get_params()
+// result, including the two values SPEC section 3 derives at launch. Empty when all match.
+export function paramMismatches(intended, onchain) {
+  const o = onchain !== null && typeof onchain === 'object' ? onchain : {};
+  const out = [];
+  for (const key of PARAM_KEYS) {
+    if (o[key] === undefined || o[key] === null || String(o[key]) !== String(intended[key])) {
+      out.push(`${key}: intended ${intended[key]}, on chain ${o[key]}`);
+    }
+  }
+  const dec = (v) => ((typeof v === 'string' || typeof v === 'number') && /^\d+$/.test(String(v)) ? BigInt(v) : null);
+  const capUnits = (BigInt(intended.total_supply) * BigInt(intended.cap_bps)) / 10000n;
+  if (dec(o.cap_units) !== capUnits) out.push(`cap_units: intended ${capUnits}, on chain ${o.cap_units}`);
+  const launch = dec(o.launch_ts);
+  const loudUntil = dec(o.loud_until);
+  if (launch === null || loudUntil === null || loudUntil !== launch + BigInt(intended.loud_window_ns)) {
+    out.push(`loud_until: expected launch_ts + ${intended.loud_window_ns}, on chain launch_ts ${o.launch_ts}, loud_until ${o.loud_until}`);
+  }
+  return out;
 }
 
 export const txLink = (hash) => `${EXPLORER}/txns/${hash}`;

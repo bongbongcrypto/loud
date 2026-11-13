@@ -247,7 +247,7 @@ export function renderReplay(entries) {
   if (entries.length === 0) {
     out.push('## Status: no real data in this repository');
     out.push('');
-    out.push('**This file contains no replay results, because no real data set could be obtained without an API key.** No numbers were made up to fill the gap.');
+    out.push('**This file contains no replay results, because no suitable verified data set was assembled: minute candles were reachable without a key for recent pools, but none could be tied to a documented bundled launch.** No numbers were made up to fill the gap.');
     out.push('');
     out.push('What was tried (see `sim/replay-data/README.md` for the exact requests and answers):');
     out.push('');

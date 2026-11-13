@@ -588,3 +588,88 @@ test('events: loud events carry the contract field names, each after its ft_tran
   const back = nv.sell('a', got, 0n, 1n);
   assert.deepEqual(nv.events.at(-1).data, { account: 'a', tokens_in: got, near_out: back });
 });
+
+test('balanceOf: the token account holds pool and escrow, balances add up and match the ft_transfer events', () => {
+  const t = fresh();
+  // The engine emits no ft_mint; start the ledger from the two mints of `new`.
+  const ledger = new Map([[CREATOR, t.creator_alloc], [CONTRACT_ACCOUNT, SUPPLY - t.creator_alloc]]);
+  let seen = 0;
+  const check = (step) => {
+    for (const e of t.events.slice(seen)) {
+      if (e.event !== 'ft_transfer') continue;
+      const { old_owner_id: from, new_owner_id: to, amount } = e.data;
+      ledger.set(from, (ledger.get(from) || 0n) - amount);
+      ledger.set(to, (ledger.get(to) || 0n) + amount);
+    }
+    seen = t.events.length;
+    let sum = 0n;
+    for (const [account, amount] of ledger) {
+      assert.equal(t.balanceOf(account), amount, `${step}: balance of ${account}`);
+      sum += amount;
+    }
+    assert.equal(sum, t.total_supply, `${step}: balances add up to the supply`);
+    checkInvariants(t);
+  };
+  check('new');
+  assert.equal(t.balanceOf(CONTRACT_ACCOUNT), t.pool_tokens);
+
+  t.buy('early', 1000n * NEAR, 0n, 1n * MIN);
+  check('loud buy');
+  const got = t.buy('late', 10n * NEAR, 0n, 11n * MIN);
+  check('quiet buy');
+  const id = t.shout(CREATOR, 4n * CAP, 11n * MIN);
+  assert.equal(t.balanceOf(CONTRACT_ACCOUNT), t.pool_tokens + 4n * CAP);
+  check('shout');
+  t.transfer('late', 'friend', got / 4n, 11n * MIN);
+  t.transferLoud(CREATOR, 'friend', DUST, 11n * MIN);
+  t.transfer('late', CONTRACT_ACCOUNT, got / 4n, 11n * MIN);
+  assert.equal(t.balanceOf(CONTRACT_ACCOUNT), t.pool_tokens + t.escrowed + got / 4n);
+  check('transfers');
+  const filled = t.leave(CREATOR, id, 0n, 41n * MIN);
+  assert.ok(filled > 0n && filled < 4n * CAP, 'partial leave');
+  check('partial leave');
+  t.hush(CREATOR, id, 41n * MIN);
+  assert.equal(t.escrowed, 0n);
+  check('hush');
+  t.sell('late', t.getAccount('late').quiet, 0n, 41n * MIN);
+  assert.equal(t.balanceOf('late'), 0n);
+  check('sell');
+});
+
+test('exitPrice: quotes only what the pool can pay for, 0 when nothing can be sold', () => {
+  // Payable lot: the price of sell(amount).
+  const t = seeded();
+  const lot = SUPPLY / 10000n;
+  assert.ok(lot <= t.maxSellable());
+  assert.equal(t.exitPrice(lot), Number((t.quoteSell(lot) * 10n ** 12n) / lot) / 1e18);
+  assert.equal(t.exitPrice(0n), 0);
+
+  // Empty pool: the formula quote is positive, the sale throws, the price is 0.
+  const empty = fresh();
+  assert.ok(empty.quoteSell(lot) > 0n);
+  assert.equal(empty.exitPrice(lot), 0);
+  const nv = new NaiveToken(P, 0n);
+  assert.throws(() => nv.sell(CREATOR, lot, 0n, 1n), code('E_POOL_EMPTY'));
+  assert.equal(nv.exitPrice(lot), 0);
+
+  // Thin pool: only part of the lot is payable. The quote is the price of
+  // that part, and selling that part pays exactly the quoted NEAR.
+  // The unbacked creator allocation takes about half of the pool's NEAR first.
+  const thin = fresh({ cap_bps: 1000n, cap_window_ns: MIN, notice_ns: 30n * SEC });
+  const have = thin.buy('late', NEAR / 100n, 0n, 10n * MIN);
+  const id = thin.shout(CREATOR, have / 2n, 10n * MIN);
+  assert.equal(thin.leave(CREATOR, id, 0n, 10n * MIN + 30n * SEC), have / 2n);
+  assert.equal(thin.getAccount('late').quiet, have);
+  const part = thin.maxSellable();
+  assert.ok(part > 0n && part < have);
+  assert.ok(thin.quoteSell(have) > thin.pool_near, 'the whole lot is not payable');
+  assert.throws(() => thin.sell('late', have, 0n, 11n * MIN), code('E_POOL_EMPTY'));
+  const quote = thin.quoteSell(part);
+  assert.ok(quote <= thin.pool_near);
+  const px = thin.exitPrice(have);
+  assert.equal(px, Number((quote * 10n ** 12n) / part) / 1e18);
+  // The old quote, pool NEAR over the whole lot, was a price no sale could get.
+  assert.ok(px > Number((thin.pool_near * 10n ** 12n) / have) / 1e18);
+  assert.ok(px > 0 && px < thin.price());
+  assert.equal(thin.sell('late', part, 0n, 11n * MIN), quote);
+});

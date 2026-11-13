@@ -104,6 +104,12 @@ export function fmtUtcTime(ns) {
   return d.toISOString().slice(11, 19);
 }
 
+// Chain date: "2026-11-13" UTC.
+export function fmtUtcDate(ns) {
+  const d = new Date(Number(BigInt(ns) / 1_000_000n));
+  return d.toISOString().slice(0, 10);
+}
+
 export function shortAccount(id, max = 22) {
   const s = String(id ?? '');
   if (s.length <= max) return s;
@@ -239,6 +245,40 @@ export function boardRows(exits, now, { clock = (ns) => fmtSinceLaunch(ns), limi
       canHush: ex.closed === null,
     };
   });
+}
+
+// The rows plus what they are cut from, so the board can state its scope.
+// `showAll` lifts the row limit.
+export function boardView(exits, now, { clock, limit = 9, showAll = false } = {}) {
+  const list = exits.map(normalizeExit);
+  const open = list.filter((e) => e.closed === null).length;
+  const rows = boardRows(exits, now, { clock, limit: showAll ? Infinity : limit });
+  const shownOpen = rows.filter((r) => r.canHush).length;
+  return {
+    rows,
+    total: list.length,
+    open,
+    closed: list.length - open,
+    shownOpen,
+    shownClosed: rows.length - shownOpen,
+    cut: rows.length < list.length,
+    expandable: list.length > limit,
+  };
+}
+
+// One plain sentence on how much of the exit list the board shows.
+// `openOnly`: the source holds open exits only (the contract stores no closed ones).
+export function boardScope(view, { openOnly = false } = {}) {
+  const plural = (n) => (n === 1 ? 'exit' : 'exits');
+  if (view.total === 0) return '';
+  if (openOnly) {
+    return view.cut
+      ? `Showing ${view.rows.length} of ${view.total} open ${plural(view.total)}.`
+      : `Showing all ${view.total} open ${plural(view.total)}.`;
+  }
+  return view.cut
+    ? `Showing ${view.rows.length} of ${view.total} ${plural(view.total)}: ${view.shownOpen} of ${view.open} open, ${view.shownClosed} of ${view.closed} closed.`
+    : `Showing all ${view.total} ${plural(view.total)}: ${view.open} open, ${view.closed} closed.`;
 }
 
 // Accelerated engine run for the board at the top of the page: the creator
@@ -580,7 +620,8 @@ export class Sandbox {
     const acc = token.getAccount(this.account);
     const other = token.getAccount(this.other());
     const exits = exitsFromEvents(token.events, p.notice_ns);
-    const rows = boardRows(exits, this.now, { limit: 12 }).map((r) => {
+    // No row limit: the sandbox board lists every exit, open and closed.
+    const rows = boardRows(exits, this.now, { limit: Infinity }).map((r) => {
       const ex = exits.find((e) => e.id.toString() === r.id);
       const mine = ex.owner === this.account;
       // Leave is offered on every open exit of the active account, so a visitor
@@ -623,20 +664,48 @@ export class Sandbox {
 // ---------------------------------------------------------------- chain views
 
 // Browser and Node 18+ both have btoa, atob and TextDecoder.
-export function viewRequest(accountId, methodName, args = {}, id = 1) {
+// `blockId` (a block height) pins the view to that block; without it the
+// node answers at its last final block.
+export function viewRequest(accountId, methodName, args = {}, id = 1, blockId = null) {
   if (!isAccountId(accountId)) throw new Error('invalid account id');
+  const at = blockId === null || blockId === undefined ? { finality: 'final' } : { block_id: blockId };
   return {
     jsonrpc: '2.0',
     id,
     method: 'query',
     params: {
       request_type: 'call_function',
-      finality: 'final',
+      ...at,
       account_id: accountId,
       method_name: methodName,
       args_base64: btoa(JSON.stringify(args)),
     },
   };
+}
+
+// Height of the block a view answer was computed at, or null if the node did not say.
+export function viewBlockHeight(body) {
+  const hgt = body && body.result ? body.result.block_height : null;
+  return Number.isSafeInteger(hgt) ? hgt : null;
+}
+
+// One view call against one endpoint. Returns the decoded value and its block height.
+async function postView(fetchFn, url, accountId, methodName, args, blockId, timeoutMs) {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+  try {
+    const res = await fetchFn(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(viewRequest(accountId, methodName, args, 1, blockId)),
+      signal: ctrl.signal,
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const body = await res.json();
+    return { value: decodeViewResult(body), height: viewBlockHeight(body) };
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 export function decodeViewResult(body) {
@@ -680,24 +749,101 @@ export function bigFields(obj) {
   return out;
 }
 
-// get_params + get_state + get_exits of the deployed token.
-export async function fetchLive(fetchFn, accountId, urls = RPC_URLS) {
-  const [params, state, exits] = await Promise.all([
-    callView(fetchFn, urls, accountId, 'get_params'),
-    callView(fetchFn, urls, accountId, 'get_state'),
-    callView(fetchFn, urls, accountId, 'get_exits', { from_index: 0, limit: 100 }),
-  ]);
-  return {
-    params: bigFields(params),
-    state: bigFields(state),
-    exits: (Array.isArray(exits) ? exits : []).map(normalizeExit),
-  };
+export const EXITS_PAGE = 100; // the contract's page limit
+export const EXITS_MAX_PAGES = 20; // the page stops reading after 2,000 exits and says so
+
+// get_params and every page of get_exits from one endpoint. `blockId` pins
+// them to one block; null reads each at the node's last final block.
+async function readParamsAndExits(fetchFn, url, accountId, blockId, timeoutMs) {
+  const heights = [];
+  const params = await postView(fetchFn, url, accountId, 'get_params', {}, blockId, timeoutMs);
+  heights.push(params.height);
+  const byId = new Map();
+  let capped = false;
+  for (let page = 0; page < EXITS_MAX_PAGES; page++) {
+    const r = await postView(fetchFn, url, accountId, 'get_exits', { from_index: page * EXITS_PAGE, limit: EXITS_PAGE }, blockId, timeoutMs);
+    heights.push(r.height);
+    const list = Array.isArray(r.value) ? r.value : [];
+    // Above 100 open exits the pages follow storage order: collect by id, sort below.
+    for (const raw of list) {
+      const ex = normalizeExit(raw);
+      byId.set(ex.id, ex);
+    }
+    if (list.length < EXITS_PAGE) break;
+    if (page === EXITS_MAX_PAGES - 1) capped = true;
+  }
+  const exits = [...byId.values()].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  return { params: params.value, exits, capped, heights };
+}
+
+// One snapshot of the deployed token: get_state, get_params and all pages of
+// get_exits. get_state is read at the endpoint's last final block; the other
+// views are then pinned to that block height on the same endpoint. If the
+// endpoint cannot serve the pinned block, they are read unpinned and the
+// result says so (`block.pinned === false`).
+export async function fetchLive(fetchFn, accountId, urls = RPC_URLS, timeoutMs = 8000) {
+  let last = null;
+  for (const url of urls) {
+    try {
+      const st = await postView(fetchFn, url, accountId, 'get_state', {}, null, timeoutMs);
+      let rest = null;
+      let pinned = st.height !== null;
+      if (pinned) {
+        try {
+          rest = await readParamsAndExits(fetchFn, url, accountId, st.height, timeoutMs);
+        } catch {
+          pinned = false;
+        }
+      }
+      if (!rest) rest = await readParamsAndExits(fetchFn, url, accountId, null, timeoutMs);
+      const heights = [...new Set([st.height, ...rest.heights].filter((x) => x !== null))].sort((a, b) => a - b);
+      return {
+        params: bigFields(rest.params),
+        state: bigFields(st.value),
+        exits: rest.exits,
+        exitsCapped: rest.capped,
+        // pinned: every view was requested at block `height`.
+        block: { pinned, height: st.height, heights },
+      };
+    } catch (e) {
+      last = e;
+    }
+  }
+  throw new Error(`no RPC endpoint answered the view calls: ${last && last.message ? last.message : last}`);
+}
+
+// Plain sentences on what the testnet snapshot is: where and when it was
+// read, whether the views share one block, and whether the exit list is whole.
+export function liveSummary(live, token) {
+  const s = live.state;
+  const b = live.block || { pinned: false, height: null, heights: [] };
+  const when = `chain time ${fmtUtcDate(s.now)} ${fmtUtcTime(s.now)} UTC`;
+  const parts = [];
+  if (b.pinned) {
+    parts.push(`Snapshot of ${token} at block ${b.height}, ${when}. get_state, get_params and get_exits were all read at that block.`);
+  } else if (b.heights.length > 1) {
+    parts.push(`Snapshot of ${token}, ${when}. The views were read separately at final blocks ${b.heights[0]} to ${b.heights[b.heights.length - 1]}, so they may not describe the same instant.`);
+  } else if (b.heights.length === 1) {
+    parts.push(`Snapshot of ${token}, ${when}. The views were read separately; every answer came from block ${b.heights[0]}.`);
+  } else {
+    parts.push(`Snapshot of ${token}, ${when}. The views were read separately at the last final block and may come from adjacent blocks.`);
+  }
+  parts.push('It was read once, when the page loaded or when "read again" was last pressed, and does not update on its own.');
+  const open = Number(s.open_exits);
+  if (live.exitsCapped) {
+    parts.push(`The page stops reading after ${live.exits.length} exits; get_state reports ${open} open exits.`);
+  } else if (Number.isFinite(open) && open !== live.exits.length) {
+    parts.push(`get_exits returned ${live.exits.length} exits while get_state reports ${open} open.`);
+  }
+  return parts.join(' ');
 }
 
 // Facts shown next to the live board. Time comes from get_state.now.
 export function liveFacts(live) {
   const { params: p, state: s } = live;
+  const b = live.block || { pinned: false, height: null, heights: [] };
   return [
+    ['Block height', b.pinned ? String(b.height) : b.heights.length ? b.heights.join(', ') : 'not reported'],
     ['Chain time (UTC)', fmtUtcTime(s.now)],
     ['Cap room now', `${fmtTokens(s.cap_available)} of ${fmtTokens(s.cap_units)} LOUD`],
     ['Loud supply outstanding', `${fmtTokens(s.loud_outstanding)} LOUD`],
@@ -739,6 +885,9 @@ export function deploymentView(dep) {
   add('Preset', text(d.preset));
   add('Creator account', isAccountId(d.creator_account) ? d.creator_account : '', explorerAccount(d.creator_account));
   add('Code hash on chain', text(d.code_hash));
+  // Written only by newer proof runs.
+  if (typeof d.code_hash_match === 'boolean') add('Code hash equals the hash of the built wasm', d.code_hash_match ? 'yes' : 'no');
+  if (typeof d.params_match === 'boolean') add('On-chain parameters equal the intended ones', d.params_match ? 'yes' : 'no');
   add('Wasm sha256', d.wasm ? `${text(d.wasm.sha256)} (${text(d.wasm.bytes)} bytes)` : '');
   add('CI run that produced this', runUrl ? `run ${run.run_id}` : '', runUrl);
   add('Commit', repo && /^[0-9a-f]{7,40}$/.test(text(run.commit)) ? run.commit.slice(0, 12) : '',
@@ -768,12 +917,17 @@ function txView(tx) {
   if (t.filled !== undefined && t.filled !== null && DECIMAL.test(text(t.filled))) note = `filled ${fmtTokens(BigInt(t.filled))}`;
   else if (t.error_code) note = text(t.error_code);
   else if (t.error) note = text(t.error).slice(0, 120);
+  // Newer proof runs record whether the NEAR payout receipts of a call succeeded.
+  // Older files have no `settled` key; that is shown as before.
+  const unsettled = outcome === 'success' && t.settled === false;
+  if (unsettled) note = `${note ? `${note}, ` : ''}a payout receipt failed`;
   return {
     hash: text(t.hash),
     short: t.hash ? shortHash(t.hash) : 'no hash',
     href: explorerTx(t.hash),
     account: text(t.account),
     outcome,
+    unsettled,
     round: t.round === undefined || t.round === null ? '' : text(t.round),
     note,
   };
@@ -787,6 +941,7 @@ export function receiptsView(rec) {
     .sort((a, b) => Number(a.n) - Number(b.n))
     .map((s) => {
       const txs = (Array.isArray(s.txs) ? s.txs : []).map(txView);
+      const unsettled = txs.filter((t) => t.unsettled).length;
       return {
         n: text(s.n),
         title: text(s.title),
@@ -795,7 +950,7 @@ export function receiptsView(rec) {
         result: s.ok === true ? 'PASS' : 'FAIL',
         txs,
         txSummary: txs.length === 0 ? 'no transactions'
-          : `${txs.length} transaction${txs.length === 1 ? '' : 's'}: ${txs.filter((t) => t.outcome === 'success').length} succeeded, ${txs.filter((t) => t.outcome === 'failure').length} failed on chain as recorded`,
+          : `${txs.length} transaction${txs.length === 1 ? '' : 's'}: ${txs.filter((t) => t.outcome === 'success').length} succeeded, ${txs.filter((t) => t.outcome === 'failure').length} failed on chain as recorded${unsettled ? `, ${unsettled} of the succeeded with a failed payout receipt` : ''}`,
       };
     });
   const sp = r.split && typeof r.split === 'object' ? r.split : {};
@@ -823,6 +978,15 @@ export function receiptsView(rec) {
       ['Receipts match the contract counter', sp.receipts_match_counter === true ? 'yes' : sp.receipts_match_counter === false ? 'no' : 'pending'],
     ],
   };
+  // Keys written only by newer proof runs; absent in older files, then no row is added.
+  const yesNo = (v) => (v === true ? 'yes' : 'no');
+  if (typeof sp.full_window === 'boolean') split.rows.push(['Measured for at least one full cap window', yesNo(sp.full_window)]);
+  if (typeof sp.timestamps_valid === 'boolean') split.rows.push(['Block times of all fills inside the measurement', yesNo(sp.timestamps_valid)]);
+  if (sp.payout_calls !== undefined && sp.payout_calls !== null && sp.payouts_settled !== undefined && sp.payouts_settled !== null) {
+    split.rows.push(['Paying calls with no failed receipt / paying calls', `${text(sp.payouts_settled)} / ${text(sp.payout_calls)}`]);
+  }
+  const reasons = (Array.isArray(sp.fail_reasons) ? sp.fail_reasons : []).map((x) => text(x).slice(0, 200)).filter(Boolean);
+  if (haveSplit && sp.pass !== true && reasons.length) split.rows.push(['Why the check did not pass', reasons.join('; ')]);
   const passed = steps.filter((s) => s.result === 'PASS').length;
   return {
     state,

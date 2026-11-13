@@ -19,6 +19,8 @@
 // Every successful call appends to .events: the `loud` events with the
 // contract's field names, and the NEP-141 ft_transfer entries the contract logs
 // before them (CONTRACT_ACCOUNT stands for the token account).
+// balanceOf mirrors ft_balance_of: loud + quiet, and for CONTRACT_ACCOUNT also
+// the pool inventory and the escrow, so all balances add up to total_supply.
 // Differences from the contract, sandbox only: hush returns the units returned
 // (the contract method returns nothing), and the constructor emits no ft_mint.
 //
@@ -173,12 +175,21 @@ class Pool {
     return Number(((this.virtual_near + this.pool_near) * 10n ** 12n) / this.pool_tokens) / 1e18;
   }
 
-  // Whole NEAR per whole token a seller of `amount` units would receive now.
+  // Whole NEAR per whole token of the sale a holder of `amount` units can
+  // actually make now: sell(fill) with fill = min(amount, maxSellable()), at
+  // the formula price. When the pool can pay for all of `amount` this is the
+  // price of sell(amount). In a thin pool it is the price of the payable part
+  // only; the rest of the lot cannot be sold at any price until NEAR comes
+  // in, and is not in this number. Returns 0 when no part can be sold.
+  // A quote from the pool state, for display and the simulation.
   exitPrice(amount) {
     const x = big(amount, 'amount');
     if (x === 0n) return 0;
-    const out = min(this.quoteSell(x), this.pool_near);
-    return Number((out * 10n ** 12n) / x) / 1e18;
+    const fill = min(x, this.maxSellable());
+    if (fill === 0n) return 0;
+    const out = this.quoteSell(fill);
+    if (out === 0n) return 0;
+    return Number((out * 10n ** 12n) / fill) / 1e18;
   }
 
   _poolBuy(n, minOut) {
@@ -522,8 +533,11 @@ export class LoudToken extends Pool {
     });
   }
 
+  // ft_balance_of. The token account also owns the pool inventory and the
+  // escrow (the ft_transfer events of buy, sell, shout and hush say so).
   balanceOf(account) {
-    return this._loudOf(account) + this._quietOf(account);
+    const own = this._loudOf(account) + this._quietOf(account);
+    return account === CONTRACT_ACCOUNT ? own + this.pool_tokens + this.escrowed : own;
   }
 
   // ---- views ----

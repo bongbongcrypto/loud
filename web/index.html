@@ -54,10 +54,11 @@
         </tr>
       </thead>
       <tbody>
-        <tr class="board-empty"><td colspan="6">The board fills in when the page script runs. Every exit of loud tokens is listed here before it can be sold.</td></tr>
+        <tr class="board-empty"><td colspan="6">The board fills in when the page script runs. The contract lists every open exit of loud tokens before it can be sold; the board says how many of them it shows.</td></tr>
       </tbody>
     </table>
   </div>
+  <p class="board-scope" id="hero-scope" hidden></p>
   <div class="board-foot">
     <div class="cap">
       <span class="cap-label">Cap room</span>
@@ -83,7 +84,7 @@
     <ol class="door">
       <li class="door-shout">
         <b>Shout</b>
-        <span>Announce the amount. The tokens go into escrow and the exit appears on the board.</span>
+        <span>Announce the amount. The tokens go into escrow and the exit joins the contract's public list of open exits, which the board reads.</span>
       </li>
       <li class="door-notice">
         <b>Notice, 30 min</b>
@@ -97,7 +98,7 @@
     <p class="cap-rule"><b>One global cap.</b> All leaves together share one bucket. It holds at most 0.5% of supply and refills at 0.5% of supply per 60 min, so no 60 minutes can let out more than 1% (a full bucket plus one refill), and over a day the rate is 0.5% per hour. The bucket belongs to the token, so more wallets never mean more room.</p>
     <ul class="plain">
       <li>The tag belongs to the tokens. Sending loud tokens to another account moves the tag with them.</li>
-      <li>Tokens sold through the door become quiet. Anyone who buys from the pool after the launch window gets quiet tokens.</li>
+      <li>Tokens sold through the door go back into the pool. Anyone who buys from the pool after the launch window gets quiet tokens. A purchase during the launch window is always loud, so where an exit can become ready inside the launch window (notice shorter than the launch window, as in the demo preset used on testnet), tokens that left through the door are loud again when bought in that window.</li>
       <li>Loud tokens cannot be sold with <code>sell</code> and cannot enter other contracts through <code>ft_transfer_call</code>.</li>
       <li>No owner, no pause, no upgrade method, no parameter setter. The token account has zero access keys.</li>
     </ul>
@@ -283,7 +284,7 @@
     <dl class="facts" id="dep-facts"></dl>
 
     <div id="live" hidden>
-      <h3>Live state <button type="button" class="link" id="live-refresh">refresh</button></h3>
+      <h3>Testnet snapshot <button type="button" class="link" id="live-refresh">read again</button></h3>
       <p class="state" id="live-state" data-state="pending">Not loaded.</p>
       <dl class="facts" id="live-facts"></dl>
     </div>
@@ -344,7 +345,7 @@
       <dt>Sybil resistance</dt>
       <dd>The cap is global, so more accounts never mean more exit room. That is the whole sybil defence; there is no per-person fairness.</dd>
       <dt>The creator allocation is unbacked</dt>
-      <dd>It is minted without a NEAR payment, so every NEAR it receives through the door comes from buyers. After the creator has left, the last sellers can get less than the formula price, down to nothing.</dd>
+      <dd>It is minted without a NEAR payment, so every NEAR it receives through the door comes from buyers. After the creator has left, the pool can hold less NEAR than the formula price of the remaining tokens. <code>sell</code> fails with <code>E_POOL_EMPTY</code> when the pool cannot pay the formula amount, and <code>leave</code> fills only the part the pool can pay. So the last sellers may be unable to sell part or all of their tokens.</dd>
       <dt>Testnet simplifications</dt>
       <dd>The contract pays account storage out of the same balance that holds the pool's NEAR. Dust transfers to many fresh accounts can block sell and leave payouts until someone sends NEAR to the token account. The code is unaudited. There is no fee and no liquidity migration.</dd>
     </dl>
@@ -373,7 +374,7 @@
         </tbody>
       </table>
     </div>
-    <p class="fine">Bounds are checked once at deployment: creator allocation 0 to 20%, cap 0.01% to 10% of supply per window, launch window 1 min to 7 days, notice 30 s to 7 days, exit window and cap window 1 min to 7 days. The standard values were fixed in the specification before the simulations ran. The simulation report in the repository (<code>sim/RESULTS.md</code>) checks them against tighter and looser variants and states where LOUD does worse than no rule.</p>
+    <p class="fine">Bounds are checked once at deployment: creator allocation 0 to 20%, cap 0.01% to 10% of supply per window, launch window 1 min to 7 days, notice 30 s to 7 days, exit window and cap window 1 min to 7 days. The standard values are the ones written in the specification. The simulation report in the repository (<code>sim/RESULTS.md</code>) checks them against tighter and looser variants and states where LOUD does worse than no rule.</p>
   </div>
 </section>
 

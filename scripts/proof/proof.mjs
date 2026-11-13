@@ -16,6 +16,7 @@ import {
   TGAS, nearToYocto, yoctoToNear, unitsToTokens, presetParams, splitEvenly, budget,
   failureText, errorCode, parseEvents, returnValueBigInt, leaveFilled, evaluateSplit,
   txLink, accountLink, jsonReplacer,
+  receiptSettlement, base58Encode, faucetTx, paramMismatches,
 } from './lib.mjs';
 
 const { KeyPair, transactions: T, utils } = nearApi;
@@ -72,6 +73,10 @@ const deployment = {
   access_keys: null,
   wasm: null,
   code_hash: null,
+  expected_code_hash: null,
+  code_hash_match: null,
+  params_match: null,
+  param_mismatches: null,
   explorer: { token: null, root: null, tx: null },
   run: {
     repository: env.GITHUB_REPOSITORY || null,
@@ -102,6 +107,12 @@ const receipts = {
     fills: 0,
     cap_hits: 0,
     receipts_match_counter: null,
+    measured_ns: null,
+    full_window: null,
+    timestamps_valid: null,
+    payout_calls: 0,
+    payouts_settled: 0,
+    fail_reasons: null,
     pass: false,
   },
   error: null,
@@ -125,6 +136,18 @@ function finishStep(step, ok, got) {
 // What a transaction looks like inside receipts.json.
 function txRecord(r, extra = {}) {
   return { hash: r.hash, account: r.account, outcome: r.outcome, error: r.error, ...extra };
+}
+
+// Record of a call that pays NEAR when it succeeds (sell, leave). `settled` is true only
+// when every receipt outcome of the transaction succeeded; it is null when the call
+// itself did not succeed, because then nothing was due.
+function payRecord(r, extra = {}) {
+  const rec = txRecord(r, { ...extra, settled: r.outcome === 'success' ? r.settled === true : null });
+  if (r.outcome === 'success' && r.settled !== true) {
+    rec.receipt_failures = r.receiptsFailed;
+    rec.receipt_error = r.receiptError;
+  }
+  return rec;
 }
 
 async function writeOutputs() {
@@ -211,6 +234,7 @@ async function sendTx(signer, receiverId, actions) {
       return {
         hash, account: signer.id, outcome: invalid ? 'invalid' : 'unknown',
         error: text.slice(0, 400), code: errorCode(text), logs: [], successValue: null, blockHash: null,
+        settled: false, receiptsFailed: 0, receiptError: null,
       };
     }
   }
@@ -222,6 +246,7 @@ function summarize(result, hash, account) {
   const logs = receiptsOutcome.flatMap((r) => r.outcome?.logs ?? []);
   const failure = result.status?.Failure;
   const error = failure === undefined ? null : failureText(failure);
+  const settlement = receiptSettlement(result);
   return {
     hash: result.transaction?.hash ?? hash,
     account,
@@ -231,6 +256,13 @@ function summarize(result, hash, account) {
     logs,
     successValue: typeof result.status?.SuccessValue === 'string' ? result.status.SuccessValue : null,
     blockHash: receiptsOutcome[0]?.block_hash ?? result.transaction_outcome?.block_hash ?? null,
+    // All receipt outcomes, not only the top-level status: a detached payout that failed
+    // shows only there.
+    settled: settlement.settled,
+    receiptsFailed: settlement.failed.length,
+    receiptError: settlement.failed.length > 0
+      ? `receipt ${settlement.failed[0].receipt_id ?? '?'} on ${settlement.failed[0].executor ?? '?'}: ${settlement.failed[0].error}`.slice(0, 400)
+      : (settlement.receipts === 0 ? 'the result lists no receipt outcomes' : null),
   };
 }
 
@@ -247,13 +279,16 @@ async function blockTsOf(r) {
   }
 }
 
-// Ask the faucet to create `signer.id` with the signer's public key. Returns the faucet URL used.
+// Ask the faucet to create `signer.id` with the signer's public key.
+// Returns { url, tx }: the faucet URL used and, when the faucet's answer carries a
+// transaction identifier, a receipts.json transaction record for it (otherwise null).
 async function faucetCreate(signer) {
   const errors = [];
   for (const url of FAUCET_URLS) {
     for (let attempt = 1; attempt <= 3; attempt++) {
       let note;
       let polls = 10;
+      let tx = null;
       try {
         const res = await fetch(url, {
           method: 'POST',
@@ -261,15 +296,17 @@ async function faucetCreate(signer) {
           body: JSON.stringify({ newAccountId: signer.id, newAccountPublicKey: signer.pk }),
           signal: AbortSignal.timeout(60_000),
         });
-        const text = (await res.text()).replace(/\s+/g, ' ').slice(0, 200);
+        const raw = await res.text();
+        const text = raw.replace(/\s+/g, ' ').slice(0, 200);
         note = `HTTP ${res.status} ${text}`;
-        if (!res.ok) polls = 2; // a clear refusal; a short look on chain is enough
+        if (res.ok) tx = faucetTx(raw);
+        else polls = 2; // a clear refusal; a short look on chain is enough
       } catch (e) {
         note = `request failed: ${e.message}`;
       }
       // The account may exist even when the HTTP call timed out, so always look on chain.
       for (let i = 0; i < polls; i++) {
-        if (await rpc.accessKey(signer.id, signer.pk)) return url;
+        if (await rpc.accessKey(signer.id, signer.pk)) return { url, tx };
         await sleep(2000);
       }
       errors.push(`${new URL(url).host} try ${attempt}: ${note}`);
@@ -316,6 +353,7 @@ async function main() {
   deployment.root_account = root.id;
   deployment.explorer.root = accountLink(root.id);
   const faucet = await faucetCreate(root);
+  if (faucet.tx) s1.txs.push(faucet.tx);
   let rootBalance = await balanceOf(root.id);
   let plan = budget({ wasmBytes: wasm.length, balance: rootBalance, wallets: WALLETS });
   // Top-up: if one faucet grant is too small, create up to three more faucet accounts and
@@ -324,7 +362,8 @@ async function main() {
     log(`root has ${yoctoToNear(rootBalance)} NEAR, needs ${yoctoToNear(plan.need)}; top-up ${i}`);
     const extra = newSigner(root.id.replace('.testnet', `f${i}.testnet`));
     try {
-      await faucetCreate(extra);
+      const extraFaucet = await faucetCreate(extra);
+      if (extraFaucet.tx) s1.txs.push(extraFaucet.tx);
       const r = await sendTx(extra, extra.id, [T.deleteAccount(root.id)]);
       s1.txs.push(txRecord(r));
     } catch (e) {
@@ -334,7 +373,10 @@ async function main() {
     rootBalance = await readUntil(() => balanceOf(root.id), (b) => b > rootBalance, 5);
     plan = budget({ wasmBytes: wasm.length, balance: rootBalance, wallets: WALLETS });
   }
-  finishStep(s1, plan.ok, `${root.id} holds ${yoctoToNear(rootBalance)} NEAR (faucet ${new URL(faucet).host}); the run needs ${yoctoToNear(plan.need)}`);
+  const faucetNote = faucet.tx
+    ? `the faucet returned transaction ${faucet.tx.hash} for the account creation, recorded below as returned`
+    : "the faucet returned no transaction identifier, so the faucet's own account-creation transaction is not recorded here";
+  finishStep(s1, plan.ok, `${root.id} holds ${yoctoToNear(rootBalance)} NEAR (faucet ${new URL(faucet.url).host}); the run needs ${yoctoToNear(plan.need)}; ${faucetNote}`);
   if (!plan.ok) throw new Error('root balance is too small for the run');
   log(`plan: token ${yoctoToNear(plan.tokenDeposit)}, insider ${yoctoToNear(plan.insider)}, late ${yoctoToNear(plan.late)}, each wallet ${yoctoToNear(plan.perWallet)} NEAR`);
 
@@ -364,7 +406,7 @@ async function main() {
 
   // ----- step 2: token account in one batch transaction, no AddKey -----
   const s2 = addStep(2, 'Create, fund, deploy and initialise the token account in one transaction with no access key',
-    'view_access_key_list returns an empty list');
+    'view_access_key_list returns an empty list; the on-chain code hash equals the hash of the built wasm; get_params equals the preset');
   const token = `t.${root.id}`;
   const params = presetParams(PRESET, insider.id);
   deployment.token_account = token;
@@ -390,7 +432,12 @@ async function main() {
   if (!Array.isArray(keys)) throw new Error('could not read the access key list of the token account');
   deployment.access_keys = keys.map((k) => k.public_key);
   deployment.zero_keys = keys.length === 0;
-  deployment.code_hash = (await rpc.viewAccount(token)).code_hash;
+  // The code hash of an account is the sha256 of its wasm, written in base58.
+  const expectedCodeHash = base58Encode(createHash('sha256').update(wasm).digest());
+  deployment.expected_code_hash = expectedCodeHash;
+  const tokenAccount = await readUntil(() => rpc.viewAccount(token), (a) => a.code_hash === expectedCodeHash, 6);
+  deployment.code_hash = tokenAccount.code_hash;
+  deployment.code_hash_match = tokenAccount.code_hash === expectedCodeHash;
   // Views retry a few times: the node answering may be a block behind the final transaction.
   const view = async (method, args = {}) => {
     for (let i = 0; ; i++) {
@@ -404,13 +451,22 @@ async function main() {
   };
   const onchain = await view('get_params');
   deployment.onchain_params = onchain;
+  const mismatches = paramMismatches(params, onchain);
+  deployment.param_mismatches = mismatches;
+  deployment.params_match = mismatches.length === 0;
+  const deployOk = deployment.zero_keys && deployment.code_hash_match && deployment.params_match;
+  finishStep(s2, deployOk,
+    `${token} has ${keys.length} access keys; code hash on chain ${deployment.code_hash} `
+    + `${deployment.code_hash_match ? 'equals' : 'DIFFERS from'} the hash of the built wasm ${expectedCodeHash}; `
+    + (deployment.params_match
+      ? `get_params equals the ${PRESET} preset (cap_units ${unitsToTokens(onchain.cap_units)} LOUD per ${BigInt(onchain.cap_window_ns) / 10n ** 9n}s)`
+      : `get_params differs from the ${PRESET} preset: ${mismatches.join('; ').slice(0, 500)}`));
+  deployment.status = deployOk ? 'ok' : 'failed';
   const capUnits = BigInt(onchain.cap_units);
   const capWindowNs = BigInt(onchain.cap_window_ns);
   const loudUntil = BigInt(onchain.loud_until);
   receipts.split.cap_units = capUnits.toString();
   receipts.split.cap_window_ns = capWindowNs.toString();
-  finishStep(s2, deployment.zero_keys, `${token} has ${keys.length} access keys; cap_units ${unitsToTokens(capUnits)} LOUD per ${capWindowNs / 10n ** 9n}s`);
-  deployment.status = deployment.zero_keys ? 'ok' : 'failed';
 
   const account = (id) => view('get_account', { account_id: id });
   const chainNow = async () => BigInt((await view('get_state')).now);
@@ -463,7 +519,7 @@ async function main() {
 
   // ----- step 7: a late buyer stays quiet and can sell at once -----
   const s7 = addStep(7, 'After the loud window a late buyer buys with 0.5 NEAR and sells half at once',
-    'the late buyer holds quiet tokens only and the sell succeeds');
+    'the late buyer holds quiet tokens only; the sell succeeds and none of its receipts failed');
   await waitChainTime(loudUntil + 1n, 'the end of the loud window');
   const lateBuy = await call(late, token, 'buy', { min_tokens_out: '1' }, { gas: 50n * TGAS, deposit: nearToYocto('0.5') });
   s7.txs.push(txRecord(lateBuy));
@@ -472,10 +528,14 @@ async function main() {
   let lateSell = null;
   if (lateQuiet > 1n) {
     lateSell = await call(late, token, 'sell', { amount: (lateQuiet / 2n).toString(), min_near_out: '0' }, { gas: 50n * TGAS, deposit: ONE_YOCTO });
-    s7.txs.push(txRecord(lateSell));
+    s7.txs.push(payRecord(lateSell));
   }
-  finishStep(s7, lateBuy.outcome === 'success' && BigInt(lateAfterBuy.loud) === 0n && lateQuiet > 0n && lateSell?.outcome === 'success',
-    `after buy: loud ${lateAfterBuy.loud}, quiet ${unitsToTokens(lateQuiet)} LOUD; sell of half: ${lateSell ? lateSell.outcome : 'not sent'}${lateSell?.error ? ` (${lateSell.error})` : ''}`);
+  const sellSettled = lateSell?.outcome === 'success' && lateSell.settled === true;
+  s7.payout_calls = lateSell?.outcome === 'success' ? 1 : 0;
+  s7.payouts_settled = sellSettled ? 1 : 0;
+  finishStep(s7, lateBuy.outcome === 'success' && BigInt(lateAfterBuy.loud) === 0n && lateQuiet > 0n && sellSettled,
+    `after buy: loud ${lateAfterBuy.loud}, quiet ${unitsToTokens(lateQuiet)} LOUD; sell of half: ${lateSell ? lateSell.outcome : 'not sent'}${lateSell?.error ? ` (${lateSell.error})` : ''}`
+    + (lateSell?.outcome === 'success' ? `; payout receipts: ${sellSettled ? 'all succeeded' : `NOT settled (${lateSell.receiptError ?? 'unknown'})`}` : ''));
 
   // ----- step 8: every wallet shouts; an early leave is rejected -----
   const s8 = addStep(8, `All ${WALLETS} wallets shout their full balance; one tries leave() before the notice ends`,
@@ -509,7 +569,7 @@ async function main() {
 
   // ----- step 9: all wallets leave for one cap window -----
   const s9 = addStep(9, `After the notice, all ${WALLETS} wallets call leave() in rounds for one full cap window`,
-    'at least one fill; every rejected call fails with E_CAP (or E_EXPIRED at the very end)');
+    'at least one fill; every rejected call fails with E_CAP (or E_EXPIRED at the very end); no successful leave has a failed receipt');
   const readyAt = open.reduce((m, e) => (e.readyAt > m ? e.readyAt : m), 0n);
   await waitChainTime(readyAt, 'the end of the notice period');
   const state0 = await view('get_state');
@@ -525,35 +585,40 @@ async function main() {
   log(`cap window starts: bucket ${unitsToTokens(bucketAtStart)} LOUD, cap ${unitsToTokens(capUnits)} LOUD per window`);
 
   const attempts = [];
+  const trail = []; // { rec, e, blockHash } per leave call, for the re-check after the loop
   let active = [...open];
-  let capHits = 0;
-  let unexpected = 0;
   let lastTs = t0;
+  let cutShort = null; // set when the measurement could not run to the end of the cap window
   const wallStart = Date.now();
   const capWindowMs = Number(capWindowNs / 1_000_000n);
 
-  async function leaveOnce(e, round) {
-    const r = await call(e.wallet, token, 'leave', { exit_id: e.id, min_near_out: '0' }, { gas: 50n * TGAS, deposit: ONE_YOCTO });
+  // The fields of a leave record that come from the transaction result.
+  async function leaveFields(r) {
     const ts = await blockTsOf(r);
     let filled = null;
     let remaining = null;
     if (r.outcome === 'success') ({ filled, remaining } = leaveFilled(r));
-    const rec = txRecord(r, {
-      round,
-      exit_id: e.id,
-      filled: filled === null ? null : filled.toString(),
-      error_code: r.code,
-      block_timestamp: ts === null ? null : ts.toString(),
-    });
+    if (ts !== null && ts > lastTs) lastTs = ts;
+    return {
+      remaining,
+      fields: {
+        filled: filled === null ? null : filled.toString(),
+        error_code: r.code,
+        block_timestamp: ts === null ? null : ts.toString(),
+      },
+    };
+  }
+
+  async function leaveOnce(e, round) {
+    const r = await call(e.wallet, token, 'leave', { exit_id: e.id, min_near_out: '0' }, { gas: 50n * TGAS, deposit: ONE_YOCTO });
+    const { remaining, fields } = await leaveFields(r);
+    // A successful leave pays NEAR, so the record carries `settled` (all receipts succeeded).
+    const rec = payRecord(r, { round, exit_id: e.id, ...fields });
     attempts.push(rec);
     s9.txs.push(rec);
-    if (ts !== null && ts > lastTs) lastTs = ts;
-    if (r.code === 'E_CAP') capHits += 1;
+    trail.push({ rec, e, blockHash: r.blockHash });
     const done = r.outcome === 'success' && remaining === 0n;
     const expired = r.code === 'E_EXPIRED';
-    // Only an executed call that failed for another reason counts against the step.
-    // "invalid" and "unknown" calls did not change the claim; step 10 uses the contract counter.
-    if (r.outcome === 'failure' && r.code !== 'E_CAP' && !expired) unexpected += 1;
     if (r.outcome !== 'success' && r.code !== 'E_CAP' && !expired) log(`leave ${e.wallet.id}: ${r.outcome} ${r.error}`);
     return { e, r, stop: done || expired || r.outcome === 'invalid' };
   }
@@ -569,27 +634,82 @@ async function main() {
     log(`round ${round}: ${results.length} calls, ${results.filter((x) => x.r.outcome === 'success').length} filled ${unitsToTokens(roundFilled)} LOUD, ${results.filter((x) => x.r.code === 'E_CAP').length} E_CAP, ${active.length} wallets active`);
     if (lastTs >= windowEnd || Date.now() - wallStart > capWindowMs + 30_000) break;
     if (Date.now() - startedAt > MAX_RUNTIME_MS) {
+      cutShort = 'the runtime limit was reached during the leave rounds';
       log('runtime limit reached; closing the leave loop early');
       break;
     }
     await sleep(Math.max(0, ROUND_MS - (Date.now() - roundStart)));
   }
 
+  // One more look at calls whose result no endpoint confirmed and at fills without a block
+  // time: step 10 needs every fill on record with its time, or it fails.
+  for (const p of trail) {
+    const { rec } = p;
+    if (Date.now() - startedAt > MAX_RUNTIME_MS) break;
+    if (rec.outcome === 'unknown' && rec.hash) {
+      try {
+        const result = await rpc.call('tx', { tx_hash: rec.hash, sender_account_id: p.e.wallet.id, wait_until: 'FINAL' }, { tries: 3 });
+        const r = summarize(result, rec.hash, p.e.wallet.id);
+        const { fields } = await leaveFields(r);
+        Object.assign(rec, payRecord(r, { round: rec.round, exit_id: rec.exit_id, ...fields }));
+        p.blockHash = r.blockHash;
+        log(`leave ${rec.hash} was confirmed on a second look: ${rec.outcome}`);
+      } catch (e) {
+        log(`leave ${rec.hash} is still unconfirmed: ${String(e?.message ?? e).slice(0, 160)}`);
+      }
+    }
+    if (rec.filled !== null && rec.block_timestamp === null && p.blockHash) {
+      try {
+        const ts = await rpc.blockTimestamp(p.blockHash);
+        rec.block_timestamp = ts.toString();
+        if (ts > lastTs) lastTs = ts;
+      } catch (e) {
+        log(`no block time for leave ${rec.hash}: ${String(e?.message ?? e).slice(0, 160)}`);
+      }
+    }
+  }
+
   const fillsCount = attempts.filter((a) => a.filled !== null && BigInt(a.filled) > 0n).length;
+  const capHits = attempts.filter((a) => a.error_code === 'E_CAP').length;
+  // Only an executed call that failed for another reason counts as an unexpected failure.
+  // "invalid" and "unknown" calls are listed as not executed; if one of them did change the
+  // contract counter, step 10 fails because the receipts no longer match the counter.
+  const unexpected = attempts.filter((a) => a.outcome === 'failure' && a.error_code !== 'E_CAP' && a.error_code !== 'E_EXPIRED').length;
+  const payoutCalls = attempts.filter((a) => a.outcome === 'success').length;
+  const payoutsSettled = attempts.filter((a) => a.outcome === 'success' && a.settled === true).length;
+  s9.payout_calls = payoutCalls;
+  s9.payouts_settled = payoutsSettled;
   receipts.split.attempts = attempts.length;
   receipts.split.cap_hits = capHits;
-  finishStep(s9, fillsCount > 0 && unexpected === 0,
-    `${attempts.length} leave calls from ${open.length} wallets: ${fillsCount} filled, ${capHits} E_CAP, ${attempts.filter((a) => a.error_code === 'E_EXPIRED').length} E_EXPIRED, ${unexpected} other failures, ${attempts.filter((a) => a.outcome === 'invalid' || a.outcome === 'unknown').length} not executed`);
+  receipts.split.payout_calls = payoutCalls;
+  receipts.split.payouts_settled = payoutsSettled;
+  finishStep(s9, fillsCount > 0 && unexpected === 0 && payoutsSettled === payoutCalls,
+    `${attempts.length} leave calls from ${open.length} wallets: ${fillsCount} filled, ${capHits} E_CAP, ${attempts.filter((a) => a.error_code === 'E_EXPIRED').length} E_EXPIRED, ${unexpected} other failures, ${attempts.filter((a) => a.outcome === 'invalid' || a.outcome === 'unknown').length} not executed; `
+    + `${payoutsSettled} of ${payoutCalls} successful leaves have no failed receipt`);
 
   // ----- step 10: the cap held -----
   const s10 = addStep(10, 'Total loud units that left during the cap window stay within the cap',
-    'sold <= bucket_at_start + cap_units * elapsed / cap_window (SPEC invariant 4)');
-  const state1 = await readUntil(() => view('get_state'), (s) => BigInt(s.now) >= lastTs, 12);
+    'measured over the full cap window: sold <= bucket_at_start + cap_units * elapsed / cap_window (SPEC invariant 4), and the per-transaction fills add up to the contract counter');
+  // The measurement closes only after chain time has passed the end of the cap window.
+  // If that cannot be reached (runtime limit, RPC failure), step 10 is recorded as failed.
+  if (cutShort === null) {
+    try {
+      await waitChainTime(windowEnd, 'the end of the cap window');
+    } catch (e) {
+      cutShort = String(e?.message ?? e).slice(0, 200);
+      log(`the cap window was not measured to its end: ${cutShort}`);
+    }
+  }
+  const closeAt = cutShort === null && windowEnd > lastTs ? windowEnd : lastTs;
+  const state1 = await readUntil(() => view('get_state'), (s) => BigInt(s.now) >= closeAt, 12);
   const t1 = BigInt(state1.now) > lastTs ? BigInt(state1.now) : lastTs;
   const ev = evaluateSplit({
     attempts, bucketAtStart, capUnits, capWindowNs, t0, t1,
     totalLeftDelta: BigInt(state1.total_left) - totalLeft0,
   });
+  const reasons = [...ev.reasons];
+  if (cutShort !== null) reasons.push(`the run was cut short: ${cutShort}`);
+  const pass10 = ev.pass && cutShort === null;
   Object.assign(receipts.split, {
     measured_until_ns: t1.toString(),
     sold_in_window: ev.soldInWindow.toString(),
@@ -597,12 +717,17 @@ async function main() {
     bound: ev.bound.toString(),
     fills: ev.fills,
     receipts_match_counter: ev.receiptsMatchCounter,
-    pass: ev.pass,
+    measured_ns: ev.measuredNs.toString(),
+    full_window: ev.fullWindow,
+    timestamps_valid: ev.timestampsValid,
+    fail_reasons: reasons,
+    pass: pass10,
   });
-  finishStep(s10, ev.pass,
-    `${open.length} wallets sold ${unitsToTokens(ev.soldTotal)} LOUD in ${(t1 - t0) / 10n ** 9n}s; bound ${unitsToTokens(ev.bound)} LOUD `
+  finishStep(s10, pass10,
+    `${open.length} wallets sold ${unitsToTokens(ev.soldTotal)} LOUD in ${(t1 - t0) / 10n ** 9n}s (cap window ${capWindowNs / 10n ** 9n}s); bound ${unitsToTokens(ev.bound)} LOUD `
     + `(bucket ${unitsToTokens(bucketAtStart)} + refill); in the window: ${unitsToTokens(ev.soldInWindow)} <= ${unitsToTokens(ev.looseBound)}; `
-    + `receipts ${ev.receiptsMatchCounter ? 'match' : 'do not match'} the contract counter`);
+    + `receipts ${ev.receiptsMatchCounter ? 'match' : 'do not match'} the contract counter`
+    + (reasons.length > 0 ? `; not passed because: ${reasons.join('; ').slice(0, 600)}` : ''));
 }
 
 let exitCode = 1;
