@@ -106,6 +106,13 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
+          name: cargo-lock
+          path: contracts/Cargo.lock
+          if-no-files-found: error
+          retention-days: 30
+
+      - uses: actions/upload-artifact@v4
+        with:
           name: loud-wasm
           path: build/loud.wasm
           if-no-files-found: error
