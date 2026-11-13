@@ -207,6 +207,42 @@ test('board simulation: statuses come from the engine and agree with its state',
 
 // ---- sandbox
 
+test('sandbox: "send half" sends half of the combined balance, quiet first', () => {
+  const sb = new L.Sandbox();
+  assert.ok(sb.buy('10').ok);
+  sb.skip(10n * MIN);
+  assert.ok(sb.buy('10').ok);
+  let v = sb.view();
+  assert.ok(v.loud > 0n && v.quiet > 0n);
+  // Here the quiet part is smaller than half, so all quiet and some loud move.
+  const half = (v.loud + v.quiet) / 2n;
+  assert.ok(v.quiet < half);
+  let r = sb.splitHalf();
+  assert.ok(r.ok, r.message);
+  assert.match(r.message, /The loud tag moved with the tokens\.$/);
+  const after = sb.view();
+  assert.equal(after.otherLoud + after.otherQuiet, half);
+  assert.equal(after.otherQuiet, v.quiet);
+  assert.equal(after.otherLoud, half - v.quiet);
+  assert.equal(after.loud + after.quiet, v.loud + v.quiet - half);
+  assert.equal(after.quiet, 0n);
+
+  // When quiet covers the half, no loud moves and the message says so.
+  const sb2 = new L.Sandbox();
+  assert.ok(sb2.buy('1').ok);
+  sb2.skip(10n * MIN);
+  assert.ok(sb2.buy('50').ok);
+  v = sb2.view();
+  assert.ok(v.quiet > v.loud);
+  r = sb2.splitHalf();
+  assert.ok(r.ok, r.message);
+  assert.match(r.message, /no loud tokens moved/);
+  const after2 = sb2.view();
+  assert.equal(after2.otherLoud, 0n);
+  assert.equal(after2.otherQuiet, (v.loud + v.quiet) / 2n);
+  assert.equal(after2.loud, v.loud);
+});
+
 test('sandbox: the guided path shows the real errors', () => {
   const sb = new L.Sandbox();
   let r = sb.buy('10');
@@ -268,6 +304,7 @@ test('sandbox: the guided path shows the real errors', () => {
   // The tag follows the tokens to a second wallet.
   r = sb.splitHalf();
   assert.ok(r.ok, r.message);
+  assert.match(r.message, /The loud tag moved with the tokens\.$/);
   sb.switchAccount();
   v = sb.view();
   assert.equal(v.account, 'you-2.testnet');
@@ -287,7 +324,7 @@ test('sandbox: the guided path shows the real errors', () => {
   if (free >= 1000n * UNIT) sb.shout(L.tokensForInput(free));
   r = sb.splitHalf();
   assert.equal(r.code, 'INPUT');
-  assert.match(r.message, /No free loud balance/);
+  assert.match(r.message, /No free balance to send/);
 
   // Bad input never reaches the engine.
   r = sb.buy('ten');

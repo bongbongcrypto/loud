@@ -39,6 +39,8 @@ const STORAGE_MIN_YOCTO: u128 = 1_250_000_000_000_000_000_000;
 const DECIMALS: u8 = 18;
 const FT_ON_TRANSFER_TGAS: u64 = 30;
 const FT_RESOLVE_TGAS: u64 = 10;
+/// Gas reserved for `on_payout`, the callback behind every NEAR payout.
+const PAYOUT_CALLBACK_TGAS: u64 = 10;
 
 /// Stops the call. The message always starts with an error code: the codes
 /// of SPEC 7, plus E_AMOUNT (zero amount, a buy that rounds to zero tokens,
@@ -59,9 +61,26 @@ fn require_one_yocto() {
     }
 }
 
+/// Sends NEAR and attaches the `on_payout` callback, which records the
+/// amount as owed if the transfer receipt fails. The promise is detached,
+/// so the calling method keeps its own return value.
 fn pay(to: &AccountId, yocto: u128) {
     if yocto > 0 {
-        Promise::new(to.clone()).transfer(NearToken::from_yoctonear(yocto)).detach();
+        let callback_args = json!({
+            "account": to,
+            "amount": U128(yocto)
+        })
+        .to_string()
+        .into_bytes();
+        Promise::new(to.clone())
+            .transfer(NearToken::from_yoctonear(yocto))
+            .then(Promise::new(env::current_account_id()).function_call(
+                "on_payout",
+                callback_args,
+                NearToken::from_yoctonear(0),
+                Gas::from_tgas(PAYOUT_CALLBACK_TGAS),
+            ))
+            .detach();
     }
 }
 
@@ -163,6 +182,9 @@ pub struct State {
     pub leave_count: u64,
     pub now: U64,
     pub is_loud_window: bool,
+    /// YoctoNEAR of failed payouts waiting for `claim`. Not part of
+    /// `pool_near`.
+    pub owed_total: U128,
 }
 
 #[near(serializers=[json])]
@@ -237,6 +259,12 @@ pub struct Loud {
     total_left: u128,
     shout_count: u64,
     leave_count: u64,
+    /// YoctoNEAR of payouts whose transfer receipt failed, per account.
+    /// `pool_near` was already reduced when the sale happened, so owed
+    /// NEAR is not in `pool_near`: it sits in this account's balance next
+    /// to it until the account calls `claim`.
+    owed: LookupMap<AccountId, u128>,
+    owed_total: u128,
 }
 
 #[near]
@@ -338,6 +366,8 @@ impl Loud {
             total_left: 0,
             shout_count: 0,
             leave_count: 0,
+            owed: LookupMap::new(b"o"),
+            owed_total: 0,
         };
 
         if creator_alloc > 0 {
@@ -615,6 +645,62 @@ impl Loud {
     }
 
     // ------------------------------------------------------------------
+    // Failed payouts
+    // ------------------------------------------------------------------
+
+    /// Callback of every payout made by `pay`. If the transfer receipt
+    /// failed, the NEAR came back to this account, so the amount is
+    /// recorded as owed to `account`. A successful transfer changes nothing.
+    #[private]
+    pub fn on_payout(&mut self, account: AccountId, amount: U128) {
+        // `#[private]` guards the exported method; this check also covers
+        // direct calls, such as unit tests.
+        if env::predecessor_account_id() != env::current_account_id() {
+            fail("E_PRIVATE: only the token account can call on_payout");
+        }
+        self.touch();
+        // A transfer returns no data, so any error here is a failed receipt.
+        if env::promise_result_checked(0, 16).is_err() {
+            let owed = self.owed_of(&account);
+            self.owed.insert(account.clone(), owed + amount.0);
+            self.owed_total += amount.0;
+            emit_loud(
+                "payout_failed",
+                json!({
+                    "account": account,
+                    "amount": amount
+                }),
+            );
+        }
+    }
+
+    /// Pays the caller the NEAR recorded as owed after a failed payout.
+    /// The entry is cleared first; if this transfer fails too, `on_payout`
+    /// records it again. Returns the yoctoNEAR sent.
+    #[payable]
+    pub fn claim(&mut self) -> U128 {
+        self.touch();
+        require_one_yocto();
+        let caller = env::predecessor_account_id();
+        let amount = self.owed_of(&caller);
+        if amount == 0 {
+            fail("E_NOTHING_OWED: no failed payout is recorded for this account");
+        }
+        self.owed.remove(&caller);
+        self.owed_total -= amount;
+        pay(&caller, amount);
+
+        emit_loud(
+            "claim",
+            json!({
+                "account": caller,
+                "amount": U128(amount)
+            }),
+        );
+        U128(amount)
+    }
+
+    // ------------------------------------------------------------------
     // NEP-141
     // ------------------------------------------------------------------
 
@@ -872,7 +958,13 @@ impl Loud {
             leave_count: self.leave_count,
             now: U64(now),
             is_loud_window: now < self.loud_until,
+            owed_total: U128(self.owed_total),
         }
+    }
+
+    /// YoctoNEAR owed to `account_id` after failed payouts; see `claim`.
+    pub fn get_owed(&self, account_id: AccountId) -> U128 {
+        U128(self.owed_of(&account_id))
     }
 
     pub fn get_account(&self, account_id: AccountId) -> AccountView {
@@ -1015,6 +1107,10 @@ impl Loud {
 
     fn quiet_of(&self, account: &AccountId) -> u128 {
         self.quiet.get(account).copied().unwrap_or(0)
+    }
+
+    fn owed_of(&self, account: &AccountId) -> u128 {
+        self.owed.get(account).copied().unwrap_or(0)
     }
 
     fn set_loud(&mut self, account: &AccountId, value: u128) {

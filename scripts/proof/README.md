@@ -3,7 +3,7 @@
 `proof.mjs` deploys LOUD to NEAR testnet and runs the checks of SPEC section 8 against the live contract. It writes two files that the web page reads:
 
 - `web/deployment.json`: where the token lives and whether its account has zero access keys.
-- `web/receipts.json`: every step, with the hashes of the transactions the script sent. The faucet's own account-creation transaction is listed only when the faucet returns its hash (see step 1 below).
+- `web/receipts.json`: every step, with the hashes of the transactions the script sent. The faucet's own account-creation transaction is listed only when the faucet returns its hash (see step 1 below); the saved run lists it.
 
 It runs only in GitHub Actions (`.github/workflows/proof.yml`, manual trigger). All keys are generated in memory inside the job and are never written to disk or to the log. Nothing here needs a secret.
 
@@ -21,14 +21,14 @@ The step numbers are the ones used in `receipts.json`. Step 3 runs before step 2
 | 6 | One wallet calls `sell()` | fails with `E_NO_QUIET` |
 | 7 | After the loud window the late buyer buys with 0.5 NEAR and sells half | holds quiet only; the sell succeeds and none of its receipts failed |
 | 8 | All 20 wallets `shout` their full balance; one calls `leave()` at once | 20 open exits, the leave fails with `E_NOTICE` |
-| 9 | After the notice all 20 wallets call `leave()` in rounds for one full cap window | at least one fill; rejected calls fail with `E_CAP` (or `E_EXPIRED` at the end); no successful leave has a failed receipt |
+| 9 | After the notice all 20 wallets call `leave()` in rounds for one full cap window | at least one fill; rejected calls fail with `E_CAP` (or `E_EXPIRED` at the end); no successful leave has a failed receipt or a `payout_failed` event |
 | 10 | Compare what left with the cap, measured over the full cap window | `sold_total <= bucket_at_start + cap_units * elapsed / cap_window_ns` (SPEC invariant 4), and the conditions listed below |
 
-Step 1: the root account is created by the faucet service, with a transaction that the faucet signs. If the faucet's HTTP answer carries a transaction hash, it is recorded in the step's `txs` as returned (its `outcome` is `unknown` unless the answer also carries a status); the script does not look that transaction up. If the answer carries none, `txs` stays empty and the step text says that the faucet's own transaction is not recorded. Top-up accounts are handled the same way.
+Step 1: the root account is created by the faucet service, with a transaction that the faucet signs. If the faucet's HTTP answer carries a transaction hash, it is recorded in the step's `txs` as returned (its `outcome` is `unknown` unless the answer also carries a status); the script does not look that transaction up. If the answer carries none, `txs` stays empty and the step text says that the faucet's own transaction is not recorded. Top-up accounts are handled the same way. In the saved `web/receipts.json` the faucet did return a hash and a status, so step 1 lists that transaction with the outcome `success`, as returned.
 
 Step 2 fails if the token account has an access key, if its `code_hash` differs from the hash of the wasm that the build job produced, or if `get_params` differs from the intended preset. The comparison covers the nine constructor values of SPEC section 3 and the two derived values `cap_units = total_supply * cap_bps / 10000` and `loud_until = launch_ts + loud_window_ns`.
 
-Payouts (step 7 sell, step 9 leaves): the contract pays NEAR with a detached transfer, so a failed payout does not change the top-level status of the call. The script therefore reads every entry of `receipts_outcome` of the final transaction result. A successful call counts as settled only when the result lists at least one receipt outcome and every one of them is a success. The amount paid is not compared with a quote; the check is that no receipt of the transaction failed.
+Payouts (step 7 sell, step 9 leaves): the contract pays NEAR with a detached transfer followed by its own `on_payout` callback, so a failed payout does not change the top-level status of the call. The transfer shows as a failed entry of `receipts_outcome`, and the callback, which records the unpaid amount for `claim()`, logs a `payout_failed` event. The script therefore reads every entry of `receipts_outcome` of the final transaction result and the logs of each. A successful call counts as settled only when the result lists at least one receipt outcome, every one of them is a success, and no receipt log carries a `payout_failed` event. The amount paid is not compared with a quote; the check is that no receipt of the transaction failed and no payout was recorded as unpaid. `sell` and `leave` are sent with 80 Tgas, of which the contract reserves 10 Tgas for the callback. The saved `web/receipts.json` comes from a deployment made before the callback existed; there the check was the receipt outcomes alone.
 
 Step 10 passes only when all of these hold:
 
@@ -36,7 +36,7 @@ Step 10 passes only when all of these hold:
 - the run was not cut short (runtime limit or an RPC failure before the end of the window);
 - at least one leave filled, and every fill has a block time inside the measured interval;
 - the sum of the per-transaction fills equals the change of the contract counter `total_left` (`receipts_match_counter`);
-- no fill has a failed receipt;
+- no fill has a failed receipt or a `payout_failed` event;
 - `sold_total <= bound` and `sold_in_window <= bucket_at_start + cap_units`.
 
 When step 10 does not pass, `split.fail_reasons` lists the conditions that failed.
@@ -138,7 +138,7 @@ All token and NEAR amounts and all nanosecond timestamps are decimal strings.
           // "error_code": "E_CAP" | "E_EXPIRED" | null, "block_timestamp": "<ns>" | null
           // calls that pay NEAR (step 7 sell, step 9 leaves):
           // "settled": true | false | null    (null: the call did not succeed, nothing was due)
-          // when settled is false: "receipt_failures": 1, "receipt_error": "<text>"
+          // when settled is false: "receipt_failures": 1, "receipt_error": "<text>" (a failed transfer and its payout_failed event count as 2)
         }
       ]
       // step 7 and 9 only: "payout_calls": 0 (successful paying calls), "payouts_settled": 0
@@ -165,7 +165,7 @@ All token and NEAR amounts and all nanosecond timestamps are decimal strings.
     "full_window": true | false | null,     // measured_ns >= cap_window_ns
     "timestamps_valid": true | false | null, // every fill has a block time inside the measured interval
     "payout_calls": 0,                      // successful leave calls
-    "payouts_settled": 0,                   // of those, calls without a failed receipt
+    "payouts_settled": 0,                   // of those, calls without a failed receipt or payout_failed event
     "fail_reasons": ["..."] | null,         // empty when pass is true
     "pass": true | false                    // all conditions of step 10, see above
   },

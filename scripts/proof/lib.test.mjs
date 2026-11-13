@@ -205,7 +205,7 @@ function txResult({ top = { SuccessValue: b64('7') }, receipts }) {
   return {
     status: top,
     transaction: { hash: 'x' },
-    receipts_outcome: receipts.map(([id, executor, status]) => ({ id, block_hash: 'b', outcome: { executor_id: executor, logs: [], status } })),
+    receipts_outcome: receipts.map(([id, executor, status, logs = []]) => ({ id, block_hash: 'b', outcome: { executor_id: executor, logs, status } })),
   };
 }
 
@@ -246,6 +246,61 @@ test('receiptSettlement reads every receipt outcome, not only the top-level stat
   assert.equal(receiptSettlement(undefined).settled, false);
   assert.equal(receiptSettlement(txResult({ receipts: [['r1', 't.x.testnet', 'Unknown']] })).settled, false);
   assert.equal(receiptSettlement(txResult({ receipts: [['r1', 't.x.testnet', undefined]] })).settled, false);
+});
+
+test('receiptSettlement: the on_payout callback receipt, and a payout_failed event', () => {
+  const ev = (standard, event, data) => `EVENT_JSON:${JSON.stringify({ standard, version: '1.0.0', event, data: [data] })}`;
+  // A paid leave: the method, the transfer to the seller, the callback on the token, refunds.
+  const paid = receiptSettlement(txResult({
+    receipts: [
+      ['r1', 't.x.testnet', { SuccessValue: b64('7') }, [ev('loud', 'leave', { filled: '7', remaining: '0' })]],
+      ['r2', 'w01.x.testnet', { SuccessValue: '' }],
+      ['r3', 't.x.testnet', { SuccessValue: '' }],
+      ['r4', 'w01.x.testnet', { SuccessValue: '' }],
+    ],
+  }));
+  assert.equal(paid.settled, true);
+  assert.equal(paid.receipts, 4);
+  assert.deepEqual(paid.failed, []);
+
+  // The transfer failed and the callback recorded the debt: both receipts are reported.
+  const failedEvent = ev('loud', 'payout_failed', { account: 'gone.x.testnet', amount: '123' });
+  const unpaid = receiptSettlement(txResult({
+    receipts: [
+      ['r1', 't.x.testnet', { SuccessValue: b64('7') }],
+      ['r2', 'gone.x.testnet', { Failure: { ActionError: { index: 0, kind: { AccountDoesNotExist: { account_id: 'gone.x.testnet' } } } } }],
+      ['r3', 't.x.testnet', { SuccessValue: '' }, [failedEvent]],
+    ],
+  }));
+  assert.equal(unpaid.settled, false);
+  assert.deepEqual(unpaid.failed.map((f) => f.receipt_id), ['r2', 'r3']);
+  assert.equal(unpaid.failed[1].error, 'payout_failed: 123 yoctoNEAR owed to gone.x.testnet');
+
+  // The event alone is enough, even when every receipt status is a success.
+  const eventOnly = receiptSettlement(txResult({
+    receipts: [
+      ['r1', 't.x.testnet', { SuccessValue: b64('7') }],
+      ['r2', 't.x.testnet', { SuccessValue: '' }, ['a plain log line', failedEvent]],
+    ],
+  }));
+  assert.equal(eventOnly.settled, false);
+  assert.equal(eventOnly.failed.length, 1);
+  assert.equal(eventOnly.failed[0].receipt_id, 'r2');
+  assert.equal(eventOnly.failed[0].executor, 't.x.testnet');
+
+  // Other events, another standard, and unreadable lines do not count as a failed payout.
+  const other = receiptSettlement(txResult({
+    receipts: [
+      ['r1', 't.x.testnet', { SuccessValue: b64('7') }, [
+        ev('loud', 'claim', { account: 'a.x.testnet', amount: '5' }),
+        ev('nep141', 'payout_failed', { account: 'a.x.testnet', amount: '5' }),
+        'EVENT_JSON:{not json',
+        'payout_failed',
+      ]],
+    ],
+  }));
+  assert.equal(other.settled, true);
+  assert.deepEqual(other.failed, []);
 });
 
 test('base58Encode gives NEAR hash text', () => {

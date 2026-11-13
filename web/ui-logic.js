@@ -283,7 +283,8 @@ export function boardScope(view, { openOnly = false } = {}) {
 
 // Accelerated engine run for the board at the top of the page: the creator
 // allocation of the standard preset, split unevenly across `wallets` accounts,
-// leaves as fast as the door allows. step() advances the engine clock.
+// leaves through the door with GreedyLoudSeller, a simple batch strategy that
+// can leave gaps. step() advances the engine clock.
 export function createBoardSim({ wallets = 36, seed = 7, stepNs = MIN } = {}) {
   const params = PRESETS.standard;
   const rng = makeRng(seed);
@@ -599,18 +600,22 @@ export class Sandbox {
       (back) => `Exit closed. ${fmtTokens(back)} LOUD returned to your balance, still loud.`);
   }
 
-  // Sends half of the loud balance to the second account with ft_transfer.
+  // Sends half of the free balance (loud + quiet, rounded down) to the second
+  // account with ft_transfer, which takes quiet first and then loud, as the
+  // contract does.
   splitHalf() {
     const to = this.other();
-    return this._run(`ft_transfer half of the loud balance to ${to}`,
+    return this._run(`ft_transfer half of the balance to ${to}`,
       () => {
         const acc = this.token.getAccount(this.account);
-        if (acc.loud < 2n * UNIT) throw new Error('No free loud balance to send. Loud tokens in an open exit are escrowed; hush the exit first.');
-        // ft_transfer takes quiet first; send all quiet plus half of the loud.
-        return { amount: acc.quiet + acc.loud / 2n };
+        const free = acc.loud + acc.quiet;
+        if (free < 2n * UNIT) throw new Error('No free balance to send. Loud tokens in an open exit are escrowed; hush the exit first.');
+        return { amount: free / 2n };
       },
       ({ amount }) => this.token.transfer(this.account, to, amount, this.now),
-      (r) => `Sent ${fmtTokens(r.loud_amount)} loud and ${fmtTokens(r.quiet_amount)} quiet LOUD to ${to}. The loud tag moved with the tokens.`);
+      (r) => `Sent ${fmtTokens(r.loud_amount + r.quiet_amount)} LOUD, half of the balance, to ${to}: ${fmtTokens(r.loud_amount)} loud and ${fmtTokens(r.quiet_amount)} quiet. ${r.loud_amount > 0n
+        ? 'The loud tag moved with the tokens.'
+        : 'ft_transfer takes quiet tokens first, and the quiet balance covered this half, so no loud tokens moved. Sell the quiet tokens and press again to see the tag move.'}`);
   }
 
   view() {

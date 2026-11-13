@@ -139,8 +139,8 @@ function txRecord(r, extra = {}) {
 }
 
 // Record of a call that pays NEAR when it succeeds (sell, leave). `settled` is true only
-// when every receipt outcome of the transaction succeeded; it is null when the call
-// itself did not succeed, because then nothing was due.
+// when every receipt outcome of the transaction succeeded and none logged `payout_failed`;
+// it is null when the call itself did not succeed, because then nothing was due.
 function payRecord(r, extra = {}) {
   const rec = txRecord(r, { ...extra, settled: r.outcome === 'success' ? r.settled === true : null });
   if (r.outcome === 'success' && r.settled !== true) {
@@ -256,8 +256,8 @@ function summarize(result, hash, account) {
     logs,
     successValue: typeof result.status?.SuccessValue === 'string' ? result.status.SuccessValue : null,
     blockHash: receiptsOutcome[0]?.block_hash ?? result.transaction_outcome?.block_hash ?? null,
-    // All receipt outcomes, not only the top-level status: a detached payout that failed
-    // shows only there.
+    // All receipt outcomes and their logs, not only the top-level status: a payout that
+    // failed shows only there (failed transfer receipt, `payout_failed` event).
     settled: settlement.settled,
     receiptsFailed: settlement.failed.length,
     receiptError: settlement.failed.length > 0
@@ -265,6 +265,10 @@ function summarize(result, hash, account) {
       : (settlement.receipts === 0 ? 'the result lists no receipt outcomes' : null),
   };
 }
+
+// Gas for sell and leave. Their NEAR payout carries the on_payout callback, for which the
+// contract reserves 10 Tgas out of the attached gas.
+const PAY_GAS = 80n * TGAS;
 
 const call = (signer, contract, method, args, { gas = 30n * TGAS, deposit = 0n } = {}) =>
   sendTx(signer, contract, [T.functionCall(method, args, gas, deposit)]);
@@ -513,7 +517,7 @@ async function main() {
 
   // ----- step 6: a split wallet cannot use sell() -----
   const s6 = addStep(6, 'A split wallet tries sell() with its loud tokens', 'the call fails with E_NO_QUIET');
-  const sellTry = await call(wallets[0], token, 'sell', { amount: parts[0].toString(), min_near_out: '0' }, { gas: 50n * TGAS, deposit: ONE_YOCTO });
+  const sellTry = await call(wallets[0], token, 'sell', { amount: parts[0].toString(), min_near_out: '0' }, { gas: PAY_GAS, deposit: ONE_YOCTO });
   s6.txs.push(txRecord(sellTry));
   finishStep(s6, sellTry.outcome === 'failure' && sellTry.code === 'E_NO_QUIET', `${sellTry.outcome}: ${sellTry.error ?? 'no error'}`);
 
@@ -527,7 +531,7 @@ async function main() {
   const lateQuiet = BigInt(lateAfterBuy.quiet);
   let lateSell = null;
   if (lateQuiet > 1n) {
-    lateSell = await call(late, token, 'sell', { amount: (lateQuiet / 2n).toString(), min_near_out: '0' }, { gas: 50n * TGAS, deposit: ONE_YOCTO });
+    lateSell = await call(late, token, 'sell', { amount: (lateQuiet / 2n).toString(), min_near_out: '0' }, { gas: PAY_GAS, deposit: ONE_YOCTO });
     s7.txs.push(payRecord(lateSell));
   }
   const sellSettled = lateSell?.outcome === 'success' && lateSell.settled === true;
@@ -547,7 +551,7 @@ async function main() {
   const firstShout = shouts.findIndex((r) => r.outcome === 'success' && returnValueBigInt(r.successValue) !== null);
   if (firstShout >= 0) {
     early = await call(wallets[firstShout], token, 'leave',
-      { exit_id: returnValueBigInt(shouts[firstShout].successValue).toString(), min_near_out: '0' }, { gas: 50n * TGAS, deposit: ONE_YOCTO });
+      { exit_id: returnValueBigInt(shouts[firstShout].successValue).toString(), min_near_out: '0' }, { gas: PAY_GAS, deposit: ONE_YOCTO });
     s8.txs.push(txRecord(early));
   }
   const afterShout = await Promise.all(wallets.map((w) => readUntil(() => account(w.id), (a) => (a.exits ?? []).length > 0, 4)));
@@ -560,7 +564,7 @@ async function main() {
   if (early === null && open.length > 0) {
     // The shout return value was not readable; use the exit id from get_account instead.
     const e = open[0];
-    early = await call(e.wallet, token, 'leave', { exit_id: e.id, min_near_out: '0' }, { gas: 50n * TGAS, deposit: ONE_YOCTO });
+    early = await call(e.wallet, token, 'leave', { exit_id: e.id, min_near_out: '0' }, { gas: PAY_GAS, deposit: ONE_YOCTO });
     s8.txs.push(txRecord(early));
   }
   finishStep(s8, open.length === WALLETS && early?.outcome === 'failure' && early.code === 'E_NOTICE',
@@ -569,7 +573,7 @@ async function main() {
 
   // ----- step 9: all wallets leave for one cap window -----
   const s9 = addStep(9, `After the notice, all ${WALLETS} wallets call leave() in rounds for one full cap window`,
-    'at least one fill; every rejected call fails with E_CAP (or E_EXPIRED at the very end); no successful leave has a failed receipt');
+    'at least one fill; every rejected call fails with E_CAP (or E_EXPIRED at the very end); no successful leave has a failed receipt or a payout_failed event');
   const readyAt = open.reduce((m, e) => (e.readyAt > m ? e.readyAt : m), 0n);
   await waitChainTime(readyAt, 'the end of the notice period');
   const state0 = await view('get_state');
@@ -610,7 +614,7 @@ async function main() {
   }
 
   async function leaveOnce(e, round) {
-    const r = await call(e.wallet, token, 'leave', { exit_id: e.id, min_near_out: '0' }, { gas: 50n * TGAS, deposit: ONE_YOCTO });
+    const r = await call(e.wallet, token, 'leave', { exit_id: e.id, min_near_out: '0' }, { gas: PAY_GAS, deposit: ONE_YOCTO });
     const { remaining, fields } = await leaveFields(r);
     // A successful leave pays NEAR, so the record carries `settled` (all receipts succeeded).
     const rec = payRecord(r, { round, exit_id: e.id, ...fields });
@@ -685,7 +689,7 @@ async function main() {
   receipts.split.payouts_settled = payoutsSettled;
   finishStep(s9, fillsCount > 0 && unexpected === 0 && payoutsSettled === payoutCalls,
     `${attempts.length} leave calls from ${open.length} wallets: ${fillsCount} filled, ${capHits} E_CAP, ${attempts.filter((a) => a.error_code === 'E_EXPIRED').length} E_EXPIRED, ${unexpected} other failures, ${attempts.filter((a) => a.outcome === 'invalid' || a.outcome === 'unknown').length} not executed; `
-    + `${payoutsSettled} of ${payoutCalls} successful leaves have no failed receipt`);
+    + `${payoutsSettled} of ${payoutCalls} successful leaves have no failed receipt and no payout_failed event`);
 
   // ----- step 10: the cap held -----
   const s10 = addStep(10, 'Total loud units that left during the cap window stay within the cap',

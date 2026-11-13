@@ -59,18 +59,20 @@ bucket_ts: u64
 exits: map u64 -> Exit   open exits only (iterable)
 next_exit_id: u64        starts at 1
 stats: total_shouted, total_left, shout_count, leave_count (u128/u64)
+owed: map AccountId -> u128   yoctoNEAR of failed payouts, per account
+owed_total: u128         sum of owed; not part of pool_near
 ```
 
 `Exit { id, owner, amount, remaining, shouted_at, ready_at, expires_at }`
 
-At `new`: `creator_alloc = total_supply * creator_alloc_bps / 10000`; `loud[creator] = creator_alloc`; `pool_tokens = total_supply - creator_alloc`; `pool_near = 0`; `loud_outstanding = creator_alloc`; `bucket_units = 0` (the bucket starts empty); `bucket_ts = launch_ts`.
+At `new`: `creator_alloc = total_supply * creator_alloc_bps / 10000`; `loud[creator] = creator_alloc`; `pool_tokens = total_supply - creator_alloc`; `pool_near = 0`; `loud_outstanding = creator_alloc`; `bucket_units = 0` (the bucket starts empty); `bucket_ts = launch_ts`; `owed` is empty and `owed_total = 0`.
 
 Invariants (tested):
 1. `pool_tokens + sum(loud) + sum(quiet) + escrowed == total_supply`
 2. `loud_outstanding == sum(loud) + escrowed`
 3. `loud_outstanding` never increases after `loud_until`.
 4. For any interval `[t0, t1]`, loud units leaving the contract path `<= bucket(t0) + cap_units * (t1 - t0) / cap_window_ns`, whatever the number of accounts.
-5. The contract's NEAR balance always covers `pool_near`.
+5. The contract's NEAR balance always covers `pool_near + owed_total`. (The unit tests check the `owed` and `owed_total` bookkeeping; the account balance itself is outside the mocked environment.)
 
 ## 5. Pool math (constant product with a virtual NEAR reserve)
 
@@ -96,36 +98,43 @@ To avoid losing fractions on frequent calls, `refill` only advances `bucket_ts` 
 
 ## 7. Methods
 
-Errors are panics whose message starts with the code in brackets, for example `E_NOTICE: ...`. Codes are listed per method. Every state-changing method refills the bucket first.
+Errors are panics whose message starts with the code in brackets, for example `E_NOTICE: ...`. Codes are listed per method. Every state-changing method refills the bucket first, except `storage_deposit`, which changes no contract state.
+
+**Payouts.** Every non-zero NEAR payout (`sell`, `leave`, `claim`, the `storage_deposit` refund) is a transfer receipt followed by the callback `on_payout` on the token account, with 10 Tgas reserved for the callback out of the gas attached to the call. The pair is detached: the method returns its own value and does not wait for the transfer.
 
 ### Init
 - `new(total_supply, creator, creator_alloc_bps, virtual_near, loud_window_ns, notice_ns, exit_window_ns, cap_bps, cap_window_ns, name, symbol, icon?)` — `#[init]`, callable once (`E_INIT`), validates bounds (`E_PARAMS`). Emits NEP-141 `ft_mint` for the creator allocation (if > 0) and for the pool inventory (owner = contract account).
 
 ### Trading
 - `buy(min_tokens_out: U128) -> U128` — payable, attached NEAR `n >= 10^21` (`E_DEPOSIT`). `out` per section 5; `out >= min_tokens_out` (`E_SLIPPAGE`). If `now < loud_until`: `loud[caller] += out`, `loud_outstanding += out`; else `quiet[caller] += out`. Event `buy { account, near_in, tokens_out, loud: bool }` and NEP-141 `ft_transfer` from the contract account.
-- `sell(amount: U128, min_near_out: U128) -> Promise/U128` — requires exactly 1 yoctoNEAR attached (`E_YOCTO`). Uses **quiet only**: `amount <= quiet[caller]` (`E_NO_QUIET`; the message states the caller's loud and quiet balances and says loud must use shout/leave). `near_out` per section 5, `>= min_near_out` (`E_SLIPPAGE`). Transfers NEAR to the caller. Event `sell`.
+- `sell(amount: U128, min_near_out: U128) -> U128 (yoctoNEAR sent)` — requires exactly 1 yoctoNEAR attached (`E_YOCTO`). Uses **quiet only**: `amount <= quiet[caller]` (`E_NO_QUIET`; the message states the caller's loud and quiet balances and says loud must use shout/leave). `near_out` per section 5, `>= min_near_out` (`E_SLIPPAGE`). Pays NEAR to the caller (see Payouts). Event `sell { account, tokens_in, near_out }` and NEP-141 `ft_transfer` to the contract account.
 
 ### The door for loud tokens
 - `shout(amount: U128) -> U64` — 1 yocto. `0 < amount <= loud[caller]` (`E_NO_LOUD`). `amount >= total_supply / 1_000_000` (`E_DUST`, keeps the board readable). Moves `amount` from `loud[caller]` to escrow. Creates `Exit` with `ready_at = now + notice_ns`, `expires_at = ready_at + exit_window_ns`. At most 8 open exits per account (`E_TOO_MANY`). Event `shout { id, account, amount, ready_at, expires_at }`. Returns the id.
-- `leave(exit_id: U64, min_near_out: U128) -> U128 (units filled)` — 1 yocto. Caller is the exit owner (`E_NOT_OWNER`). `ready_at <= now` (`E_NOTICE`, message states seconds left). `now <= expires_at` (`E_EXPIRED`). `fill = min(exit.remaining, available(now))`, `fill > 0` (`E_CAP`, message states when room returns). If the pool cannot pay for `fill` (section 5), `fill = min(fill, max_sell)`, and `E_POOL_EMPTY` if that is 0; the rest stays in the exit. `near_out` per section 5 for `fill` (`E_AMOUNT` if it rounds to 0: retry with more room, or `hush` a remainder that small); `near_out >= min_near_out * fill / exit.remaining_before` is NOT applied — `min_near_out` is the minimum for the units actually filled (`E_SLIPPAGE`). Effects: `bucket_units -= fill`, `escrowed -= fill`, `loud_outstanding -= fill`, `exit.remaining -= fill`, pool sell per section 5, NEAR to the owner. If `remaining == 0` the exit is removed. Event `leave { id, account, filled, remaining, near_out }`.
+- `leave(exit_id: U64, min_near_out: U128) -> U128 (units filled)` — 1 yocto. Caller is the exit owner (`E_NOT_OWNER`). `ready_at <= now` (`E_NOTICE`, message states seconds left). `now <= expires_at` (`E_EXPIRED`). `fill = min(exit.remaining, available(now))`, `fill > 0` (`E_CAP`, message states when room returns). If the pool cannot pay for `fill` (section 5), `fill = min(fill, max_sell)`, and `E_POOL_EMPTY` if that is 0; the rest stays in the exit. `near_out` per section 5 for `fill` (`E_AMOUNT` if it rounds to 0: retry with more room, or `hush` a remainder that small); `near_out >= min_near_out * fill / exit.remaining_before` is NOT applied — `min_near_out` is the minimum for the units actually filled (`E_SLIPPAGE`). Effects: `bucket_units -= fill`, `escrowed -= fill`, `loud_outstanding -= fill`, `exit.remaining -= fill`, pool sell per section 5, NEAR paid to the owner (see Payouts). If `remaining == 0` the exit is removed. Event `leave { id, account, filled, remaining, near_out }`.
 - `hush(exit_id: U64)` — 1 yocto. The owner may call any time; anyone may call after `expires_at`. Returns `remaining` to `loud[owner]` (still loud), removes the exit, `escrowed -= remaining`. Event `hush`.
+
+### Failed payouts
+- `on_payout(account: AccountId, amount: U128)` — `#[private]` callback of every payout; only the token account can call it (`E_PRIVATE` names the same rule inside the method body; on chain the `#[private]` wrapper rejects other callers first). If the transfer receipt failed, the NEAR has come back to the token account: `owed[account] += amount`, `owed_total += amount`, event `payout_failed { account, amount }`. If the transfer succeeded, nothing changes. `pool_near` is not touched in either case; it was reduced when the sale happened.
+- `claim() -> U128 (yoctoNEAR sent)` — 1 yocto (`E_YOCTO`). `owed[caller] > 0` (`E_NOTHING_OWED`). Removes the caller's entry, `owed_total -= amount`, then pays the whole amount to the caller through the same payout path, so a transfer that fails again is recorded again. Event `claim { account, amount }`.
+- `get_owed(account_id) -> U128` — view, yoctoNEAR owed to the account (0 if none).
 
 ### NEP-141
 - `ft_transfer(receiver_id, amount, memo?)` — 1 yocto. Sender ≠ receiver. Takes **quiet first, then loud** from the sender; the receiver gets the same split (loud stays loud). `E_BALANCE` if `amount > loud + quiet`. Event: NEP-141 `ft_transfer`, plus `tag_move { from, to, loud_amount }` when `loud_amount > 0`.
 - `transfer_loud(receiver_id, amount)` — 1 yocto. Moves loud explicitly (for OTC). `E_NO_LOUD`.
 - `ft_transfer_call(receiver_id, amount, memo?, msg)` — 1 yocto. **Quiet only** (`E_QUIET_DOOR`: loud tokens cannot go into other contracts through `ft_transfer_call`). Standard `ft_on_transfer` + `ft_resolve_transfer`; refunds go back as quiet. Gas: 30 Tgas for `ft_on_transfer`, 10 Tgas for resolve.
 - `ft_total_supply`, `ft_balance_of` (= loud + quiet; for the token account itself `pool_tokens + escrowed` is added, because the NEP-141 events name it as the owner of the pool inventory and the escrow, so all balances sum to `ft_total_supply`), `ft_metadata` (spec `ft-1.0.0`, decimals 18).
-- Storage management (NEP-145), minimal so wallets work: `storage_balance_bounds` returns min = max = 0.00125 NEAR; `storage_deposit` registers nothing and refunds the full deposit; `storage_balance_of` returns `{ total: bounds.min, available: "0" }` for every account. Accounts are created implicitly; the contract pays storage. This is a stated testnet simplification (section 9).
+- Storage management (NEP-145), minimal so wallets work: `storage_balance_bounds` returns min = max = 0.00125 NEAR; `storage_deposit` registers nothing and refunds the full deposit (as a payout, see Payouts); `storage_balance_of` returns `{ total: bounds.min, available: "0" }` for every account. Accounts are created implicitly; the contract pays storage. This is a stated testnet simplification (section 9).
 
 ### Views
 - `get_params() -> Params` (all of section 3 plus `launch_ts`, `loud_until`, `cap_units`, `creator_alloc`).
-- `get_state() -> State { pool_tokens, pool_near, loud_outstanding, escrowed, cap_available, cap_units, next_room_ts, cap_full_ts, open_exits, total_shouted, total_left, shout_count, leave_count, now, is_loud_window }` — `cap_available` computed for the current block time; `next_room_ts` is the earliest time with at least one unit of room, `cap_full_ts` the time the bucket is full again if nobody leaves.
+- `get_state() -> State { pool_tokens, pool_near, loud_outstanding, escrowed, cap_available, cap_units, next_room_ts, cap_full_ts, open_exits, total_shouted, total_left, shout_count, leave_count, now, is_loud_window, owed_total }` — `cap_available` computed for the current block time; `next_room_ts` is the earliest time with at least one unit of room, `cap_full_ts` the time the bucket is full again if nobody leaves; `owed_total` is the yoctoNEAR of failed payouts waiting for `claim`.
 - `get_account(account_id) -> { loud, quiet, exits: [Exit] }`
 - `get_exits(from_index: u32, limit: u32) -> [Exit]` (`limit <= 100`; reads at most 100 exits per call. With up to 100 open exits they are ordered by id before paging. With more, pages follow storage order, each page is ordered by id, and a reader collects all pages and sorts by id).
 - `quote_buy(near: U128) -> U128`, `quote_sell(amount: U128) -> U128`.
 
 ### Events
-NEP-297, `standard: "loud"`, `version: "1.0.0"`, events `buy`, `sell`, `shout`, `leave`, `hush`, `tag_move`. NEP-141 events use `standard: "nep141"`.
+NEP-297, `standard: "loud"`, `version: "1.0.0"`, events `buy`, `sell`, `shout`, `leave`, `hush`, `tag_move`, `payout_failed`, `claim`. NEP-141 events use `standard: "nep141"`.
 
 ### No admin
 No owner, no pause, no upgrade method, no parameter setter. The token account is created, funded, deployed and initialised in one batch transaction that never adds an access key, so the account has zero keys from its first block.
@@ -147,5 +156,5 @@ No owner, no pause, no upgrade method, no parameter setter. The token account is
 - **Notice can trigger a rush.** Quiet holders can sell before a shouted exit becomes ready. That is the intended information, and it can also accelerate a sell-off.
 - **No identity.** The contract does not know who is an insider and does not try to.
 - **The creator allocation is unbacked.** It is minted without a NEAR payment, so every NEAR it receives through the door comes from buyers. After the creator has left, the pool cannot pay the formula price to all remaining holders; the shortfall is at most the creator's proceeds. `sell` fails with `E_POOL_EMPTY` when the pool cannot pay the formula amount, and `leave` fills only the part the pool can pay. So the last sellers may be unable to sell part or all of their tokens.
-- **Testnet simplifications.** The contract pays account storage: every new balance entry locks about 0.00125 NEAR of the token account's balance, and that balance also holds `pool_near`. Dust transfers to fresh accounts can therefore use up the spare balance and make `sell`/`leave` payouts fail until anyone sends NEAR to the token account. The deploy leaves a reserve for this, and it is not a defence on mainnet. The code is unaudited, there is no fee and no liquidity migration.
+- **Testnet simplifications.** The contract pays account storage: every new balance entry locks about 0.00125 NEAR of the token account's balance, and that balance also holds `pool_near`. Dust transfers to fresh accounts can therefore use up the spare balance. A payout can then fail in two ways. If the `sell`/`leave`/`claim` call itself fails, nothing changes: the seller keeps the tokens (or the recorded debt) and can call again once anyone has sent NEAR to the token account. If the call succeeds and only its transfer receipt fails, `on_payout` records the amount under `owed` and the account collects it with `claim`. Nothing retries automatically, and if `on_payout` itself fails (out of gas, or no spare balance for the new storage entry) nothing is recorded. Which of the two ways a storage shortfall takes was not measured on chain. The deploy leaves a reserve for this, and it is not a defence on mainnet. The code is unaudited, there is no fee and no liquidity migration.
 - **Sybil resistance.** The cap is global, so more accounts never mean more exit room. That is the whole sybil defence; there is no per-person fairness.

@@ -214,14 +214,25 @@ export function evaluateSplit({ attempts, bucketAtStart, capUnits, capWindowNs, 
 }
 
 // Settlement of one transaction result (RPC `send_tx` / `tx` with wait_until FINAL).
-// The contract pays NEAR with a detached transfer, so a failed payout does not change
-// the top-level status; it shows only as a failed entry of `receipts_outcome`.
+// The contract pays NEAR with a detached transfer followed by its `on_payout` callback,
+// so a failed payout does not change the top-level status. It shows as a failed entry of
+// `receipts_outcome` (the transfer) and as a `payout_failed` event in the log of the
+// callback receipt, which itself succeeds when it records the unpaid amount.
 // `settled`: the top-level status is a success, there is at least one receipt outcome,
-// and every receipt outcome is a success (SuccessValue or SuccessReceiptId).
+// every receipt outcome is a success (SuccessValue or SuccessReceiptId), and no receipt
+// log carries a `payout_failed` event of the `loud` standard.
 export function receiptSettlement(result) {
   const outcomes = Array.isArray(result?.receipts_outcome) ? result.receipts_outcome : [];
   const failed = [];
   for (const r of outcomes) {
+    const unpaid = parseEvents(r?.outcome?.logs).find((e) => e.standard === 'loud' && e.event === 'payout_failed');
+    if (unpaid) {
+      failed.push({
+        receipt_id: r?.id ?? null,
+        executor: r?.outcome?.executor_id ?? null,
+        error: `payout_failed: ${String(unpaid.data.amount ?? '?')} yoctoNEAR owed to ${String(unpaid.data.account ?? '?')}`.slice(0, 400),
+      });
+    }
     const st = r?.outcome?.status;
     const ok = st !== null && typeof st === 'object'
       && (typeof st.SuccessValue === 'string' || typeof st.SuccessReceiptId === 'string');

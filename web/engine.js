@@ -712,7 +712,11 @@ export class PerWalletToken extends NaiveToken {
 
 // ---- greedy sellers (simulation drivers, not part of the contract) ----
 
-// Sells loud tokens from a set of wallets as fast as the door allows.
+// Sells loud tokens from a set of wallets through the door with a simple batch
+// strategy. It is not the fastest possible exit: the gate at the top of
+// _shout() waits for the current batch to near its expiry before it shouts
+// again, so near the end of a position the cap can have room while no exit is
+// open. A remainder below dust_units cannot be shouted at all (E_DUST).
 // It keeps one batch of exits ready at all times: a new batch is shouted early
 // enough to become ready before the previous one expires, and each batch is
 // sized to the most the cap could release during one exit window.
@@ -893,9 +897,12 @@ export function makeSeller(rule, token, wallets, stepNs) {
 }
 
 // One insider holding insiderShareBps of supply, split evenly across `wallets`
-// accounts at launch, sells as fast as the rule allows. Community buyers put
+// accounts at launch, sells with the greedy seller of that rule (for LOUD the
+// batch strategy above, which can leave gaps). The creator allocation is set
+// to the insider share, replacing the preset value. Community buyers put
 // communityNear into the pool right after the launch window, then the insider
-// starts (under LOUD it shouts immediately).
+// starts: its first action is one tick (at most 60 s) after the first series
+// point, and under LOUD that action is a shout.
 //
 // The share comes from the creator allocation (up to 20%); anything above that
 // is bought by the insider at launch.

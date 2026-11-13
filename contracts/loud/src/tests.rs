@@ -7,6 +7,7 @@ use super::*;
 use near_sdk::mock::MockAction;
 use near_sdk::test_utils::{get_created_receipts, get_logs, VMContextBuilder};
 use near_sdk::testing_env;
+use near_sdk::PromiseResult;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 
 const E18: u128 = 1_000_000_000_000_000_000;
@@ -36,6 +37,25 @@ fn at(who: &AccountId, ts: u64, deposit: u128) {
         .attached_deposit(NearToken::from_yoctonear(deposit))
         .account_balance(NearToken::from_near(1_000_000_000));
     testing_env!(b.build());
+}
+
+/// Sets up a callback: the token account calls itself at `ts` and sees
+/// `result` as the result of the promise it waited for.
+fn at_callback(ts: u64, result: PromiseResult) {
+    let mut b = VMContextBuilder::new();
+    b.current_account_id(token())
+        .signer_account_id(token())
+        .predecessor_account_id(token())
+        .block_timestamp(ts)
+        .attached_deposit(NearToken::from_yoctonear(0))
+        .account_balance(NearToken::from_near(1_000_000_000));
+    testing_env!(
+        b.build(),
+        near_sdk::test_vm_config(),
+        near_sdk::RuntimeFeesConfig::test(),
+        Default::default(),
+        vec![result]
+    );
 }
 
 #[derive(Clone)]
@@ -159,6 +179,22 @@ fn transfers_out() -> u128 {
         }
     }
     total
+}
+
+/// `(receiver, method)` of every function call scheduled by the last call.
+fn calls_out() -> Vec<(AccountId, String)> {
+    let mut calls = Vec::new();
+    for receipt in get_created_receipts() {
+        for action in receipt.actions.iter() {
+            if let MockAction::FunctionCallWeight { method_name, .. } = action {
+                calls.push((
+                    receipt.receiver_id.clone(),
+                    String::from_utf8_lossy(method_name).to_string(),
+                ));
+            }
+        }
+    }
+    calls
 }
 
 fn logged(fragment: &str) -> bool {
@@ -1288,4 +1324,185 @@ fn split_test_one_wallet_vs_one_hundred() {
         // Sales never go backwards.
         assert!(run.sold.windows(2).all(|w| w[0] <= w[1]));
     }
+}
+
+// ----------------------------------------------------------------------
+// Failed payouts: on_payout, claim, get_owed
+// ----------------------------------------------------------------------
+
+/// Dave buys quiet after the window and sells all of it. Returns the
+/// contract, dave, the NEAR paid out and the time.
+fn dave_sold() -> (Loud, AccountId, u128, u64) {
+    let mut c = deploy(&standard());
+    let dave = acc("dave.test");
+    let ts = T0 + 11 * MINUTE;
+    let out = buy(&mut c, &dave, ts, 20 * NEAR);
+    let near_out = sell(&mut c, &dave, ts, out);
+    assert!(near_out > 0);
+    (c, dave, near_out, ts)
+}
+
+#[test]
+fn sell_schedules_the_payout_callback() {
+    let (c, _dave, near_out, ts) = dave_sold();
+    assert_eq!(transfers_out(), near_out);
+    assert!(calls_out().contains(&(token(), "on_payout".to_string())));
+    assert_eq!(state(&c, ts).owed_total.0, 0);
+}
+
+#[test]
+fn failed_payout_is_recorded_as_owed() {
+    let (mut c, dave, near_out, ts) = dave_sold();
+    let pool_near = state(&c, ts).pool_near.0;
+
+    at_callback(ts, PromiseResult::Failed);
+    c.on_payout(dave.clone(), U128(near_out));
+    assert!(has_event("payout_failed"));
+    assert_eq!(transfers_out(), 0);
+    assert_eq!(c.get_owed(dave.clone()).0, near_out);
+    let s = state(&c, ts);
+    assert_eq!(s.owed_total.0, near_out);
+    // Owed NEAR is outside pool_near.
+    assert_eq!(s.pool_near.0, pool_near);
+
+    // A second failed payout adds to the entry.
+    at_callback(ts, PromiseResult::Failed);
+    c.on_payout(dave.clone(), U128(7));
+    assert_eq!(c.get_owed(dave.clone()).0, near_out + 7);
+    assert_eq!(state(&c, ts).owed_total.0, near_out + 7);
+    assert_eq!(c.get_owed(acc("erin.test")).0, 0);
+}
+
+#[test]
+fn successful_payout_records_nothing() {
+    let (mut c, dave, near_out, ts) = dave_sold();
+    at_callback(ts, PromiseResult::Successful(Vec::new()));
+    c.on_payout(dave.clone(), U128(near_out));
+    assert!(!has_event("payout_failed"));
+    assert_eq!(c.get_owed(dave.clone()).0, 0);
+    assert_eq!(state(&c, ts).owed_total.0, 0);
+}
+
+#[test]
+fn on_payout_is_private() {
+    let (mut c, dave, near_out, ts) = dave_sold();
+    at(&dave, ts, 0);
+    expect_fail("E_PRIVATE", || c.on_payout(dave.clone(), U128(near_out)));
+    assert_eq!(c.get_owed(dave.clone()).0, 0);
+    assert_eq!(state(&c, ts).owed_total.0, 0);
+}
+
+#[test]
+fn claim_pays_and_clears_the_debt() {
+    let (mut c, dave, near_out, ts) = dave_sold();
+    at_callback(ts, PromiseResult::Failed);
+    c.on_payout(dave.clone(), U128(near_out));
+    let pool_near = state(&c, ts).pool_near.0;
+
+    at(&dave, ts + 1, 0);
+    expect_fail("E_YOCTO", || c.claim());
+    at(&dave, ts + 1, 1);
+    assert_eq!(c.claim().0, near_out);
+    assert_eq!(transfers_out(), near_out);
+    assert!(calls_out().contains(&(token(), "on_payout".to_string())));
+    assert!(has_event("claim"));
+    assert_eq!(c.get_owed(dave.clone()).0, 0);
+    let s = state(&c, ts + 1);
+    assert_eq!(s.owed_total.0, 0);
+    assert_eq!(s.pool_near.0, pool_near);
+
+    // The debt is gone, so a second claim fails.
+    at(&dave, ts + 2, 1);
+    expect_fail("E_NOTHING_OWED", || c.claim());
+
+    // If the claim transfer fails as well, the debt is recorded again.
+    at_callback(ts + 2, PromiseResult::Failed);
+    c.on_payout(dave.clone(), U128(near_out));
+    assert_eq!(c.get_owed(dave.clone()).0, near_out);
+    assert_eq!(state(&c, ts + 2).owed_total.0, near_out);
+}
+
+#[test]
+fn claim_with_nothing_owed_fails() {
+    let (mut c, dave, _near_out, ts) = dave_sold();
+    at(&dave, ts, 1);
+    expect_fail("E_NOTHING_OWED", || c.claim());
+    assert_eq!(transfers_out(), 0);
+}
+
+// ----------------------------------------------------------------------
+// ft_transfer_call and ft_resolve_transfer
+// ----------------------------------------------------------------------
+
+/// Alice sends all her quiet tokens to `dex.test` with ft_transfer_call.
+fn alice_called_dex() -> (Loud, AccountId, AccountId, u128, u128, u64) {
+    let (mut c, alice, loud, quiet, ts) = alice_with_both();
+    let dex = acc("dex.test");
+    at(&alice, ts, 1);
+    c.ft_transfer_call(dex.clone(), U128(quiet), None, "hello".to_string()).detach();
+    let calls = calls_out();
+    assert!(calls.contains(&(dex.clone(), "ft_on_transfer".to_string())));
+    assert!(calls.contains(&(token(), "ft_resolve_transfer".to_string())));
+    assert_eq!(bal(&c, &alice), (loud, 0));
+    assert_eq!(bal(&c, &dex), (0, quiet));
+    (c, alice, dex, loud, quiet, ts)
+}
+
+#[test]
+fn ft_transfer_call_keeps_what_the_receiver_used() {
+    let (mut c, alice, dex, loud, quiet, ts) = alice_called_dex();
+    at_callback(ts, PromiseResult::Successful(b"\"0\"".to_vec()));
+    let used = c.ft_resolve_transfer(alice.clone(), dex.clone(), U128(quiet)).0;
+    assert_eq!(used, quiet);
+    assert!(!logged("\"memo\":\"refund\""));
+    assert_eq!(bal(&c, &alice), (loud, 0));
+    assert_eq!(bal(&c, &dex), (0, quiet));
+}
+
+#[test]
+fn ft_transfer_call_refunds_the_unused_part_as_quiet() {
+    let (mut c, alice, dex, loud, quiet, ts) = alice_called_dex();
+    let unused = 40 * E18;
+    assert!(quiet > unused);
+    at_callback(ts, PromiseResult::Successful(format!("\"{unused}\"").into_bytes()));
+    let used = c.ft_resolve_transfer(alice.clone(), dex.clone(), U128(quiet)).0;
+    assert_eq!(used, quiet - unused);
+    assert!(logged("\"memo\":\"refund\""));
+    assert_eq!(bal(&c, &alice), (loud, unused));
+    assert_eq!(bal(&c, &dex), (0, quiet - unused));
+}
+
+#[test]
+fn ft_transfer_call_refunds_everything_when_the_receiver_fails() {
+    let (mut c, alice, dex, loud, quiet, ts) = alice_called_dex();
+    at_callback(ts, PromiseResult::Failed);
+    let used = c.ft_resolve_transfer(alice.clone(), dex.clone(), U128(quiet)).0;
+    assert_eq!(used, 0);
+    assert!(logged("\"memo\":\"refund\""));
+    assert_eq!(bal(&c, &alice), (loud, quiet));
+    assert_eq!(bal(&c, &dex), (0, 0));
+}
+
+#[test]
+fn ft_transfer_call_refunds_everything_on_an_unreadable_result() {
+    let (mut c, alice, dex, loud, quiet, ts) = alice_called_dex();
+    at_callback(ts, PromiseResult::Successful(b"not json".to_vec()));
+    let used = c.ft_resolve_transfer(alice.clone(), dex.clone(), U128(quiet)).0;
+    assert_eq!(used, 0);
+    assert_eq!(bal(&c, &alice), (loud, quiet));
+    assert_eq!(bal(&c, &dex), (0, 0));
+}
+
+#[test]
+fn ft_resolve_transfer_only_refunds_what_the_receiver_still_holds() {
+    let (mut c, alice, dex, loud, quiet, ts) = alice_called_dex();
+    // The receiver moved part of the tokens on before the callback ran.
+    let moved = 10 * E18;
+    at(&dex, ts, 1);
+    c.ft_transfer(acc("erin.test"), U128(moved), None);
+    at_callback(ts, PromiseResult::Failed);
+    let used = c.ft_resolve_transfer(alice.clone(), dex.clone(), U128(quiet)).0;
+    assert_eq!(used, moved);
+    assert_eq!(bal(&c, &alice), (loud, quiet - moved));
+    assert_eq!(bal(&c, &dex), (0, 0));
 }

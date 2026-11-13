@@ -240,7 +240,7 @@ function heroSchedule() {
   if (hero.source === 'sim' && !hero.paused && !document.hidden) hero.timer = setInterval(heroTick, 400);
 }
 
-const SIM_NOTE = 'Simulation on the rule engine, standard parameters: the 5% creator allocation, split across 36 wallets, leaves as fast as the rule allows. One engine minute every 0.4 s.';
+const SIM_NOTE = 'Simulation on the rule engine, standard parameters: the 5% creator allocation, split across 36 wallets, leaves through the door with a simple seller strategy that shouts in batches. It is not the fastest exit the rule allows: it can wait between batches while the cap has room. One engine minute every 0.4 s.';
 
 function heroSetSource(source) {
   hero.source = source;
@@ -613,7 +613,7 @@ export function renderProof(dep, rec, loadError = '') {
     }
   }
   const stamp = r.generatedAt || d.generatedAt;
-  if (stamp) setText($('#proof-meta'), `Recorded ${stamp}. The on-chain run uses the demo preset so it fits in one CI job: launch window 2 min, notice 1 min, exit window 10 min, cap 0.5% per 10 min.`);
+  if (stamp) setText($('#proof-meta'), `Recorded ${stamp}. The on-chain run uses the demo preset so it fits in one CI job: launch window 2 min, notice 1 min, exit window 10 min, cap 0.5% per 10 min. The script runs step 3 before step 2, so the launch window is not spent on creating accounts.`);
   return { deployment: d, receipts: r };
 }
 
