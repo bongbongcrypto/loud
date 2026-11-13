@@ -1,28 +1,58 @@
 {
-  "status": "pending",
+  "status": "ok",
   "network": "testnet",
   "preset": "demo",
-  "token_account": null,
-  "root_account": null,
-  "creator_account": null,
-  "params": null,
-  "onchain_params": null,
-  "deployed_at": null,
-  "deployed_at_ns": null,
-  "tx": null,
-  "zero_keys": false,
-  "access_keys": null,
-  "wasm": null,
-  "code_hash": null,
+  "token_account": "t.loud-mwen12pq4b024e.testnet",
+  "root_account": "loud-mwen12pq4b024e.testnet",
+  "creator_account": "insider.loud-mwen12pq4b024e.testnet",
+  "params": {
+    "total_supply": "1000000000000000000000000000",
+    "creator": "insider.loud-mwen12pq4b024e.testnet",
+    "creator_alloc_bps": 500,
+    "virtual_near": "5000000000000000000000000",
+    "loud_window_ns": "120000000000",
+    "notice_ns": "60000000000",
+    "exit_window_ns": "600000000000",
+    "cap_bps": 50,
+    "cap_window_ns": "600000000000",
+    "name": "LOUD",
+    "symbol": "LOUD",
+    "icon": null
+  },
+  "onchain_params": {
+    "total_supply": "1000000000000000000000000000",
+    "creator": "insider.loud-mwen12pq4b024e.testnet",
+    "creator_alloc_bps": 500,
+    "virtual_near": "5000000000000000000000000",
+    "loud_window_ns": "120000000000",
+    "notice_ns": "60000000000",
+    "exit_window_ns": "600000000000",
+    "cap_bps": 50,
+    "cap_window_ns": "600000000000",
+    "launch_ts": "1794553935382831929",
+    "loud_until": "1794554055382831929",
+    "cap_units": "5000000000000000000000000",
+    "creator_alloc": "50000000000000000000000000"
+  },
+  "deployed_at": "2026-11-13T07:12:15.382Z",
+  "deployed_at_ns": "1794553935382831929",
+  "tx": "CD2b5H1eNqW2mj1riEoGXK8X8JvDacjUGQUzokw61L7H",
+  "zero_keys": true,
+  "access_keys": [],
+  "wasm": {
+    "bytes": 220021,
+    "sha256": "34d3d622770a54d924a0b01e9a1b7b6a5759ad04e6b28671e8809e8bd011ece1"
+  },
+  "code_hash": "4ZDYsc4GySF917sEowWdwj5sSMop6p3cdeqAQA3CbYoS",
   "explorer": {
-    "token": null,
-    "root": null,
-    "tx": null
+    "token": "https://testnet.nearblocks.io/address/t.loud-mwen12pq4b024e.testnet",
+    "root": "https://testnet.nearblocks.io/address/loud-mwen12pq4b024e.testnet",
+    "tx": "https://testnet.nearblocks.io/txns/CD2b5H1eNqW2mj1riEoGXK8X8JvDacjUGQUzokw61L7H"
   },
   "run": {
-    "repository": null,
-    "run_id": null,
-    "commit": null
+    "repository": "bongbongcrypto/loud",
+    "run_id": "43383583854",
+    "commit": "aa3ffe805ac76dfe739d55d6f92df7dcf9882192"
   },
-  "generated_at": null
+  "generated_at": "2026-11-13T07:25:35.987Z"
 }
