@@ -5,7 +5,7 @@
 Launch tokens are the creator allocation and tokens bought in the launch window. They can be sold into the token's own pool only after a public notice, and all of those sales share one cap.
 
 - Live page: https://bongbongcrypto.github.io/loud/
-- Testnet token: <!-- proof:token -->[t.loud-mwf63eou6bc318.testnet](https://testnet.nearblocks.io/address/t.loud-mwf63eou6bc318.testnet), no access keys, demo preset, recorded 2026-11-13<!-- /proof:token -->. Every transaction: [Testnet proof](https://bongbongcrypto.github.io/loud/#proof).
+- Testnet token: <!-- proof:token -->[t.loud-mwf8y9vabcbf40.testnet](https://testnet.nearblocks.io/address/t.loud-mwf8y9vabcbf40.testnet), no access keys, demo preset, recorded 2026-11-13<!-- /proof:token -->. Every transaction: [Testnet proof](https://bongbongcrypto.github.io/loud/#proof).
 - Contract: [contracts/loud/src/lib.rs](contracts/loud/src/lib.rs). Exact rules and numbers: [SPEC.md](SPEC.md).
 
 Built at NEAR HACKATHON, memecoins track. Testnet only. Unaudited.
@@ -42,7 +42,7 @@ Run from the repository root. The Node rows need Node 22 or newer and nothing in
 | `node sim/run.mjs` (about 2 min) | Writes `sim/results.json` and `sim/RESULTS.md` again, byte for byte the same. |
 | `python3 -m http.server -d web 8000` | The same page at http://localhost:8000, served from static files with no build step. |
 
-The testnet token runs a faster demo preset (launch window 2 min, notice 1 min, exit window 10 min, cap 0.5% per 10 min)<!-- proof:commit --> and was built from commit `845805a`, named in `deployment.json` as `run.commit`<!-- /proof:commit -->.<!-- proof:scope --><!-- /proof:scope --> That build charges 0.02 NEAR for storage. The source now charges 0.03.
+The testnet token runs a faster demo preset (launch window 2 min, notice 1 min, exit window 10 min, cap 0.5% per 10 min)<!-- proof:commit --> and was built from commit `ff615c3`, named in `deployment.json` as `run.commit`<!-- /proof:commit -->.<!-- proof:scope --><!-- /proof:scope --> That build charges 0.02 NEAR for storage. The source now charges 0.03.
 
 ## What the track asked for
 
