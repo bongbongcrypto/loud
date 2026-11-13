@@ -8,7 +8,7 @@ LOUD is an NEP-141 memecoin with one mechanic: **early supply can leave, but it 
 
 - Tokens bought during the launch window, and the creator allocation, are **loud**. Everything else is **quiet**.
 - The tag belongs to the tokens, not to the wallet. Moving loud tokens to another account moves the tag with them.
-- Loud tokens have exactly one way out: **shout** (public notice, tokens escrowed) → wait the notice period → **leave** (sell into the built-in pool), and all leaves together share **one global hourly cap**.
+- Loud tokens have exactly one way out: **shout** (public notice, tokens escrowed) → wait the notice period → **leave** (sell into the built-in pool), and all leaves together share **one global cap** (a refill bucket owned by the token).
 - Tokens sold through that door become quiet. Anyone who buys from the pool after the launch window gets quiet tokens, so ordinary buyers never inherit a tag from the pool.
 - The contract never decides who is an insider. It only knows when a token left the pool.
 
@@ -37,7 +37,7 @@ Claim (use this wording everywhere): *LOUD limits how fast early supply can be s
 
 Derived at launch: `launch_ts = block_timestamp`, `loud_until = launch_ts + loud_window_ns`, `cap_units = total_supply * cap_bps / 10000`.
 
-Presets (documented, not enforced):
+Presets (documented, not enforced). "cap X per W" means: the bucket holds at most X and refills X per W. Any single span of W lets out at most the room already in the bucket plus X (so at most 2X); the long-run rate is X per W.
 
 | Preset | supply | creator | virtual NEAR | loud window | notice | exit window | cap |
 |---|---|---|---|---|---|---|---|
@@ -132,7 +132,7 @@ No owner, no pause, no upgrade method, no parameter setter. The token account is
 
 ## 8. What the judge should be able to check
 
-1. **Split test (unit test and on-chain proof).** One account holds `X` loud units. Scenario A: it shouts and leaves alone. Scenario B: it first splits `X` across `N` accounts (N = 100 in the unit test, 20 on testnet) and every account shouts and leaves as fast as allowed. In both, total loud units sold in the first cap window after notice `<= cap_units`, and A == B within one unit of rounding per account. On testnet the proof runs scenario B only (N = 20) and checks the total against the invariant 4 bound, which does not depend on the number of accounts; the cap is global per token, so A cannot run on the same token in the same window. A == B is checked in the contract unit test (N = 100) and in the engine tests (`web/engine.test.mjs`, 1 vs 100 wallets).
+1. **Split test (unit test and on-chain proof).** One account holds `X` loud units. Scenario A: it shouts and leaves alone. Scenario B: it first splits `X` across `N` accounts (N = 100 in the unit test, 20 on testnet) and every account shouts and leaves as fast as allowed. In both, total loud units sold in any cap window `<= available(window start) + cap_units` (invariant 4; never more than `2 * cap_units`, and `cap_units` per window on average), and A == B within one unit of rounding per account. On testnet the proof runs scenario B only (N = 20) and checks the total against the invariant 4 bound, which does not depend on the number of accounts; the cap is global per token, so A cannot run on the same token in the same window. A == B is checked in the contract unit test (N = 100) and in the engine tests (`web/engine.test.mjs`, 1 vs 100 wallets).
 2. **Tag follows the tokens.** After splitting, every receiving account shows a loud balance and `sell` fails with `E_NO_QUIET`.
 3. **Pool buyers stay clean.** An account that buys after `loud_until` holds only quiet and can sell immediately.
 4. **Comparison baselines in the simulator** (not on chain): `naive` (no rule) and `per_wallet` (max sell 0.5% of supply per transaction, 60 s cooldown per wallet, the common anti-dump design). With 1 wallet vs 100 wallets: `naive` dumps everything at once in both, `per_wallet` lets 100 wallets sell 100x faster, `loud` is identical for 1 and 100.

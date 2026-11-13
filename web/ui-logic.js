@@ -816,7 +816,7 @@ export function receiptsView(rec) {
       ['Cap per window', units(sp.cap_units)],
       ['Cap room when the window started', units(sp.bucket_at_start)],
       ['Measured for', windowText],
-      ['Sold in the first cap window', units(sp.sold_in_window)],
+      ['Sold in the first cap window (limit: room at start + one cap)', units(sp.sold_in_window)],
       ['Sold in the whole measurement', units(sp.sold_total)],
       ['Upper bound from the cap (SPEC invariant 4)', units(sp.bound)],
       ['Leave calls sent / filled / rejected with E_CAP', `${text(sp.attempts)} / ${text(sp.fills)} / ${text(sp.cap_hits)}`],

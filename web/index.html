@@ -94,7 +94,7 @@
         <span>Sell into the built-in pool, as far as the cap has room. After 60 min the exit expires and must be shouted again.</span>
       </li>
     </ol>
-    <p class="cap-rule"><b>One global cap.</b> All leaves together share one bucket: 0.5% of supply per 60 min. The bucket belongs to the token, so more wallets never mean more room.</p>
+    <p class="cap-rule"><b>One global cap.</b> All leaves together share one bucket. It holds at most 0.5% of supply and refills at 0.5% of supply per 60 min, so no 60 minutes can let out more than 1% (a full bucket plus one refill), and over a day the rate is 0.5% per hour. The bucket belongs to the token, so more wallets never mean more room.</p>
     <ul class="plain">
       <li>The tag belongs to the tokens. Sending loud tokens to another account moves the tag with them.</li>
       <li>Tokens sold through the door become quiet. Anyone who buys from the pool after the launch window gets quiet tokens.</li>
@@ -367,7 +367,7 @@
           <tr><th scope="row">Launch window</th><td>10 min</td><td>Buys in this window are loud. It covers the minutes when bundles and snipers buy before most people can react. A longer window tags more ordinary buyers as well.</td></tr>
           <tr><th scope="row">Notice</th><td>30 min</td><td>Wait between shout and the first possible leave. Long enough for a person to see the board and act, short enough that an early buyer is not locked in for hours.</td></tr>
           <tr><th scope="row">Exit window</th><td>60 min</td><td>How long a shout stays usable after the notice. It stops old shouts from sitting on the board as free options. Too short, and a ready exit can expire before the cap has room for it.</td></tr>
-          <tr><th scope="row">Cap</th><td>0.5% per 60 min</td><td>The most loud supply that can leave per window, for all accounts together. The bucket starts empty at launch. A holder of 5% needs about 10 hours to leave. A lower cap slows a dump more and makes early buyers wait longer in the same line.</td></tr>
+          <tr><th scope="row">Cap</th><td>0.5% per 60 min</td><td>Size of the bucket and its refill per window, for all accounts together. The bucket starts empty at launch and never holds more than one cap, so a single window lets out at most the room already in the bucket plus one refill. A holder of 5% needs about 10 hours to leave. A lower cap slows a dump more and makes early buyers wait longer in the same line.</td></tr>
         </tbody>
       </table>
     </div>
