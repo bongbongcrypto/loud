@@ -42,7 +42,7 @@ Run from the repository root. The Node rows need Node 22 or newer and nothing in
 | `node sim/run.mjs` (about 2 min) | Writes `sim/results.json` and `sim/RESULTS.md` again, byte for byte the same. |
 | `python3 -m http.server -d web 8000` | The same page at http://localhost:8000, served from static files with no build step. |
 
-The testnet token runs a faster demo preset (launch window 2 min, notice 1 min, exit window 10 min, cap 0.5% per 10 min)<!-- proof:commit --> and was built from commit `ff615c3`, named in `deployment.json` as `run.commit`<!-- /proof:commit -->.<!-- proof:scope --><!-- /proof:scope --> That build charges 0.02 NEAR for storage. The source now charges 0.03.
+The testnet token runs a faster demo preset (launch window 2 min, notice 1 min, exit window 10 min, cap 0.5% per 10 min)<!-- proof:commit --> and was built from commit `ff615c3`, named in `deployment.json` as `run.commit`<!-- /proof:commit -->.<!-- proof:scope --><!-- /proof:scope -->
 
 ## What the track asked for
 
