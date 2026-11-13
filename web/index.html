@@ -343,8 +343,10 @@
       <dd>The contract does not know who is an insider and does not try to.</dd>
       <dt>Sybil resistance</dt>
       <dd>The cap is global, so more accounts never mean more exit room. That is the whole sybil defence; there is no per-person fairness.</dd>
+      <dt>The creator allocation is unbacked</dt>
+      <dd>It is minted without a NEAR payment, so every NEAR it receives through the door comes from buyers. After the creator has left, the last sellers can get less than the formula price, down to nothing.</dd>
       <dt>Testnet simplifications</dt>
-      <dd>The contract pays account storage, which is a spam vector on mainnet. The code is unaudited. There is no fee and no liquidity migration.</dd>
+      <dd>The contract pays account storage out of the same balance that holds the pool's NEAR. Dust transfers to many fresh accounts can block sell and leave payouts until someone sends NEAR to the token account. The code is unaudited. There is no fee and no liquidity migration.</dd>
     </dl>
   </div>
 </section>
