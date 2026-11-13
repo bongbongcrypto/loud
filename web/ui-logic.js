@@ -1134,7 +1134,7 @@ export function receiptsView(rec) {
     result: !haveSplit ? 'PENDING' : sp.pass === true ? 'PASS' : 'FAIL',
     sentence: !haveSplit
       ? 'No split measurement yet.'
-      : `${text(sp.wallets)} wallets sold ${units(sp.sold_total)} in ${windowText}. The cap allowed at most ${units(sp.bound)} in that time.`,
+      : `A group of ${text(sp.wallets)} wallets sold ${units(sp.sold_total)} in ${windowText}. The cap allowed at most ${units(sp.bound)} in that time.`,
     rows: [
       ['Wallets', text(sp.wallets)],
       ['Cap per window', units(sp.cap_units)],

@@ -522,7 +522,7 @@ export function toMarkdown(result) {
     'sizes are lognormal. Each holder sells everything after an exponential holding time with mean `holdDays`; ' +
     'when the price has fallen more than `panicThreshold` over the last hour the sell rate is multiplied by ' +
     '`1 + panicSlope * (drop - panicThreshold) / 0.10`, at most `panicMax`. Under LOUD, when open exits first exceed ' +
-    '`boardThresholdBps` of supply, each quiet holder sells with probability `min(rushMax, rushPerPct * board size in % of supply)` at a random moment within the notice period.');
+    '`boardThresholdBps` of supply, each remaining holder sells with probability `min(rushMax, rushPerPct * board size in % of supply)` at a random moment within the notice period.');
   out.push('');
   return out.join('\n');
 }

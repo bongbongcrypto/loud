@@ -22,7 +22,7 @@ The creator and the launch buyers hold the cheap early supply. A per-wallet sell
 4. A shout cannot be cancelled. Unsold tokens stay locked until the exit ends, and then `hush` returns them, still loud.
 5. Every wallet but the creator's needs a one-time 0.03 NEAR storage fee. Nobody, the creator included, can change or pause the token: it has no owner method and its account has no access key.
 
-Standard preset: 1,000,000,000 supply, 5% creator, launch window 10 min, notice 30 min, exit window 60 min, cap 0.5% of supply per 60 min.
+Standard preset: 1,000,000,000 supply, 5% creator, launch window 10 min, notice 30 min, exit window 60 min, cap 0.5% of supply per 60 min. The cap is a bucket that holds 0.5% and refills 0.5% per 60 min, so a full bucket plus one refill lets out at most 1% in any 60 min.
 
 LOUD limits how fast early supply can be sold on its defined path, no matter how many wallets it is split across. The path is the token's own pool, and every sale of loud tokens into it is public in advance. Tokens sold there and bought back after the launch window are quiet and off the path ([Limits](#limits)). It does not stop a price from falling.
 
@@ -102,10 +102,10 @@ Under LOUD, holders in both cases also get 30 minutes of public notice before th
 <details>
 <summary>Contract-level limits</summary>
 
-- **Other pools.** `ft_transfer_call` refuses loud tokens. Quiet tokens can be sent with it. The receiving contract gets a fixed 30 Tgas for its `ft_on_transfer`, and if that is not enough the transfer is refunded.
+- **Other pools.** `ft_transfer_call` refuses loud tokens. Quiet tokens can be sent with it. The receiving contract gets a fixed 30 Tgas for its `ft_on_transfer`, and if that is not enough the contract takes back whatever the receiver still holds.
 - **Small positions leave in one call.** What fits the cap room sells in one `leave` after notice if the pool can pay. A full cap plus one refill lets out up to 1% of supply in an hour.
 - **When the pool cannot pay.** `sell` fails with `E_POOL_EMPTY`, and `leave` fills only what the pool can pay.
-- **Storage is never refunded.** There is no withdraw and no unregister. A transfer to an unregistered account fails with `E_UNREGISTERED`. The 0.03 NEAR covers the account's records and eight open exits, the most one account can have.
+- **The 0.03 NEAR storage fee is never refunded.** Anything paid above it comes back at once. There is no withdraw and no unregister. A transfer to an unregistered account fails with `E_UNREGISTERED`. The 0.03 NEAR covers the account's records and eight open exits, the most one account can have.
 - **Failed payouts.** A payout whose transfer fails is recorded and collected with `claim`. The record depends on a callback that can itself fail, and then nothing is recorded.
 - **More than 100 open exits.** `get_exits` then pages in storage order, so a reader can skip or repeat an exit.
 - **Not built.** There is no trading fee, no liquidity migration, no audit and no mainnet token.

@@ -548,7 +548,7 @@ test('proof: a completed run', () => {
   assert.equal(nine.txs[0].note, 'filled 40,000');
   assert.equal(nine.txs[1].note, 'E_CAP');
   assert.equal(r.split.result, 'PASS');
-  assert.equal(r.split.sentence, '20 wallets sold 5,600,000 LOUD in 10 min 30 s. The cap allowed at most 5,750,000 LOUD in that time.');
+  assert.equal(r.split.sentence, 'A group of 20 wallets sold 5,600,000 LOUD in 10 min 30 s. The cap allowed at most 5,750,000 LOUD in that time.');
 });
 
 test('proof: files written by the older and the newer proof script both render', () => {
@@ -645,7 +645,7 @@ test('proof: the three large lines follow the files and never overstate them', (
   assert.match(ok[0].small, /^on NEAR testnet(, \d{4}-\d{2}-\d{2})?\.$/);
   assert.equal(ok[0].href, `https://testnet.nearblocks.io/txns/${H('A')}`);
   assert.equal(ok[1].href, 'https://testnet.nearblocks.io/address/t.loud-ab12.testnet');
-  assert.equal(ok[2].small, '20 wallets sold 5,600,000 LOUD in 10 min 30 s. The cap allowed at most 5,750,000 LOUD in that time.');
+  assert.equal(ok[2].small, 'A group of 20 wallets sold 5,600,000 LOUD in 10 min 30 s. The cap allowed at most 5,750,000 LOUD in that time.');
   assert.equal(ok[2].href, 'receipts.json');
 
   // The numbers come from the files: a run with another number of checks and wallets.

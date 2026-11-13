@@ -163,7 +163,7 @@ test('a run that failed at the cap check never reads as a pass', (t) => {
   const readme = read(root, 'README.md');
   assert.ok(html.includes('<li data-state="failed"><b>9 of 10 checks passed</b>'));
   assert.ok(html.includes('<li data-state="failed"><b>20 wallets tried to dump. The cap check failed.</b>'));
-  assert.ok(html.includes('id="split-proof-state" data-state="failed">FAIL. 20 wallets sold 6,000,000 LOUD'));
+  assert.ok(html.includes('id="split-proof-state" data-state="failed">FAIL. A group of 20 wallets sold 6,000,000 LOUD'));
   assert.ok(html.includes('<span class="expect">Expected: no more than the cap allows</span></td><td class="res" data-result="FAIL">FAIL</td></tr>'));
   assert.ok(html.includes('id="rec-state" data-state="failed">The run did not pass: 9 of 10 recorded steps passed.</p>'));
   assert.ok(readme.includes('recorded 2027-01-02, the last run did not pass<!--'));

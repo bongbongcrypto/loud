@@ -338,7 +338,7 @@
     <ul class="proof-facts" id="proof-facts">
       <li data-state="ok"><b>10 of 10 checks passed</b><span>on NEAR testnet, 2026-11-13.</span><a href="https://testnet.nearblocks.io/txns/2pWUqQEjShNo2S8d2g7yiRXroPvYgDmvzyW62hzK5HJf" rel="noopener">The deploy transaction in the explorer</a></li>
       <li data-state="ok"><b>0 access keys</b><span>on the token account, so nobody can sign for it.</span><a href="https://testnet.nearblocks.io/address/t.loud-mwf8y9vabcbf40.testnet" rel="noopener">t.loud-mwf8y9vabcbf40.testnet in the explorer</a></li>
-      <li data-state="ok"><b>20 wallets tried to dump. The cap held.</b><span>20 wallets sold 6,450,604 LOUD in 10 min 23 s. The cap allowed at most 6,806,536 LOUD in that time.</span><a href="receipts.json" rel="noopener">Every transaction, in receipts.json</a></li>
+      <li data-state="ok"><b>20 wallets tried to dump. The cap held.</b><span>A group of 20 wallets sold 6,450,604 LOUD in 10 min 23 s. The cap allowed at most 6,806,536 LOUD in that time.</span><a href="receipts.json" rel="noopener">Every transaction, in receipts.json</a></li>
     </ul>
     <p class="fine" id="proof-scope" hidden></p>
 
@@ -390,7 +390,7 @@
     </details>
     <details class="fine-print">
       <summary>Dump measurement</summary>
-      <p class="state" id="split-proof-state" data-state="ok">PASS. 20 wallets sold 6,450,604 LOUD in 10 min 23 s. The cap allowed at most 6,806,536 LOUD in that time.</p>
+      <p class="state" id="split-proof-state" data-state="ok">PASS. A group of 20 wallets sold 6,450,604 LOUD in 10 min 23 s. The cap allowed at most 6,806,536 LOUD in that time.</p>
       <dl class="facts" id="split-proof-facts"></dl>
     </details>
     <details class="fine-print" id="near-record" hidden>
@@ -422,7 +422,7 @@
       <div><dt>Side deals and wrappers</dt>
       <dd>Loud tokens can be sent with a plain transfer to another registered account. That covers a private sale, and it covers a contract that issues its own token against them. Whoever buys that wrapper token holds no tag.</dd></div>
       <div><dt>Other pools</dt>
-      <dd><code>ft_transfer_call</code> refuses loud tokens. Quiet tokens can be sent with it. The receiving contract gets a fixed 30 Tgas for its <code>ft_on_transfer</code>, and if that is not enough the transfer is refunded.</dd></div>
+      <dd><code>ft_transfer_call</code> refuses loud tokens. Quiet tokens can be sent with it. The receiving contract gets a fixed 30 Tgas for its <code>ft_on_transfer</code>, and if that is not enough the contract takes back whatever the receiver still holds.</dd></div>
       <div><dt>Waiting out the launch window avoids the tag</dt>
       <dd>Only buys inside the launch window are loud. A sniper who waits until it ends gets quiet tokens at the going price, with no notice and no cap. The creator allocation starts loud.</dd></div>
       <div><dt>Early honest buyers are loud too</dt>
@@ -478,7 +478,7 @@
           <tr><th scope="row">Launch window</th><td>10 min</td><td>Buys in this window are loud.</td></tr>
           <tr><th scope="row">Notice</th><td>30 min</td><td>Wait between a shout and the first sale. 30 min is our guess at how long a person needs to see it and act.</td></tr>
           <tr><th scope="row">Exit window</th><td>60 min</td><td>How long a ready exit can be used. Too short, and exits expire before the cap has room.</td></tr>
-          <tr><th scope="row">Cap</th><td>0.5% per 60 min</td><td>Shared by all accounts. A 5% position needs about 10 hours of refill.</td></tr>
+          <tr><th scope="row">Cap</th><td>0.5% per 60 min</td><td>Shared by all accounts. It holds 0.5% and refills 0.5% per 60 min, so any 60 min lets out at most 1%. A 5% position needs about 10 hours of refill.</td></tr>
         </tbody>
       </table>
     </div>
