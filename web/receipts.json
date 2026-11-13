@@ -1,0 +1,30 @@
+{
+  "status": "pending",
+  "network": "testnet",
+  "token_account": null,
+  "accounts": {
+    "insider": null,
+    "late": null,
+    "wallets": []
+  },
+  "steps": [],
+  "split": {
+    "wallets": 20,
+    "cap_units": null,
+    "cap_window_ns": null,
+    "bucket_at_start": null,
+    "window_start_ns": null,
+    "window_end_ns": null,
+    "measured_until_ns": null,
+    "sold_in_window": null,
+    "sold_total": null,
+    "bound": null,
+    "attempts": 0,
+    "fills": 0,
+    "cap_hits": 0,
+    "receipts_match_counter": null,
+    "pass": false
+  },
+  "error": null,
+  "generated_at": null
+}

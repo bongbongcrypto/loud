@@ -1,0 +1,51 @@
+# Secrets
+.env*
+!.env.example
+.alert.env
+wallet.json
+*.key
+*.pem
+id_rsa*
+*.mnemonic
+*-session-cookie*
+neardev/
+.near-credentials/
+payload*.json
+
+# Binaries
+*.exe
+*.bin
+*.dll
+*.so
+*.wasm
+
+# Dependencies
+node_modules/
+venv/
+__pycache__/
+*.pyc
+target/
+.cargo/
+
+# Logs / Cache
+*.log
+logs/
+.cache/
+
+# IDE / agents / OS
+.vscode/
+.idea/
+*.swp
+.codex/
+.gemini/
+.cursor/
+.aider*
+.DS_Store
+Thumbs.db
+
+# Internal notes (not for the public repo)
+CLAUDE.md
+PROGRESS.md
+AGENTS.md
+.agents/
+.claude/

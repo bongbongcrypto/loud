@@ -1,0 +1,28 @@
+{
+  "status": "pending",
+  "network": "testnet",
+  "preset": "demo",
+  "token_account": null,
+  "root_account": null,
+  "creator_account": null,
+  "params": null,
+  "onchain_params": null,
+  "deployed_at": null,
+  "deployed_at_ns": null,
+  "tx": null,
+  "zero_keys": false,
+  "access_keys": null,
+  "wasm": null,
+  "code_hash": null,
+  "explorer": {
+    "token": null,
+    "root": null,
+    "tx": null
+  },
+  "run": {
+    "repository": null,
+    "run_id": null,
+    "commit": null
+  },
+  "generated_at": null
+}

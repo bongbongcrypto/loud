@@ -1,0 +1,19 @@
+[package]
+name = "loud"
+version = "1.0.0"
+edition = "2021"
+rust-version = "1.95"
+authors = ["Bongbong"]
+license = "MIT"
+description = "LOUD: an NEP-141 token whose early supply can only leave through a public, globally capped door."
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+near-sdk = "=5.30.1"
+loud-math = { path = "../loud-math" }
+
+[dev-dependencies]
+near-sdk = { version = "=5.30.1", features = ["unit-testing"] }

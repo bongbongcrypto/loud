@@ -1,0 +1,388 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LOUD: early supply leaves in public, under one cap</title>
+<meta name="description" content="LOUD is an NEP-141 memecoin on NEAR testnet. It limits how fast early supply can be sold on its defined path, no matter how many wallets it is split across.">
+<meta name="color-scheme" content="light">
+<link rel="stylesheet" href="styles.css">
+<script type="module" src="app.js"></script>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+
+<header class="masthead">
+  <p class="wordmark">LOUD</p>
+  <nav aria-label="Sections">
+    <a href="#rule">Rule</a>
+    <a href="#split">Split attack</a>
+    <a href="#sandbox">Sandbox</a>
+    <a href="#proof">Testnet proof</a>
+    <a href="#limits">Limits</a>
+    <a href="#parameters">Parameters</a>
+  </nav>
+</header>
+
+<main id="main">
+
+<section class="lede" aria-labelledby="title">
+  <p class="kicker">NEP-141 memecoin on NEAR testnet. One mechanic.</p>
+  <h1 id="title">Early supply can leave. It cannot leave quietly or all at once.</h1>
+  <p class="claim">LOUD limits how fast early supply can be sold on its defined path, no matter how many wallets it is split across. It does not prevent fraud.</p>
+</section>
+
+<section class="board" id="board" aria-labelledby="board-title">
+  <div class="board-head">
+    <h2 id="board-title">Exits</h2>
+    <p class="board-clock"><span id="board-clock-label">Engine clock</span> <b id="board-clock">T+0:00</b></p>
+    <div class="board-source" role="group" aria-label="Board source">
+      <button type="button" id="src-sim" aria-pressed="true">Simulation</button>
+      <button type="button" id="src-live" aria-pressed="false" disabled>Testnet: pending</button>
+    </div>
+  </div>
+  <div class="board-scroll">
+    <table class="board-table" id="hero-table">
+      <thead>
+        <tr>
+          <th scope="col" class="c-id">Exit</th>
+          <th scope="col" class="c-acct">Account</th>
+          <th scope="col" class="c-amt">Amount</th>
+          <th scope="col" class="c-shout">Shouted</th>
+          <th scope="col" class="c-ready">Ready</th>
+          <th scope="col" class="c-status">Status</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr class="board-empty"><td colspan="6">The board fills in when the page script runs. Every exit of loud tokens is listed here before it can be sold.</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="board-foot">
+    <div class="cap">
+      <span class="cap-label">Cap room</span>
+      <span class="cap-bar" id="hero-cap-bar" role="meter" aria-label="Cap room available now" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><span></span></span>
+      <span class="cap-text" id="hero-cap-text"></span>
+    </div>
+    <p class="board-note" id="hero-note">Simulation on the rule engine, standard parameters: the 5% creator allocation, split across 36 wallets, leaves as fast as the rule allows. One engine minute every 0.4 s.</p>
+    <div class="board-controls">
+      <button type="button" id="hero-pause" aria-pressed="false">Pause</button>
+      <button type="button" id="hero-step">Step 1 min</button>
+    </div>
+  </div>
+  <p class="board-legend"><b>NOTICE</b> shouted, waiting. <b>BOARDING</b> leave is allowed, the cap decides how much. <b>LEFT</b> sold through the door. <b>EXPIRED</b> the exit window ran out; the tokens are still loud.</p>
+</section>
+
+<section class="row" id="rule" aria-labelledby="rule-h">
+  <div class="row-head">
+    <h2 id="rule-h">The rule</h2>
+    <p class="aside">The contract never decides who is an insider. It only knows when a token left the pool.</p>
+  </div>
+  <div class="row-body">
+    <p>Tokens bought during the launch window, and the creator allocation, are <b>loud</b>. Everything else is <b>quiet</b>. Quiet tokens trade like any token. Loud tokens have exactly one way out.</p>
+    <ol class="door">
+      <li class="door-shout">
+        <b>Shout</b>
+        <span>Announce the amount. The tokens go into escrow and the exit appears on the board.</span>
+      </li>
+      <li class="door-notice">
+        <b>Notice, 30 min</b>
+        <span>Nothing can be sold. Everyone can see what is coming.</span>
+      </li>
+      <li class="door-leave">
+        <b>Leave, within 60 min</b>
+        <span>Sell into the built-in pool, as far as the cap has room. After 60 min the exit expires and must be shouted again.</span>
+      </li>
+    </ol>
+    <p class="cap-rule"><b>One global cap.</b> All leaves together share one bucket: 0.5% of supply per 60 min. The bucket belongs to the token, so more wallets never mean more room.</p>
+    <ul class="plain">
+      <li>The tag belongs to the tokens. Sending loud tokens to another account moves the tag with them.</li>
+      <li>Tokens sold through the door become quiet. Anyone who buys from the pool after the launch window gets quiet tokens.</li>
+      <li>Loud tokens cannot be sold with <code>sell</code> and cannot enter other contracts through <code>ft_transfer_call</code>.</li>
+      <li>No owner, no pause, no upgrade method, no parameter setter. The token account has zero access keys.</li>
+    </ul>
+  </div>
+</section>
+
+<section class="row" id="split" aria-labelledby="split-h">
+  <div class="row-head">
+    <h2 id="split-h">Run the split attack</h2>
+    <p class="aside">The common anti-dump design limits each wallet. An insider answers by using more wallets. Try it against three rule sets.</p>
+  </div>
+  <div class="row-body">
+    <form id="split-form" class="controls">
+      <fieldset>
+        <legend>Insider share of supply</legend>
+        <label><input type="radio" name="share" value="500" checked><span>5%</span></label>
+        <label><input type="radio" name="share" value="1000"><span>10%</span></label>
+        <label><input type="radio" name="share" value="2000"><span>20%</span></label>
+      </fieldset>
+      <fieldset>
+        <legend>Wallets it is split across</legend>
+        <label><input type="radio" name="wallets" value="1"><span>1</span></label>
+        <label><input type="radio" name="wallets" value="10"><span>10</span></label>
+        <label><input type="radio" name="wallets" value="100" checked><span>100</span></label>
+        <label><input type="radio" name="wallets" value="1000"><span>1000</span></label>
+      </fieldset>
+      <button type="submit" class="primary" id="split-run">Run</button>
+      <p class="run-status" id="split-status" role="status"></p>
+    </form>
+
+    <ol class="result" id="split-result" aria-live="polite">
+      <li>Press Run. The result sentences are computed from the run, in your browser, by the same rule engine the tests use.</li>
+    </ol>
+
+    <figure id="fig-sold">
+      <figcaption>
+        <b>Share of the insider position sold.</b>
+        <span class="legend"><svg width="28" height="8" aria-hidden="true"><line x1="0" y1="4" x2="28" y2="4" class="l-split"/></svg> <span id="legend-n">split across wallets</span></span>
+        <span class="legend"><svg width="28" height="8" aria-hidden="true"><line x1="0" y1="4" x2="28" y2="4" class="l-single"/></svg> one wallet</span>
+        <span class="view" role="group" aria-label="Time range">
+          <button type="button" data-minutes="60" aria-pressed="true">First hour</button>
+          <button type="button" data-minutes="360" aria-pressed="false">6 hours</button>
+        </span>
+      </figcaption>
+      <div class="plots">
+        <div class="plot"><h3>No rule</h3><div class="chart" id="plot-naive"></div></div>
+        <div class="plot"><h3>Per-wallet limits</h3><div class="chart" id="plot-per_wallet"></div></div>
+        <div class="plot"><h3>LOUD</h3><div class="chart" id="plot-loud"></div></div>
+      </div>
+    </figure>
+
+    <figure id="fig-price">
+      <figcaption><b>Pool price, as a share of the price when the insider starts.</b></figcaption>
+      <div class="chart" id="plot-price"></div>
+    </figure>
+
+    <div class="table-scroll">
+      <table class="data" id="split-table">
+        <thead>
+          <tr>
+            <th scope="col">Rule set</th>
+            <th scope="col">Time to sell the whole position, one wallet</th>
+            <th scope="col">Same, split</th>
+            <th scope="col">Price fall after 1 min</th>
+            <th scope="col">Largest price fall in 6 h</th>
+          </tr>
+        </thead>
+        <tbody><tr><td colspan="5">Not run yet.</td></tr></tbody>
+      </table>
+    </div>
+
+    <div class="notes">
+      <p><b>What the run does.</b> Standard parameters. The insider holds the chosen share as loud tokens, split evenly. Thirty holders buy 300 NEAR of tokens right after the launch window. At minute 0 on the charts, which is the end of the launch window, the insider starts selling as fast as each rule allows. Per-wallet limits here mean at most 0.5% of supply per sale and one sale per wallet per 60 s.</p>
+      <p><b>What it leaves out.</b> Nobody reacts: holders do not sell when they see a shout, and nobody buys the dip. Under LOUD the sale is still running when the chart ends, so its price line is an unfinished sale. LOUD does not protect the price level. It changes how fast and how visibly early supply sells.</p>
+    </div>
+  </div>
+</section>
+
+<section class="row" id="sandbox" aria-labelledby="sandbox-h">
+  <div class="row-head">
+    <h2 id="sandbox-h">Play the token by hand</h2>
+    <p class="aside">A private copy of the rule engine with a clock you control. No wallet, no chain. Errors are the engine's own messages.</p>
+    <ol class="path">
+      <li>Buy with 10 NEAR. You are inside the launch window, so the tokens are loud.</li>
+      <li>Try to sell. Read the error.</li>
+      <li>Shout your loud balance. Try to leave at once.</li>
+      <li>Skip 30 min. Leave. The cap fills part of it.</li>
+      <li>Leave again. Skip time, watch the cap refill, leave again.</li>
+      <li>Skip past the exit window. The exit expires. Hush it and shout again.</li>
+    </ol>
+  </div>
+  <div class="row-body" id="sandbox-body">
+    <div class="sb-clock">
+      <p><span class="label">Clock</span> <b id="sb-clock">T+0:00</b> <span id="sb-window"></span></p>
+      <div class="skip-buttons" role="group" aria-label="Skip time">
+        <button type="button" data-skip="1">+1 min</button>
+        <button type="button" data-skip="10">+10 min</button>
+        <button type="button" data-skip="30">+30 min</button>
+        <button type="button" data-skip="60">+1 h</button>
+        <button type="button" id="sb-reset">Reset</button>
+      </div>
+    </div>
+
+    <dl class="sb-account">
+      <div><dt>Account</dt><dd id="sb-account">you.testnet</dd></div>
+      <div><dt>Loud</dt><dd id="sb-loud">0</dd></div>
+      <div><dt>Quiet</dt><dd id="sb-quiet">0</dd></div>
+      <div><dt>In open exits</dt><dd id="sb-escrow">0</dd></div>
+      <div><dt>NEAR paid / received</dt><dd id="sb-near">0 / 0</dd></div>
+    </dl>
+
+    <div class="sb-actions">
+      <form data-action="buy">
+        <label for="sb-buy-in">Buy with NEAR</label>
+        <input id="sb-buy-in" inputmode="decimal" autocomplete="off" value="10">
+        <button type="submit">Buy</button>
+      </form>
+      <form data-action="sell">
+        <label for="sb-sell-in">Sell LOUD <button type="button" class="link" data-fill="quiet">all quiet</button> <button type="button" class="link" data-fill="all">whole balance</button></label>
+        <input id="sb-sell-in" inputmode="decimal" autocomplete="off" value="1000000">
+        <button type="submit">Sell</button>
+      </form>
+      <form data-action="shout">
+        <label for="sb-shout-in">Shout LOUD <button type="button" class="link" data-fill="loud">all loud</button></label>
+        <input id="sb-shout-in" inputmode="decimal" autocomplete="off" value="1000000">
+        <button type="submit">Shout</button>
+      </form>
+      <div class="sb-extra">
+        <button type="button" id="sb-split">Send half to a second wallet</button>
+        <button type="button" id="sb-switch">Switch wallet</button>
+        <span id="sb-other"></span>
+      </div>
+    </div>
+
+    <div class="sb-result" id="sb-result" role="status">
+      <p class="call">No call yet.</p>
+    </div>
+
+    <div class="board board-inline" aria-label="Sandbox exits">
+      <div class="board-scroll">
+        <table class="board-table with-actions" id="sb-table">
+          <thead>
+            <tr>
+              <th scope="col" class="c-id">Exit</th>
+              <th scope="col" class="c-acct">Account</th>
+              <th scope="col" class="c-amt">Amount</th>
+              <th scope="col" class="c-shout">Shouted</th>
+              <th scope="col" class="c-ready">Ready</th>
+              <th scope="col" class="c-status">Status</th>
+              <th scope="col" class="c-act">Action</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr class="board-empty"><td colspan="7">No exits yet. Shout to list one.</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="board-foot">
+        <div class="cap">
+          <span class="cap-label">Cap room</span>
+          <span class="cap-bar" id="sb-cap-bar" role="meter" aria-label="Cap room available now" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><span></span></span>
+          <span class="cap-text" id="sb-cap-text"></span>
+        </div>
+        <p class="board-note" id="sb-cap-note">The bucket starts empty at launch and refills to 5,000,000 LOUD over 60 min.</p>
+      </div>
+    </div>
+
+    <details class="sb-log">
+      <summary>Call log</summary>
+      <ol id="sb-log"></ol>
+    </details>
+  </div>
+</section>
+
+<section class="row" id="proof" aria-labelledby="proof-h">
+  <div class="row-head">
+    <h2 id="proof-h">Testnet proof</h2>
+    <p class="aside">A CI job deploys the contract to NEAR testnet and runs ten checks against it. It writes two files; this section shows them as they are. Keys exist only in memory inside that job.</p>
+  </div>
+  <div class="row-body">
+    <h3>Deployment</h3>
+    <p class="state" id="dep-state" data-state="pending">Pending. The token is not deployed yet, or the proof run has not been committed.</p>
+    <dl class="facts" id="dep-facts"></dl>
+
+    <div id="live" hidden>
+      <h3>Live state <button type="button" class="link" id="live-refresh">refresh</button></h3>
+      <p class="state" id="live-state" data-state="pending">Not loaded.</p>
+      <dl class="facts" id="live-facts"></dl>
+    </div>
+
+    <h3>Split test on chain</h3>
+    <p class="state" id="split-proof-state" data-state="pending">No split measurement yet.</p>
+    <dl class="facts" id="split-proof-facts"></dl>
+
+    <h3>Steps</h3>
+    <p class="state" id="rec-state" data-state="pending">Pending. No proof run has been recorded yet.</p>
+    <div class="table-scroll">
+      <table class="data steps" id="steps-table">
+        <thead>
+          <tr>
+            <th scope="col">Step</th>
+            <th scope="col">Expected</th>
+            <th scope="col">Got</th>
+            <th scope="col">Result</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr><td>1. Create a fresh root account through the testnet faucet</td><td>account exists and holds enough NEAR</td><td class="pending">pending</td><td class="pending">pending</td></tr>
+          <tr><td>2. Create the token account in one batch transaction with no AddKey</td><td>the access key list is empty</td><td class="pending">pending</td><td class="pending">pending</td></tr>
+          <tr><td>3. Create the insider, 20 wallets and a late buyer</td><td>22 accounts</td><td class="pending">pending</td><td class="pending">pending</td></tr>
+          <tr><td>4. The insider buys in the launch window</td><td>bought tokens are loud</td><td class="pending">pending</td><td class="pending">pending</td></tr>
+          <tr><td>5. The insider splits its loud balance across 20 wallets</td><td>every wallet holds loud, no quiet</td><td class="pending">pending</td><td class="pending">pending</td></tr>
+          <tr><td>6. One wallet calls sell</td><td>fails with E_NO_QUIET</td><td class="pending">pending</td><td class="pending">pending</td></tr>
+          <tr><td>7. A late buyer buys after the launch window and sells half</td><td>holds quiet only, sell succeeds</td><td class="pending">pending</td><td class="pending">pending</td></tr>
+          <tr><td>8. All 20 wallets shout; one calls leave at once</td><td>20 open exits, the leave fails with E_NOTICE</td><td class="pending">pending</td><td class="pending">pending</td></tr>
+          <tr><td>9. After the notice all 20 wallets call leave in rounds for one cap window</td><td>at least one fill; rejected calls fail with E_CAP</td><td class="pending">pending</td><td class="pending">pending</td></tr>
+          <tr><td>10. Compare what left with the cap</td><td>sold total is at most the cap bound</td><td class="pending">pending</td><td class="pending">pending</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="fine" id="proof-meta">The on-chain run uses the demo preset so it fits in one CI job: launch window 2 min, notice 1 min, exit window 10 min, cap 0.5% per 10 min.</p>
+  </div>
+</section>
+
+<section class="row" id="limits" aria-labelledby="limits-h">
+  <div class="row-head">
+    <h2 id="limits-h">Limits</h2>
+    <p class="aside">What LOUD does not do.</p>
+  </div>
+  <div class="row-body">
+    <dl class="limits">
+      <dt>Wrappers and off-pool deals</dt>
+      <dd>Someone can send loud tokens to a custom contract with plain <code>ft_transfer</code> and trade claims on them, sell the account itself, or sell over the counter. The tag still follows the tokens: whoever ends up with them holds loud tokens and faces the same door. LOUD limits the pool exit and has no say over side deals.</dd>
+      <dt>Other pools</dt>
+      <dd>Loud tokens cannot enter other contracts through <code>ft_transfer_call</code>, so standard DEX deposits reject them. Quiet tokens can trade anywhere.</dd>
+      <dt>First come, first served</dt>
+      <dd>Ready exits share the cap in the order their leave calls land. A large holder can take a whole window's room. Splitting gives no extra room, and it gives nobody else priority either.</dd>
+      <dt>Early honest buyers are loud too</dt>
+      <dd>Anyone who buys in the launch window accepts the door.</dd>
+      <dt>Notice can trigger a rush</dt>
+      <dd>Quiet holders can sell before a shouted exit becomes ready. That is the intended information, and it can also accelerate a sell-off.</dd>
+      <dt>No identity</dt>
+      <dd>The contract does not know who is an insider and does not try to.</dd>
+      <dt>Sybil resistance</dt>
+      <dd>The cap is global, so more accounts never mean more exit room. That is the whole sybil defence; there is no per-person fairness.</dd>
+      <dt>Testnet simplifications</dt>
+      <dd>The contract pays account storage, which is a spam vector on mainnet. The code is unaudited. There is no fee and no liquidity migration.</dd>
+    </dl>
+  </div>
+</section>
+
+<section class="row" id="parameters" aria-labelledby="parameters-h">
+  <div class="row-head">
+    <h2 id="parameters-h">Parameters</h2>
+    <p class="aside">Fixed at deployment. No setter. Anyone can read them with <code>get_params</code>. The values below are the standard preset.</p>
+  </div>
+  <div class="row-body">
+    <div class="table-scroll">
+      <table class="data params" id="params-table">
+        <thead>
+          <tr><th scope="col">Parameter</th><th scope="col">Standard</th><th scope="col">What it is for, and what it costs</th></tr>
+        </thead>
+        <tbody>
+          <tr><th scope="row">Supply</th><td>1,000,000,000</td><td>Minted once. There is no mint method, so a cap written as a share of supply stays the same number of tokens.</td></tr>
+          <tr><th scope="row">Creator allocation</th><td>5%</td><td>Paid to the creator as loud tokens, so the creator uses the same door as everyone else. At most 20%. A larger allocation means a longer queue at the door.</td></tr>
+          <tr><th scope="row">Virtual NEAR reserve</th><td>100 NEAR</td><td>Sets the starting price and how much the first buys move it. Higher means a calmer start and fewer tokens per NEAR for the first buyers.</td></tr>
+          <tr><th scope="row">Launch window</th><td>10 min</td><td>Buys in this window are loud. It covers the minutes when bundles and snipers buy before most people can react. A longer window tags more ordinary buyers as well.</td></tr>
+          <tr><th scope="row">Notice</th><td>30 min</td><td>Wait between shout and the first possible leave. Long enough for a person to see the board and act, short enough that an early buyer is not locked in for hours.</td></tr>
+          <tr><th scope="row">Exit window</th><td>60 min</td><td>How long a shout stays usable after the notice. It stops old shouts from sitting on the board as free options. Too short, and a ready exit can expire before the cap has room for it.</td></tr>
+          <tr><th scope="row">Cap</th><td>0.5% per 60 min</td><td>The most loud supply that can leave per window, for all accounts together. The bucket starts empty at launch. A holder of 5% needs about 10 hours to leave. A lower cap slows a dump more and makes early buyers wait longer in the same line.</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="fine">Bounds are checked once at deployment: creator allocation 0 to 20%, cap 0.01% to 10% of supply per window, launch window 1 min to 7 days, notice 30 s to 7 days, exit window and cap window 1 min to 7 days. The standard values were fixed in the specification before the simulations ran. The simulation report in the repository (<code>sim/RESULTS.md</code>) checks them against tighter and looser variants and states where LOUD does worse than no rule.</p>
+  </div>
+</section>
+
+</main>
+
+<footer class="foot">
+  <p><b>Built at NEAR HACKATHON. Testnet only. Unaudited.</b></p>
+  <p>By Bongbong (@bongbongcrypto). <a id="repo-link" hidden>Source, specification and tests</a></p>
+  <p>This page sets no cookies and stores nothing. It reads two JSON files from this site and, when a token is deployed, public view methods from NEAR testnet RPC.</p>
+</footer>
+
+<noscript><p class="noscript">The board, the split run, the sandbox and the proof data need JavaScript. The rule, the limits and the parameters above are complete without it.</p></noscript>
+</body>
+</html>

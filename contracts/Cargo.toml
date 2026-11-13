@@ -1,0 +1,12 @@
+[workspace]
+resolver = "2"
+members = ["loud-math", "loud"]
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"
+overflow-checks = true
+debug = false
+strip = true

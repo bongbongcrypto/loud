@@ -1,0 +1,112 @@
+name: proof
+
+# Deploys LOUD to NEAR testnet, runs the checks of SPEC section 8 on chain and commits
+# web/deployment.json and web/receipts.json. Manual trigger only. No secrets: every key
+# is generated inside the job and kept in memory. See scripts/proof/README.md.
+#
+# The job that installs and runs npm code (proof) has a read-only token and no stored
+# git credentials. It hands the two result files to the record job as an artifact; only
+# the record job can write to the repository, and it runs no npm code.
+
+on:
+  workflow_dispatch:
+    inputs:
+      preset:
+        description: "Parameter preset (SPEC section 3). Only demo fits the job time limit."
+        required: true
+        default: demo
+      commit_on_failure:
+        description: "Commit the result files even when the proof run fails"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: proof
+  cancel-in-progress: false
+
+jobs:
+  build:
+    # Same tests and the same wasm build as CI; uploads the artifact loud-wasm.
+    uses: ./.github/workflows/ci.yml
+    permissions:
+      contents: read
+
+  proof:
+    name: Testnet proof run
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: loud-wasm
+          path: build
+
+      - name: Install the pinned client library
+        working-directory: scripts/proof
+        run: npm install --ignore-scripts --no-audit --no-fund
+
+      - name: Run the proof
+        id: proof
+        env:
+          PRESET: ${{ inputs.preset }}
+          LOUD_WASM: ${{ github.workspace }}/build/loud.wasm
+        run: node scripts/proof/proof.mjs
+
+      # Both files sit in web/, so the artifact holds them at its root.
+      - name: Upload the result files
+        if: ${{ always() && (steps.proof.outcome == 'success' || (steps.proof.outcome == 'failure' && inputs.commit_on_failure)) }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: proof-results
+          path: |
+            web/deployment.json
+            web/receipts.json
+          if-no-files-found: error
+          retention-days: 7
+
+  record:
+    name: Commit the result files
+    needs: proof
+    # A failed run is committed only when commit_on_failure is set. If the proof job
+    # failed before the proof step, there is no artifact and this job fails at download.
+    if: ${{ always() && (needs.proof.result == 'success' || (needs.proof.result == 'failure' && inputs.commit_on_failure)) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: proof-results
+          path: web
+
+      - name: Commit
+        env:
+          STATUS: ${{ needs.proof.result }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add web/deployment.json web/receipts.json
+          if git diff --cached --quiet; then
+            echo "result files unchanged"
+            exit 0
+          fi
+          git commit -m "chore(proof): record testnet proof run ${GITHUB_RUN_ID} (${STATUS})"
+          git pull --rebase origin "${GITHUB_REF_NAME}"
+          git push origin "HEAD:${GITHUB_REF_NAME}"

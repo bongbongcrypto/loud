@@ -1,0 +1,19 @@
+{
+  "name": "loud-proof",
+  "version": "0.1.0",
+  "private": true,
+  "description": "On-chain proof run for LOUD on NEAR testnet. Runs in GitHub Actions only.",
+  "author": "Bongbong",
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "proof": "node proof.mjs",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "near-api-js": "5.1.1"
+  }
+}

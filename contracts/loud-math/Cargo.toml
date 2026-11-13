@@ -1,0 +1,10 @@
+[package]
+name = "loud-math"
+version = "1.0.0"
+edition = "2021"
+authors = ["Bongbong"]
+license = "MIT"
+description = "Integer math for the LOUD token: 256-bit mul_div, pool quotes, cap bucket."
+publish = false
+
+[dependencies]
