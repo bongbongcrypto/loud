@@ -840,6 +840,9 @@ export function liveSummary(live, token) {
   } else if (Number.isFinite(open) && open !== live.exits.length) {
     parts.push(`get_exits returned ${live.exits.length} exits while get_state reports ${open} open.`);
   }
+  if (!b.pinned && live.exits.length > EXITS_PAGE) {
+    parts.push(`Above ${EXITS_PAGE} open exits the contract returns pages in storage order, and these pages were not read at one block: an exit that closed between two page reads can be missing or stale in this list.`);
+  }
   return parts.join(' ');
 }
 
@@ -915,47 +918,110 @@ export function deploymentView(dep) {
   };
 }
 
-function txView(tx) {
+export const UNRESOLVED_LABEL = 'unresolved (sent, outcome not confirmed)';
+const NOT_SENT_LABEL = 'not sent (no transaction hash on record)';
+const FAUCET_LABEL = 'outcome not reported by the faucet';
+
+// One earlier broadcast of a send that was signed again (receipts key `earlier_attempts`),
+// with the result of its lookup by hash when the file has one (`earlier_attempt_outcomes`).
+function earlierView(hash, outcomes) {
+  const o = outcomes.find((x) => x && typeof x === 'object' && x.hash === hash);
+  const outcome = o && ['success', 'failure', 'invalid', 'unknown'].includes(o.outcome) ? o.outcome : 'unknown';
+  return {
+    hash: text(hash),
+    short: shortHash(hash),
+    href: explorerTx(hash),
+    outcome,
+    // "invalid" here means that the lookup by hash did not find the transaction on chain.
+    label: outcome === 'success' ? 'succeeded' : outcome === 'failure' ? 'failed on chain'
+      : outcome === 'invalid' ? 'not found on chain' : 'outcome not confirmed',
+  };
+}
+
+// `faucet`: the record is the faucet's own transaction as the faucet returned it. The file
+// has no marker for that; receiptsView guesses it for step 1 (see there).
+function txView(tx, faucet = false) {
   const t = tx && typeof tx === 'object' ? tx : {};
   const outcome = ['success', 'failure', 'invalid', 'unknown'].includes(t.outcome) ? t.outcome : 'unknown';
   let note = '';
   if (t.filled !== undefined && t.filled !== null && DECIMAL.test(text(t.filled))) note = `filled ${fmtTokens(BigInt(t.filled))}`;
   else if (t.error_code) note = text(t.error_code);
   else if (t.error) note = text(t.error).slice(0, 120);
+  const more = (x) => { note = `${note ? `${note}, ` : ''}${x}`; };
   // Newer proof runs record whether the NEAR payout receipts of a call succeeded.
   // Older files have no `settled` key; that is shown as before.
   const unsettled = outcome === 'success' && t.settled === false;
-  if (unsettled) note = `${note ? `${note}, ` : ''}a payout receipt failed`;
+  if (unsettled) more('a payout receipt failed');
+  // Keys written only by newer proof runs; absent in older files, then nothing is added.
+  if (t.resolved_late === true) more('outcome confirmed by a later lookup by hash');
+  if (typeof t.retried_as === 'string' && t.retried_as) more(`an earlier broadcast that did execute; the send was retried as ${shortHash(t.retried_as)}`);
+  const outcomes = Array.isArray(t.earlier_attempt_outcomes) ? t.earlier_attempt_outcomes : [];
+  const earlier = (Array.isArray(t.earlier_attempts) ? t.earlier_attempts : [])
+    .filter((x) => typeof x === 'string' && x !== '')
+    .map((x) => earlierView(x, outcomes));
+  // "unknown" with a hash: the transaction was sent and its outcome was never confirmed.
+  // That is not the same as "not executed". Without a hash it was never broadcast.
+  const unresolved = outcome === 'unknown' && Boolean(t.hash) && !faucet;
   return {
     hash: text(t.hash),
     short: t.hash ? shortHash(t.hash) : 'no hash',
     href: explorerTx(t.hash),
     account: text(t.account),
     outcome,
+    // What the page prints.
+    label: outcome === 'unknown'
+      ? (faucet ? FAUCET_LABEL : t.hash ? UNRESOLVED_LABEL : NOT_SENT_LABEL)
+      : outcome === 'invalid' ? 'invalid (rejected before execution)' : outcome,
+    unresolved,
     unsettled,
     round: t.round === undefined || t.round === null ? '' : text(t.round),
     note,
+    earlier,
   };
 }
+
+const isCount = (v) => Number.isInteger(v) && v >= 0;
 
 export function receiptsView(rec) {
   const r = rec && typeof rec === 'object' ? rec : {};
   const state = stateOf(r);
+  // Files written before the proof script counted unresolved transactions have none of
+  // its keys; the page then counts from the records.
+  const scriptCounts = isCount(r.unresolved_txs);
   const steps = (Array.isArray(r.steps) ? r.steps : [])
     .filter((s) => s && typeof s === 'object')
     .sort((a, b) => Number(a.n) - Number(b.n))
     .map((s) => {
-      const txs = (Array.isArray(s.txs) ? s.txs : []).map(txView);
+      // Step 1 can hold the faucet's own transaction, which the script did not send. The
+      // file does not mark it, so this is a guess: in step 1, a record with no signer, or
+      // signed by a top-level account (no dot in its name), is taken as the faucet's.
+      const faucet = (t) => Number(s.n) === 1 && t && typeof t === 'object'
+        && (t.account === null || t.account === undefined || t.account === '' || !String(t.account).includes('.'));
+      const txs = (Array.isArray(s.txs) ? s.txs : []).map((t) => txView(t, faucet(t)));
       const unsettled = txs.filter((t) => t.unsettled).length;
+      const invalid = txs.filter((t) => t.outcome === 'invalid').length;
+      const notSent = txs.filter((t) => t.label === NOT_SENT_LABEL).length;
+      // Sent, outcome not confirmed: the records themselves and earlier broadcasts of a retried send.
+      const unresolvedRecords = txs.filter((t) => t.unresolved).length;
+      const unresolvedEarlier = txs.reduce((n, t) => n + t.earlier.filter((e) => e.outcome === 'unknown').length, 0);
+      const earlier = txs.reduce((n, t) => n + t.earlier.length, 0);
+      const unresolved = unresolvedRecords + unresolvedEarlier;
+      // A step text of an older script put the calls with an unconfirmed outcome under
+      // "not executed". The recorded text is shown as it is; this note is shown beside it.
+      const oldText = !scriptCounts && !isCount(s.unresolved) && unresolvedRecords > 0 && /not executed/.test(text(s.got));
       return {
         n: text(s.n),
         title: text(s.title),
         expect: text(s.expect),
         got: text(s.got),
+        gotNote: oldText
+          ? `Added by this page: the recorded text above comes from a script version that put calls with an unconfirmed outcome under "not executed". ${unresolvedRecords} of the calls in this step ${unresolvedRecords === 1 ? 'was sent and has' : 'were sent and have'} no confirmed outcome; it is not known whether ${unresolvedRecords === 1 ? 'it' : 'each of them'} never executed or executed and failed.`
+          : '',
         result: s.ok === true ? 'PASS' : 'FAIL',
         txs,
+        unresolved,
         txSummary: txs.length === 0 ? 'no transactions'
-          : `${txs.length} transaction${txs.length === 1 ? '' : 's'}: ${txs.filter((t) => t.outcome === 'success').length} succeeded, ${txs.filter((t) => t.outcome === 'failure').length} failed on chain as recorded${unsettled ? `, ${unsettled} of the succeeded with a failed payout receipt` : ''}`,
+          : `${txs.length} transaction${txs.length === 1 ? '' : 's'}: ${txs.filter((t) => t.outcome === 'success').length} succeeded, ${txs.filter((t) => t.outcome === 'failure').length} failed on chain as recorded${invalid ? `, ${invalid} rejected before execution` : ''}${notSent ? `, ${notSent} not sent` : ''}${unresolvedRecords ? `, ${unresolvedRecords} ${UNRESOLVED_LABEL}` : ''}${unsettled ? `, ${unsettled} of the succeeded with a failed payout receipt` : ''}${earlier ? `; ${earlier} earlier broadcast${earlier === 1 ? '' : 's'} replaced by a retry${unresolvedEarlier ? `, ${unresolvedEarlier} of them with no confirmed outcome` : ''}` : ''}`,
       };
     });
   const sp = r.split && typeof r.split === 'object' ? r.split : {};
@@ -990,17 +1056,31 @@ export function receiptsView(rec) {
   if (sp.payout_calls !== undefined && sp.payout_calls !== null && sp.payouts_settled !== undefined && sp.payouts_settled !== null) {
     split.rows.push(['Paying calls with no failed receipt / paying calls', `${text(sp.payouts_settled)} / ${text(sp.payout_calls)}`]);
   }
+  if (isCount(sp.executed_failed) && isCount(sp.not_executed) && isCount(sp.unresolved)) {
+    split.rows.push(['Leave calls executed and failed / not executed / unresolved (sent, outcome not confirmed)', `${sp.executed_failed} / ${sp.not_executed} / ${sp.unresolved}`]);
+  }
   const reasons = (Array.isArray(sp.fail_reasons) ? sp.fail_reasons : []).map((x) => text(x).slice(0, 200)).filter(Boolean);
   if (haveSplit && sp.pass !== true && reasons.length) split.rows.push(['Why the check did not pass', reasons.join('; ')]);
   const passed = steps.filter((s) => s.result === 'PASS').length;
+  // The script's own count when the file has one (it leaves out transactions the faucet
+  // signed and includes earlier broadcasts of retried sends); otherwise counted from the records.
+  const unresolved = scriptCounts ? r.unresolved_txs : steps.reduce((n, s) => n + s.unresolved, 0);
+  const scriptNote = scriptCounts && unresolved > 0 ? text(r.unresolved_note) : '';
+  const unresolvedSentence = unresolved === 0 ? ''
+    : scriptNote ? ` ${scriptNote}`
+      : unresolved === 1
+        ? ' 1 transaction was sent but its outcome was not confirmed; the cap check rests on the contract\'s own counter.'
+        : ` ${unresolved} transactions were sent but their outcome was not confirmed; the cap check rests on the contract's own counter.`;
   return {
     state,
     headline: state === 'pending'
       ? 'Pending. No proof run has been recorded yet.'
       : state === 'ok'
-        ? `All ${steps.length} steps passed on NEAR testnet.`
+        ? `All ${steps.length} steps passed on NEAR testnet.${unresolvedSentence}`
         : `The run did not pass: ${passed} of ${steps.length} recorded steps passed.`,
     steps,
+    unresolved,
+    unresolvedHashes: Array.isArray(r.unresolved_hashes) ? r.unresolved_hashes.map(text).filter(Boolean) : [],
     split,
     error: text(r.error),
     generatedAt: text(r.generated_at),

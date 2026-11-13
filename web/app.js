@@ -456,11 +456,12 @@ const HINTS = {
   E_NOTICE: 'Skip time with the clock buttons, then press Leave again.',
   E_EXPIRED: 'Press Hush to take the tokens back. They are still loud. Then shout again.',
   E_NO_LOUD: 'Shout takes loud tokens only. Quiet tokens can simply be sold.',
-  E_DUST: 'A shout must be at least one millionth of supply, which is 1,000 LOUD here.',
+  E_DUST: 'A shout must be at least one millionth of supply, which is 1,000 LOUD here, unless it is your whole loud balance.',
   E_TOO_MANY: 'Hush or finish an exit first.',
   E_POOL_EMPTY: 'The pool does not hold enough NEAR to pay for this amount.',
   E_DEPOSIT: 'Buy with at least 0.001 NEAR.',
   E_AMOUNT: 'There is nothing to send or sell.',
+  E_RECEIVER: 'The token account itself cannot receive tokens.',
 };
 
 const sb = { box: null, board: null, last: null };
@@ -576,7 +577,9 @@ function txList(txs) {
   details.addEventListener('toggle', () => {
     if (!details.open || list.childElementCount) return;
     list.replaceChildren(...txs.map((t) => h('li', { class: t.outcome === 'success' && !t.unsettled ? '' : 'bad' },
-      link(t.href, t.short), ` ${L.shortAccount(t.account, 28)} ${t.round ? `round ${t.round} ` : ''}${t.outcome}${t.note ? `, ${t.note}` : ''}`)));
+      link(t.href, t.short), ` ${L.shortAccount(t.account, 28)} ${t.round ? `round ${t.round} ` : ''}${t.label}${t.note ? `, ${t.note}` : ''}`,
+      // Earlier broadcasts of a send that was signed again (newer proof runs only).
+      ...t.earlier.flatMap((e, i) => [i === 0 ? '; earlier broadcast of this send: ' : ', ', link(e.href, e.short), ` ${e.label}`]))));
   });
   return details;
 }
@@ -604,7 +607,7 @@ export function renderProof(dep, rec, loadError = '') {
     tbody.replaceChildren(...r.steps.map((st) => h('tr', {},
       h('td', {}, `${st.n}. ${st.title}`, st.txs.length ? h('div', { class: 'fine', text: st.txSummary }) : null, st.txs.length ? txList(st.txs) : null),
       h('td', { 'data-label': 'Expected', text: st.expect }),
-      h('td', { 'data-label': 'Got', text: st.got }),
+      h('td', { 'data-label': 'Got' }, st.got, st.gotNote ? h('div', { class: 'fine', text: st.gotNote }) : null),
       h('td', { class: 'res', 'data-label': 'Result', 'data-result': st.result, text: st.result }),
     )));
   } else {

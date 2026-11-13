@@ -521,6 +521,50 @@ fn shout_checks_balance_dust_and_exit_count() {
 }
 
 #[test]
+fn shout_accepts_a_whole_balance_below_the_dust_floor() {
+    let cfg = standard();
+    let mut c = deploy(&cfg);
+    let ts = T0 + SECOND_NS;
+    let dust = 1_000 * E18;
+    // At this pool price one unit is worth less than one yoctoNEAR.
+    buy(&mut c, &acc("minnow.test"), ts, NEAR);
+    let small = acc("small.test");
+    at(&creator(), ts, 1);
+    c.transfer_loud(small.clone(), U128(dust - 1));
+
+    // A part of a balance below the floor is still refused.
+    at(&small, ts, 1);
+    expect_fail("E_DUST", || c.shout(U128(dust - 2)));
+    assert_eq!(bal(&c, &small), (dust - 1, 0));
+    // The whole balance goes through the door like any other exit.
+    let id = shout(&mut c, &small, ts, dust - 1);
+    assert_eq!(bal(&c, &small), (0, 0));
+    assert_eq!(c.get_account(small.clone()).exits[0].remaining.0, dust - 1);
+    let ready = ts + cfg.notice;
+    at(&small, ready, 0);
+    let quote = c.quote_sell(U128(dust - 1)).0;
+    assert!(quote > 0);
+    assert_eq!(leave(&mut c, &small, ready, id), dust - 1);
+    assert_eq!(transfers_out(), quote);
+    assert!(c.get_account(small.clone()).exits.is_empty());
+
+    // One unit: the shout is accepted, the sale would pay 0 yoctoNEAR, so
+    // leave stops with E_AMOUNT and hush returns the unit.
+    let tiny = acc("tiny.test");
+    at(&creator(), ready, 1);
+    c.transfer_loud(tiny.clone(), U128(1));
+    let id = shout(&mut c, &tiny, ready, 1);
+    assert_eq!(bal(&c, &tiny), (0, 0));
+    let later = ready + cfg.notice;
+    at(&tiny, later, 1);
+    expect_fail("E_AMOUNT", || c.leave(U64(id), U128(0)));
+    assert_eq!(state(&c, later).escrowed.0, 1);
+    hush(&mut c, &tiny, later, id);
+    assert_eq!(bal(&c, &tiny), (1, 0));
+    assert_eq!(state(&c, later).escrowed.0, 0);
+}
+
+#[test]
 fn leave_waits_for_the_notice() {
     let (mut c, id, ready) = launch_with_shout();
     at(&creator(), ready - 1, 1);
@@ -590,6 +634,64 @@ fn leave_checks_owner_expiry_slippage_and_id() {
     assert!(leave(&mut c, &creator(), expires, id) > 0);
     at(&creator(), expires + 1, 1);
     expect_fail("E_EXPIRED", || c.leave(U64(id), U128(0)));
+}
+
+#[test]
+fn leave_scales_the_price_limit_to_the_part_filled() {
+    let (mut c, id, ready) = launch_with_shout();
+    let whole = 20_000_000 * E18;
+    let room = state(&c, ready).cap_available.0;
+    assert!(room > 0 && room < whole);
+    let quote_whole = c.quote_sell(U128(whole)).0;
+    let quote_room = c.quote_sell(U128(room)).0;
+    assert!(quote_whole > quote_room, "an absolute limit could not pass");
+    // The highest limit this fill meets: floor(near_out * remaining / fill).
+    let edge = loud_math::mul_div(quote_room, whole, room);
+    assert!(edge >= quote_whole);
+
+    // One yoctoNEAR above the pro-rata quote fails and moves nothing.
+    at(&creator(), ready, 1);
+    expect_fail("E_SLIPPAGE", || c.leave(U64(id), U128(edge + 1)));
+    let s = state(&c, ready);
+    assert_eq!(s.total_left.0, 0);
+    assert_eq!(s.cap_available.0, room);
+
+    // The quote for the whole exit is a fair limit for a part of it.
+    at(&creator(), ready, 1);
+    assert_eq!(c.leave(U64(id), U128(quote_whole)).0, room);
+    assert_eq!(transfers_out(), quote_room);
+
+    // The next fill is measured against what was left before it.
+    let t2 = ready + 6 * MINUTE;
+    let left = whole - room;
+    let room2 = state(&c, t2).cap_available.0;
+    assert!(room2 > 0 && room2 < left);
+    let quote2 = c.quote_sell(U128(room2)).0;
+    let edge2 = loud_math::mul_div(quote2, left, room2);
+    at(&creator(), t2, 1);
+    expect_fail("E_SLIPPAGE", || c.leave(U64(id), U128(edge2 + 1)));
+    at(&creator(), t2, 1);
+    assert_eq!(c.leave(U64(id), U128(edge2)).0, room2);
+    assert_eq!(transfers_out(), quote2);
+    assert_eq!(c.get_exits(0, 100)[0].remaining.0, left - room2);
+}
+
+#[test]
+fn leave_keeps_the_plain_price_limit_on_a_full_fill() {
+    let cfg = standard();
+    let mut c = deploy(&cfg);
+    buy(&mut c, &acc("whale.test"), T0 + SECOND_NS, 1_000 * NEAR);
+    let amount = 10_000 * E18;
+    let id = shout(&mut c, &creator(), T0 + 2 * SECOND_NS, amount);
+    let ready = T0 + 2 * SECOND_NS + cfg.notice;
+    at(&creator(), ready, 0);
+    let quote = c.quote_sell(U128(amount)).0;
+    at(&creator(), ready, 1);
+    expect_fail("E_SLIPPAGE", || c.leave(U64(id), U128(quote + 1)));
+    at(&creator(), ready, 1);
+    assert_eq!(c.leave(U64(id), U128(quote)).0, amount);
+    assert_eq!(transfers_out(), quote);
+    assert!(c.get_exits(0, 100).is_empty());
 }
 
 #[test]
@@ -813,14 +915,22 @@ fn ft_balances_add_up_to_the_total_supply() {
     assert_eq!(c.ft_balance_of(friend.clone()).0, quiet_bought / 4 + 1_000_000 * E18);
     assert_eq!(ft_sum(&c, t1, &everyone), supply);
 
-    // A transfer to the token account itself is added to its balance.
+    // A transfer to the token account itself is refused, quiet or loud, so
+    // its balance stays the pool inventory plus the escrow.
     at(&late, t1, 1);
-    c.ft_transfer(token(), U128(quiet_bought / 4), None);
+    expect_fail("E_RECEIVER", || c.ft_transfer(token(), U128(quiet_bought / 4), None));
+    at(&creator(), t1, 1);
+    expect_fail("E_RECEIVER", || c.ft_transfer(token(), U128(E18), None));
+    at(&creator(), t1, 1);
+    expect_fail("E_RECEIVER", || c.transfer_loud(token(), U128(E18)));
+    at(&late, t1, 1);
+    expect_fail("E_RECEIVER", || {
+        c.ft_transfer_call(token(), U128(quiet_bought / 4), None, String::new()).detach()
+    });
+    assert_eq!(bal(&c, &token()), (0, 0));
+    assert_eq!(bal(&c, &late), (0, quiet_bought - quiet_bought / 4));
     let s = state(&c, t1);
-    assert_eq!(
-        c.ft_balance_of(token()).0,
-        s.pool_tokens.0 + s.escrowed.0 + quiet_bought / 4
-    );
+    assert_eq!(c.ft_balance_of(token()).0, s.pool_tokens.0 + s.escrowed.0);
     assert_eq!(ft_sum(&c, t1, &everyone), supply);
 
     // Partial leave: the cap has room for less than the exit.
@@ -829,10 +939,7 @@ fn ft_balances_add_up_to_the_total_supply() {
     assert!(filled > 0 && filled < 20_000_000 * E18, "filled {filled}");
     let s = state(&c, ready);
     assert_eq!(s.escrowed.0, 20_000_000 * E18 - filled);
-    assert_eq!(
-        c.ft_balance_of(token()).0,
-        s.pool_tokens.0 + s.escrowed.0 + quiet_bought / 4
-    );
+    assert_eq!(c.ft_balance_of(token()).0, s.pool_tokens.0 + s.escrowed.0);
     assert_eq!(ft_sum(&c, ready, &everyone), supply);
 
     // hush: the rest of the escrow goes back to the owner.
@@ -840,17 +947,17 @@ fn ft_balances_add_up_to_the_total_supply() {
     let s = state(&c, ready);
     assert_eq!(s.escrowed.0, 0);
     assert_eq!(c.ft_balance_of(creator()).0, 49_000_000 * E18 - filled);
-    assert_eq!(c.ft_balance_of(token()).0, s.pool_tokens.0 + quiet_bought / 4);
+    assert_eq!(c.ft_balance_of(token()).0, s.pool_tokens.0);
     assert_eq!(ft_sum(&c, ready, &everyone), supply);
 
     // A quiet sell returns the tokens to the pool.
-    let rest = quiet_bought - 2 * (quiet_bought / 4);
+    let rest = quiet_bought - quiet_bought / 4;
     assert_eq!(bal(&c, &late), (0, rest));
     sell(&mut c, &late, ready, rest);
     assert_eq!(c.ft_balance_of(late.clone()).0, 0);
     assert_eq!(ft_sum(&c, ready, &everyone), supply);
     let s = state(&c, ready);
-    assert_eq!(c.ft_balance_of(token()).0, s.pool_tokens.0 + quiet_bought / 4);
+    assert_eq!(c.ft_balance_of(token()).0, s.pool_tokens.0);
 }
 
 #[test]
@@ -865,6 +972,9 @@ fn ft_transfer_checks() {
     expect_fail("E_AMOUNT", || c.ft_transfer(bob.clone(), U128(0), None));
     at(&alice, ts, 1);
     expect_fail("E_SELF", || c.ft_transfer(alice.clone(), U128(1), None));
+    at(&alice, ts, 1);
+    expect_fail("E_RECEIVER", || c.ft_transfer(token(), U128(1), None));
+    assert_eq!(bal(&c, &alice), (loud, quiet));
     at(&bob, ts, 1);
     expect_fail("E_BALANCE", || c.ft_transfer(alice.clone(), U128(1), None));
     // The whole balance can move.
@@ -911,6 +1021,9 @@ fn transfer_loud_checks() {
     expect_fail("E_NO_LOUD", || c.transfer_loud(bob.clone(), U128(0)));
     at(&alice, ts, 1);
     expect_fail("E_SELF", || c.transfer_loud(alice.clone(), U128(1)));
+    at(&alice, ts, 1);
+    expect_fail("E_RECEIVER", || c.transfer_loud(token(), U128(1)));
+    assert_eq!(bal(&c, &alice).0, loud);
     // Quiet is not touched by transfer_loud.
     at(&alice, ts, 1);
     c.transfer_loud(bob.clone(), U128(loud));
@@ -940,6 +1053,8 @@ fn ft_transfer_call_rejects_loud() {
     expect_fail("E_AMOUNT", || c.ft_transfer_call(dex.clone(), U128(0), None, String::new()).detach());
     at(&alice, ts, 1);
     expect_fail("E_SELF", || c.ft_transfer_call(alice.clone(), U128(1), None, String::new()).detach());
+    at(&alice, ts, 1);
+    expect_fail("E_RECEIVER", || c.ft_transfer_call(token(), U128(1), None, String::new()).detach());
     // A loud-only holder cannot use it at all.
     at(&creator(), ts, 1);
     expect_fail("E_QUIET_DOOR", || {

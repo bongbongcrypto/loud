@@ -42,11 +42,11 @@ const FT_RESOLVE_TGAS: u64 = 10;
 /// Gas reserved for `on_payout`, the callback behind every NEAR payout.
 const PAYOUT_CALLBACK_TGAS: u64 = 10;
 
-/// Stops the call. The message always starts with an error code: the codes
-/// of SPEC 7, plus E_AMOUNT (zero amount, a buy that rounds to zero tokens,
-/// or a sale that rounds to zero yoctoNEAR),
-/// E_SELF (sender equals receiver), E_NO_EXIT (unknown exit id) and E_MATH
-/// (pool math overflow) for cases SPEC 7 gives no code for.
+/// Stops the call. The message always starts with an error code. Every
+/// code is listed in SPEC 7: most with the method that raises them, and
+/// E_AMOUNT (zero amount, a buy that rounds to zero tokens, or a sale that
+/// rounds to zero yoctoNEAR), E_SELF (sender equals receiver), E_NO_EXIT
+/// (unknown exit id) and E_MATH (pool math overflow) at the top of it.
 fn fail(msg: &str) -> ! {
     if cfg!(test) {
         // A plain panic keeps the message readable in unit tests.
@@ -58,6 +58,14 @@ fn fail(msg: &str) -> ! {
 fn require_one_yocto() {
     if env::attached_deposit().as_yoctonear() != 1 {
         fail("E_YOCTO: attach exactly 1 yoctoNEAR");
+    }
+}
+
+/// Tokens credited to the token account's own balance could never move
+/// again: the account has no key, so nobody can sign a transfer from it.
+fn require_not_token_account(receiver_id: &AccountId) {
+    if *receiver_id == env::current_account_id() {
+        fail("E_RECEIVER: the token account cannot receive tokens");
     }
 }
 
@@ -449,7 +457,7 @@ impl Loud {
                 amount
             ));
         }
-        let near_out = self.pool_sell(amount, min_near_out.0);
+        let near_out = self.pool_sell(amount, min_near_out.0, amount);
         self.set_quiet(&caller, quiet - amount);
         pay(&caller, near_out);
 
@@ -470,6 +478,8 @@ impl Loud {
     // ------------------------------------------------------------------
 
     /// Announces an exit and escrows the tokens. Returns the exit id.
+    /// An amount below the dust floor is accepted only when it is the
+    /// caller's whole loud balance, so a small remainder is never stuck.
     #[payable]
     pub fn shout(&mut self, amount: U128) -> U64 {
         let now = self.touch();
@@ -484,8 +494,11 @@ impl Loud {
             ));
         }
         let dust = self.total_supply / DUST_DIVISOR;
-        if amount < dust {
-            fail(&format!("E_DUST: a shout must be at least {} units", dust));
+        if amount < dust && amount != loud {
+            fail(&format!(
+                "E_DUST: a shout must be at least {} units, or your whole loud balance of {} units",
+                dust, loud
+            ));
         }
         let mut ids = self.exit_ids(&caller);
         if ids.len() >= MAX_EXITS_PER_ACCOUNT {
@@ -532,8 +545,10 @@ impl Loud {
 
     /// Sells as much of a ready exit as the global cap allows right now,
     /// and no more than the pool can pay for.
-    /// `min_near_out` applies to the units actually filled.
-    /// Returns the units filled.
+    /// `min_near_out` is the least NEAR the caller accepts for everything
+    /// that is left in the exit. A partial fill is held to the same price:
+    /// it needs `near_out * remaining >= min_near_out * fill`, with
+    /// `remaining` read before this fill. Returns the units filled.
     #[payable]
     pub fn leave(&mut self, exit_id: U64, min_near_out: U128) -> U128 {
         let now = self.touch();
@@ -583,7 +598,7 @@ impl Loud {
                 ));
             }
         }
-        let near_out = self.pool_sell(fill, min_near_out.0);
+        let near_out = self.pool_sell(fill, min_near_out.0, exit.remaining);
 
         self.bucket_units -= fill;
         self.escrowed -= fill;
@@ -651,6 +666,8 @@ impl Loud {
     /// Callback of every payout made by `pay`. If the transfer receipt
     /// failed, the NEAR came back to this account, so the amount is
     /// recorded as owed to `account`. A successful transfer changes nothing.
+    /// It does nothing else, not even the bucket refill: the less it does,
+    /// the less can stop it from recording the debt.
     #[private]
     pub fn on_payout(&mut self, account: AccountId, amount: U128) {
         // `#[private]` guards the exported method; this check also covers
@@ -658,7 +675,6 @@ impl Loud {
         if env::predecessor_account_id() != env::current_account_id() {
             fail("E_PRIVATE: only the token account can call on_payout");
         }
-        self.touch();
         // A transfer returns no data, so any error here is a failed receipt.
         if env::promise_result_checked(0, 16).is_err() {
             let owed = self.owed_of(&account);
@@ -713,6 +729,7 @@ impl Loud {
         if sender == receiver_id {
             fail("E_SELF: sender and receiver must differ");
         }
+        require_not_token_account(&receiver_id);
         let amount = amount.0;
         if amount == 0 {
             fail("E_AMOUNT: amount must be positive");
@@ -757,6 +774,7 @@ impl Loud {
         if sender == receiver_id {
             fail("E_SELF: sender and receiver must differ");
         }
+        require_not_token_account(&receiver_id);
         let amount = amount.0;
         let loud = self.loud_of(&sender);
         if amount == 0 || amount > loud {
@@ -793,6 +811,7 @@ impl Loud {
         if sender == receiver_id {
             fail("E_SELF: sender and receiver must differ");
         }
+        require_not_token_account(&receiver_id);
         if amount.0 == 0 {
             fail("E_AMOUNT: amount must be positive");
         }
@@ -1076,7 +1095,12 @@ impl Loud {
     /// Pool side of a sale: checks the sale pays something, the pool can
     /// pay it and the slippage limit, then updates the reserves. Returns
     /// the yoctoNEAR owed.
-    fn pool_sell(&mut self, amount: u128, min_near_out: u128) -> u128 {
+    ///
+    /// `min_near_out` is the limit for `whole` units and is scaled to the
+    /// `amount` sold now: the sale needs
+    /// `near_out * whole >= min_near_out * amount`. `sell` passes
+    /// `whole == amount`, which is the plain `near_out >= min_near_out`.
+    fn pool_sell(&mut self, amount: u128, min_near_out: u128, whole: u128) -> u128 {
         let near_out = match loud_math::sell_out(self.pool_tokens, self.reserve(), amount) {
             Some(v) => v,
             None => fail("E_MATH: amount is too large for the pool math"),
@@ -1090,10 +1114,18 @@ impl Loud {
                 self.pool_near, near_out
             ));
         }
-        if near_out < min_near_out {
+        // Both products are 256 bits wide, so the comparison is exact and
+        // cannot overflow. `(high, low)` pairs compare high word first.
+        if loud_math::mul_wide(near_out, whole) < loud_math::mul_wide(min_near_out, amount) {
+            if amount == whole {
+                fail(&format!(
+                    "E_SLIPPAGE: near out {} is below min_near_out {}",
+                    near_out, min_near_out
+                ));
+            }
             fail(&format!(
-                "E_SLIPPAGE: near out {} is below min_near_out {}",
-                near_out, min_near_out
+                "E_SLIPPAGE: near out {} for {} of {} units is below min_near_out {} scaled to the part filled",
+                near_out, amount, whole, min_near_out
             ));
         }
         self.pool_near -= near_out;

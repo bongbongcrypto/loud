@@ -5,6 +5,7 @@ import {
   failureText, errorCode, parseEvents, returnValueBigInt, leaveFilled, capBound, evaluateSplit,
   txLink, accountLink, jsonReplacer,
   receiptSettlement, base58Encode, isTxHash, faucetTx, paramMismatches,
+  txRecord, outcomeClass, needsLookup, unresolvedEarlier, leaveCounts, leaveCountsText, unresolvedSummary,
 } from './lib.mjs';
 
 const b64 = (v) => Buffer.from(JSON.stringify(v)).toString('base64');
@@ -384,4 +385,150 @@ test('links and replacer', () => {
   assert.equal(txLink('abc'), 'https://testnet.nearblocks.io/txns/abc');
   assert.equal(accountLink('t.x.testnet'), 'https://testnet.nearblocks.io/address/t.x.testnet');
   assert.equal(JSON.stringify({ a: 5n }, jsonReplacer), '{"a":"5"}');
+});
+
+test('txRecord keeps the hash of every earlier broadcast', () => {
+  const h1 = base58Encode(Buffer.alloc(32, 1));
+  const h2 = base58Encode(Buffer.alloc(32, 2));
+  const h3 = base58Encode(Buffer.alloc(32, 3));
+
+  // A send that went through on the first broadcast: the record has the four base keys only.
+  const plain = txRecord({ hash: h1, account: 'w01.x.testnet', outcome: 'success', error: null, earlierAttempts: [] });
+  assert.deepEqual(plain, { hash: h1, account: 'w01.x.testnet', outcome: 'success', error: null });
+  assert.deepEqual(txRecord({ hash: h1, account: 'a', outcome: 'success', error: null }),
+    { hash: h1, account: 'a', outcome: 'success', error: null });
+
+  // Two broadcasts were refused (InvalidNonce, Expired) before the third went through.
+  const sent = { hash: h3, account: 'w02.x.testnet', outcome: 'success', error: null, earlierAttempts: [h1, h2] };
+  const retried = txRecord(sent, { round: 2 });
+  assert.deepEqual(retried, {
+    hash: h3, account: 'w02.x.testnet', outcome: 'success', error: null, round: 2, earlier_attempts: [h1, h2],
+  });
+  retried.earlier_attempts.push('x');
+  assert.deepEqual(sent.earlierAttempts, [h1, h2]); // the record holds a copy
+
+  // The last attempt failed before it was broadcast: no hash of its own, the earlier one stays.
+  const lost = txRecord({ hash: null, account: 'w03.x.testnet', outcome: 'unknown', error: 'rpc: block failed', earlierAttempts: [h1] });
+  assert.equal(lost.hash, null);
+  assert.deepEqual(lost.earlier_attempts, [h1]);
+  assert.equal(outcomeClass(lost), 'not_executed'); // this attempt was never broadcast
+  assert.deepEqual(unresolvedEarlier(lost), [h1]); // the earlier broadcast has not been looked up
+
+  // After the lookup: found on chain, not found, or the lookup itself failed.
+  const looked = {
+    ...retried,
+    earlier_attempts: [h1, h2],
+    earlier_attempt_outcomes: [{ hash: h1, outcome: 'invalid', error: 'refused' }, { hash: h2, outcome: 'unknown', error: 'rpc down' }],
+  };
+  assert.deepEqual(unresolvedEarlier(looked), [h2]);
+  looked.earlier_attempt_outcomes[1] = { hash: h2, outcome: 'failure', error: 'E_CAP: room returns in 3 s' };
+  assert.deepEqual(unresolvedEarlier(looked), []);
+  assert.deepEqual(unresolvedEarlier(plain), []);
+});
+
+test('outcomeClass and needsLookup keep unknown apart from not executed', () => {
+  const hash = base58Encode(Buffer.alloc(32, 9));
+  assert.equal(outcomeClass({ hash, outcome: 'success' }), 'success');
+  assert.equal(outcomeClass({ hash, outcome: 'failure' }), 'executed_failed');
+  assert.equal(outcomeClass({ hash, outcome: 'invalid' }), 'not_executed');
+  assert.equal(outcomeClass({ hash, outcome: 'unknown' }), 'unresolved');
+  assert.equal(outcomeClass({ hash: null, outcome: 'unknown' }), 'not_executed');
+  assert.equal(outcomeClass({ hash, outcome: 'something else' }), 'unresolved');
+  assert.equal(outcomeClass(null), 'not_executed');
+
+  assert.equal(needsLookup({ hash, outcome: 'unknown', error: 'was not final after 120s' }), true);
+  assert.equal(needsLookup({ hash: null, outcome: 'unknown', error: 'x' }), false);
+  assert.equal(needsLookup({ hash, outcome: 'invalid', error: '{"InvalidTransaction":{"InvalidNonce":{"tx_nonce":5,"ak_nonce":5}}}' }), true);
+  assert.equal(needsLookup({ hash, outcome: 'invalid', error: 'NotEnoughBalance' }), false);
+  assert.equal(needsLookup({ hash, outcome: 'success', error: null }), false);
+  assert.equal(needsLookup({ hash, outcome: 'failure', error: 'E_CAP' }), false);
+});
+
+test('leaveCounts keeps executed-and-failed, not executed and unresolved apart', () => {
+  const h = (n) => base58Encode(Buffer.alloc(32, n));
+  const attempts = [
+    { hash: h(1), outcome: 'success', filled: '500', error_code: null, settled: true },
+    { hash: h(2), outcome: 'success', filled: '300', error_code: null, settled: false },
+    { hash: h(3), outcome: 'failure', filled: null, error_code: 'E_CAP', settled: null },
+    { hash: h(4), outcome: 'failure', filled: null, error_code: 'E_CAP', settled: null },
+    { hash: h(5), outcome: 'failure', filled: null, error_code: 'E_EXPIRED', settled: null },
+    { hash: h(6), outcome: 'failure', filled: null, error_code: 'E_NOT_OWNER', settled: null },
+    { hash: h(7), outcome: 'invalid', filled: null, error_code: null, settled: null },
+    { hash: null, outcome: 'unknown', filled: null, error_code: null, settled: null }, // never broadcast
+    { hash: h(8), outcome: 'unknown', filled: null, error_code: null, settled: null },
+    { hash: h(9), outcome: 'unknown', filled: null, error_code: null, settled: null, earlier_attempts: [h(10), h(11)] },
+  ];
+  const c = leaveCounts(attempts);
+  assert.deepEqual(c, {
+    calls: 10,
+    fills: 2,
+    cap_hits: 2,
+    expired: 1,
+    other_failures: 1,
+    executed_failed: 4,
+    not_executed: 2,
+    unresolved: 2,
+    payout_calls: 2,
+    payouts_settled: 1,
+    earlier_attempts: 2,
+  });
+  // Every call is in exactly one group.
+  assert.equal(c.payout_calls + c.executed_failed + c.not_executed + c.unresolved, c.calls);
+
+  const text = leaveCountsText(c, 20);
+  assert.match(text, /^10 leave calls from 20 wallets: 2 filled; /);
+  assert.match(text, /4 executed and failed \(2 E_CAP, 1 E_EXPIRED, 1 other\); /);
+  assert.match(text, /2 not executed \(refused before execution or never broadcast\); /);
+  assert.match(text, /2 unresolved \(broadcast, outcome not confirmed by polling or by the later lookup by hash\)/);
+  assert.match(text, /; earlier broadcasts replaced by a retry and listed as earlier_attempts: 2; /);
+  assert.match(text, /1 of 2 successful leaves have no failed receipt and no payout_failed event$/);
+
+  // The shape of the saved run: unknown calls are unresolved, and none is "not executed".
+  const saved = leaveCounts([
+    { hash: h(1), outcome: 'success', filled: '7', error_code: null, settled: true },
+    { hash: h(2), outcome: 'failure', filled: null, error_code: 'E_CAP', settled: null },
+    { hash: h(3), outcome: 'unknown', filled: null, error_code: null, settled: null },
+  ]);
+  assert.equal(saved.unresolved, 1);
+  assert.equal(saved.not_executed, 0);
+  const savedText = leaveCountsText(saved, 20);
+  assert.match(savedText, /0 not executed/);
+  assert.match(savedText, /1 unresolved/);
+  assert.doesNotMatch(savedText, /earlier broadcasts/);
+
+  assert.equal(leaveCounts([]).calls, 0);
+});
+
+test('unresolvedSummary counts what the run sent and could not confirm', () => {
+  const h = (n) => base58Encode(Buffer.alloc(32, n));
+  const none = unresolvedSummary([
+    { hash: h(1), outcome: 'success', error: null },
+    { hash: h(2), outcome: 'failure', error: 'E_CAP' },
+    { hash: h(3), outcome: 'invalid', error: 'NotEnoughBalance' },
+    { hash: null, outcome: 'unknown', error: 'never broadcast' },
+  ]);
+  assert.deepEqual(none, { count: 0, hashes: [], note: null });
+  assert.deepEqual(unresolvedSummary([]), { count: 0, hashes: [], note: null });
+  assert.deepEqual(unresolvedSummary(null), { count: 0, hashes: [], note: null });
+
+  const one = unresolvedSummary([{ hash: h(1), outcome: 'success' }, { hash: h(4), outcome: 'unknown' }]);
+  assert.equal(one.count, 1);
+  assert.deepEqual(one.hashes, [h(4)]);
+  assert.match(one.note, /^1 transaction that the run sent has no confirmed outcome/);
+  assert.match(one.note, /not known whether it never executed or executed and failed/);
+  assert.match(one.note, /rests on the contract counter, not on these statuses\.$/);
+
+  // Earlier broadcasts count too: one without a lookup result, one whose lookup failed.
+  const many = unresolvedSummary([
+    { hash: h(4), outcome: 'unknown' },
+    { hash: h(5), outcome: 'success', earlier_attempts: [h(6)] },
+    {
+      hash: h(7), outcome: 'success', earlier_attempts: [h(8), h(9)],
+      earlier_attempt_outcomes: [{ hash: h(8), outcome: 'invalid', error: 'refused' }, { hash: h(9), outcome: 'unknown', error: 'rpc down' }],
+    },
+  ]);
+  assert.equal(many.count, 3);
+  assert.deepEqual(many.hashes, [h(4), h(6), h(9)]);
+  assert.match(many.note, /^3 transactions that the run sent have no confirmed outcome/);
+  assert.match(many.note, /each of them never executed or executed and failed/);
 });

@@ -333,3 +333,116 @@ export const accountLink = (account) => `${EXPLORER}/address/${account}`;
 export function jsonReplacer(_key, value) {
   return typeof value === 'bigint' ? value.toString() : value;
 }
+
+// ---------- transaction records and outcome counts ----------
+
+// What a transaction looks like inside receipts.json. `r` is the result of one send:
+// { hash, account, outcome, error, earlierAttempts? }. When the send was signed and
+// broadcast more than once (a new nonce or block hash after InvalidNonce / Expired), the
+// hashes of the earlier broadcasts are kept under `earlier_attempts`, oldest first.
+export function txRecord(r, extra = {}) {
+  const rec = { hash: r.hash, account: r.account, outcome: r.outcome, error: r.error, ...extra };
+  const earlier = (r.earlierAttempts ?? []).filter((h) => typeof h === 'string' && h !== '');
+  if (earlier.length > 0) rec.earlier_attempts = [...earlier];
+  return rec;
+}
+
+// The four things that can be said about a recorded transaction:
+//   "success"         executed and succeeded
+//   "executed_failed" executed on chain and failed (outcome "failure"; the error is on record)
+//   "not_executed"    a node refused it before execution (outcome "invalid"), or it has no
+//                     hash because the script failed before it could broadcast it
+//   "unresolved"      it was broadcast (it has a hash) and no RPC endpoint returned a final
+//                     result: it may never have executed, or it may have executed
+export function outcomeClass(rec) {
+  if (rec?.outcome === 'success') return 'success';
+  if (rec?.outcome === 'failure') return 'executed_failed';
+  if (rec?.outcome === 'invalid') return 'not_executed';
+  return rec?.hash ? 'unresolved' : 'not_executed';
+}
+
+// Whether a record is worth one more status query by hash: its outcome is unknown, or a
+// node refused it with InvalidNonce. The second case covers a transaction that was posted
+// twice after a transport failure: the second post is refused because the first one landed.
+export function needsLookup(rec) {
+  if (!rec?.hash) return false;
+  if (rec.outcome === 'unknown') return true;
+  return rec.outcome === 'invalid' && /InvalidNonce/.test(String(rec.error ?? ''));
+}
+
+// Earlier broadcast hashes of a record whose own outcome is not known: no entry in
+// `earlier_attempt_outcomes`, or an entry that says "unknown".
+export function unresolvedEarlier(rec) {
+  const hashes = Array.isArray(rec?.earlier_attempts) ? rec.earlier_attempts : [];
+  const outcomes = Array.isArray(rec?.earlier_attempt_outcomes) ? rec.earlier_attempt_outcomes : [];
+  return hashes.filter((h) => {
+    const o = outcomes.find((x) => x?.hash === h);
+    return !o || outcomeClass(o) === 'unresolved';
+  });
+}
+
+// Counts for step 9 over the leave records ({ outcome, hash, filled, error_code, settled }).
+export function leaveCounts(attempts) {
+  const c = {
+    calls: attempts.length,
+    fills: 0,
+    cap_hits: 0,
+    expired: 0,
+    other_failures: 0, // executed and failed with something other than E_CAP / E_EXPIRED
+    executed_failed: 0, // every executed call that failed: cap_hits + expired + other_failures
+    not_executed: 0,
+    unresolved: 0,
+    payout_calls: 0, // successful leaves
+    payouts_settled: 0,
+    earlier_attempts: 0, // earlier broadcasts that were replaced by a retry
+  };
+  for (const a of attempts) {
+    const cls = outcomeClass(a);
+    if (a.filled !== null && a.filled !== undefined && BigInt(a.filled) > 0n) c.fills += 1;
+    if (cls === 'success') {
+      c.payout_calls += 1;
+      if (a.settled === true) c.payouts_settled += 1;
+    } else if (cls === 'executed_failed') {
+      c.executed_failed += 1;
+      if (a.error_code === 'E_CAP') c.cap_hits += 1;
+      else if (a.error_code === 'E_EXPIRED') c.expired += 1;
+      else c.other_failures += 1;
+    } else if (cls === 'not_executed') {
+      c.not_executed += 1;
+    } else {
+      c.unresolved += 1;
+    }
+    if (Array.isArray(a.earlier_attempts)) c.earlier_attempts += a.earlier_attempts.length;
+  }
+  return c;
+}
+
+// The one-line step 9 result. Three groups stay apart: executed and failed (with the
+// error code), not executed, and unresolved.
+export function leaveCountsText(c, wallets) {
+  return `${c.calls} leave calls from ${wallets} wallets: ${c.fills} filled; `
+    + `${c.executed_failed} executed and failed (${c.cap_hits} E_CAP, ${c.expired} E_EXPIRED, ${c.other_failures} other); `
+    + `${c.not_executed} not executed (refused before execution or never broadcast); `
+    + `${c.unresolved} unresolved (broadcast, outcome not confirmed by polling or by the later lookup by hash)`
+    + (c.earlier_attempts > 0 ? `; earlier broadcasts replaced by a retry and listed as earlier_attempts: ${c.earlier_attempts}` : '')
+    + `; ${c.payouts_settled} of ${c.payout_calls} successful leaves have no failed receipt and no payout_failed event`;
+}
+
+// Run-level summary of the transactions the script sent whose outcome is not known.
+// `records` are receipts.json transaction records; earlier broadcasts count as well.
+// -> { count, hashes, note }; `note` is one plain sentence block, or null when count is 0.
+export function unresolvedSummary(records) {
+  const hashes = [];
+  for (const rec of records ?? []) {
+    if (outcomeClass(rec) === 'unresolved') hashes.push(rec.hash);
+    hashes.push(...unresolvedEarlier(rec));
+  }
+  const count = hashes.length;
+  const note = count === 0 ? null
+    : `${count} ${count === 1 ? 'transaction that the run sent has' : 'transactions that the run sent have'} no confirmed outcome: `
+      + 'no final result was obtained, neither while polling nor from the later lookup by hash, which stops at the time limit of the run. '
+      + `${count === 1 ? 'It is' : 'They are'} listed with the outcome "unknown" or under earlier_attempts. `
+      + `It is not known whether ${count === 1 ? 'it' : 'each of them'} never executed or executed and failed. `
+      + 'The cap check of step 10 rests on the contract counter, not on these statuses.';
+  return { count, hashes, note };
+}

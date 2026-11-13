@@ -1,6 +1,6 @@
 # LOUD
 
-**A memecoin whose early supply can leave, but cannot leave quietly, and cannot leave faster by splitting it across wallets.**
+**A memecoin whose early supply can leave, but has to say so first, and shares one exit however many wallets it is split across.**
 
 That sentence is about the token's built-in sale path. On that path the contract enforces two things: a public notice before every sale of early supply, and one shared bucket that bounds how much of it can leave over time. Plain transfers and off-pool deals stay possible (see [Limits](#limits)), and a position smaller than the room in the bucket can leave in one call once its notice is over.
 
@@ -36,19 +36,19 @@ Each row is something to do and what you should see. Node 22 or newer; the JS ha
 
 | Do | See |
 |---|---|
-| `node --test web/*.test.mjs sim/*.test.mjs scripts/proof/*.test.mjs` | 70 tests pass. Among them: under LOUD, 1, 7, 20 and 100 wallets sell the same cumulative amount at every step; under a per-wallet limit, 100 wallets sell 100 times more in the first minute than 1 wallet. |
-| `cd contracts && cargo test --workspace` (Rust 1.95.0) | 63 tests pass (40 contract, 23 math). `split_test_one_wallet_vs_one_hundred` compares 1 wallet with 100 wallets at 21 checkpoints. `cargo test -p loud split -- --nocapture` prints the table. |
+| `node --test web/*.test.mjs sim/*.test.mjs scripts/proof/*.test.mjs` | 80 tests pass. Among them: under LOUD, 1, 7, 20 and 100 wallets sell the same cumulative amount at every step; under a per-wallet limit of 0.5% of supply per sale, a position of 50% of supply split across 100 wallets sells 100 times more in the first minute than the same position in 1 wallet (all of it against 0.5% of supply). |
+| `cd contracts && cargo test --workspace` (Rust 1.95.0) | 66 tests pass (43 contract, 23 math). `split_test_one_wallet_vs_one_hundred` compares 1 wallet with 100 wallets at 21 checkpoints. `cargo test -p loud split -- --nocapture` prints the table. |
 | `cd contracts/loud && cargo near build non-reproducible-wasm --no-abi` (cargo-near 0.23.0) | One wasm, about 220 KB. CI runs both Rust steps on every push: [.github/workflows/ci.yml](.github/workflows/ci.yml). |
 | Open the live page, section "Run the split attack", run it with 1 wallet and then with more | The LOUD line does not change. With more wallets the per-wallet baseline sells the whole position sooner, until it is gone in the first minute; for the default 5% position that point is already reached at 10 wallets. |
 | Section "Play the token by hand", follow the guided path | The real error of each rule: `E_NO_QUIET` (selling loud tokens), `E_NOTICE` (leaving early), `E_CAP` (bucket empty), `E_EXPIRED`. |
-| Section "Testnet proof" | The token account, its zero access keys, and every transaction the run itself sent, with explorer links. The faucet's own account-creation transaction (step 1) is listed only if the faucet returned its hash. In the saved run it is listed: `web/receipts.json` step 1 holds that hash with the outcome `success`, both recorded as the faucet returned them (the script does not look that transaction up). |
+| Section "Testnet proof" | The token account, its zero access keys, and the transactions the run recorded, with explorer links. A transaction that was sent and whose outcome was not confirmed is shown as unresolved (the run recorded on 2026-11-13 has 4, all `leave` calls in step 9). When a send is refused with `InvalidNonce` or `Expired` and signed again, the current script keeps the hash of each earlier broadcast (`earlier_attempts`); a file written before that (one with no `unresolved_txs` key, like the run recorded on 2026-11-13) records only the last attempt of such a send, and whether any send in that run was retried is not recorded. The faucet's own account-creation transaction (step 1) is listed only if the faucet returned its hash. In the saved run it is listed: `web/receipts.json` step 1 holds that hash with the outcome `success`, both recorded as the faucet returned them (the script does not look that transaction up). |
 | `node sim/run.mjs` (about 2 min) | Rewrites `sim/results.json` and `sim/RESULTS.md` byte for byte (LF checkout; `.gitattributes` sets LF line endings). |
 
 The page (`web/`) is static files with no dependency and no build step. Serve the folder with any static server, for example `python -m http.server -d web 8000`, and open http://localhost:8000.
 
 ## Testnet proof
 
-`.github/workflows/proof.yml` (manual trigger) builds the same wasm as CI and runs [scripts/proof/proof.mjs](scripts/proof/proof.mjs) against NEAR testnet. All keys are generated inside the job and never stored. The result is committed to `web/deployment.json` and `web/receipts.json` and shown on the page.
+`.github/workflows/proof.yml` (manual trigger) builds the same wasm as CI and runs [scripts/proof/proof.mjs](scripts/proof/proof.mjs) against NEAR testnet. All keys are generated inside the job and never stored. The result is committed to `web/deployment.json` and `web/receipts.json` and shown on the page. `web/deployment.json` records the commit the run was built from (`run.commit`); contract changes made after that commit are covered by the unit tests only, until the run is repeated.
 
 The ten steps, numbered as in `web/receipts.json`. The script runs step 3 before step 2: it creates the participant accounts before it deploys the token, so that the launch window is not spent on setup.
 
@@ -60,7 +60,7 @@ The ten steps, numbered as in `web/receipts.json`. The script runs step 3 before
 6. A split wallet calls `sell`: fails with `E_NO_QUIET`.
 7. After the launch window a late buyer buys and sells half at once: quiet tokens need no notice and no cap room.
 8. All 20 wallets `shout`; one calls `leave` before the notice ends: fails with `E_NOTICE`.
-9. All 20 wallets call `leave` in rounds for one full cap window. Rejected calls fail with `E_CAP`, or with `E_EXPIRED` at the very end of the exit window.
+9. All 20 wallets call `leave` in rounds for one full cap window. Rejected calls with a confirmed outcome fail with `E_CAP`, or with `E_EXPIRED` at the very end of the exit window. Calls whose outcome could not be confirmed are listed as unresolved.
 10. Total units that left stay within `room at start + cap * elapsed / window`.
 
 The run uses the `demo` preset (launch window 2 min, notice 1 min, exit window 10 min, cap 0.5% per 10 min) so that it fits in one CI job. The on-chain run is the 20-wallet case only: the cap is global per token, so a 1-wallet run cannot share the same token and window. 1 wallet against 100 is checked in the contract unit test and the engine test above.
@@ -69,7 +69,7 @@ The run uses the `demo` preset (launch window 2 min, notice 1 min, exit window 1
 
 The simulator is in the repository and its numbers can be reproduced with `node sim/run.mjs`. It runs the rule engine (`web/engine.js`, the same file the page uses) against two baselines, `naive` (no rule) and `per_wallet` (0.5% of supply per transaction, 60 s cooldown per wallet), in four scenarios with nine seeds each. The engine implements the same balance, exit, bucket and pool rules as the contract and is tested against the spec; it does not model storage cost, asynchronous receipts or `ft_transfer_call` refunds. **How people behave is assumed.** Full tables and assumptions: [sim/RESULTS.md](sim/RESULTS.md).
 
-Coordinated dump of the early supply (13.6% of supply in 30 wallets) on day 1, median of 9 seeds:
+Coordinated dump of the early supply (13.6% of supply in 30 wallets) on day 1, median of 9 seeds. The simulated bundle buys in the first block, inside the launch window, so its tokens are loud; a bundle that waited until the window ended would hold quiet tokens, and the rule would not slow it (see [Limits](#limits)).
 
 | rule | largest 1-hour price drop, after the first 12 h | time until 99.9% of early supply is sold | early-supply sales announced in advance | modelled holder exit price 1 min after the first sign |
 |---|---|---|---|---|
@@ -87,11 +87,14 @@ Where LOUD does worse in this model: in a calm launch and in a slow bleed, the s
 
 - **Wrappers and side deals.** Loud tokens can be sent to a custom contract with plain `ft_transfer`, and claims on them, or the account itself, can be sold off-pool. The tag still follows the tokens, so whoever ends up with them faces the same door. LOUD limits the pool exit, not side deals.
 - **Other pools.** Loud tokens cannot enter other contracts through `ft_transfer_call`. Quiet tokens are exempt from the notice and the cap and can use `ft_transfer_call`. That is an exemption, not a promise of a market: the built-in pool can still refuse a sale it cannot pay, and other venues decide for themselves what they accept.
-- **First come, first served.** Ready exits share the bucket in the order their `leave` calls land. A large holder can take a whole window's room.
+- **First come, first served.** Ready exits share the bucket in the order their `leave` calls land. There is no queue and no pro-rata share. One holder who keeps calling `leave` can take every refill and keep the others waiting until their exits expire, for as long as it pays gas; they must then `hush`, `shout` again and wait out the notice again.
+- **Waiting out the launch window avoids the tag.** The tag depends only on buying inside the launch window. Someone who waits and buys right after it gets quiet tokens at the price of that moment (the launch price if nobody bought before), with no notice and no cap. The rule always binds the creator allocation. It binds launch-window buyers only because they chose to buy in the window.
 - **Early honest buyers are loud too.** Anyone who buys in the launch window accepts the door.
 - **A notice can trigger a rush.** Quiet holders can sell before a shouted exit becomes ready. That is the intended information, and it can also speed up a sell-off.
 - **The creator allocation is unbacked.** It is minted without a NEAR payment, so every NEAR it receives through the door comes from buyers. After the creator has left, the pool can hold less NEAR than the formula price of the remaining tokens. `sell` fails with `E_POOL_EMPTY` when the pool cannot pay the formula amount, and `leave` fills only the part the pool can pay. So the last sellers may be unable to sell part or all of their tokens.
-- **Storage.** The contract pays account storage out of the same balance that holds the pool's NEAR. Dust transfers to many fresh accounts grow that storage, and when the spare balance is used up, `sell` and `leave` calls that pay NEAR can fail until someone sends NEAR to the token account; a failed call changes nothing, so the seller keeps the tokens. Separately, a payout whose NEAR transfer fails after the call itself succeeded (for example because the receiving account no longer exists) is no longer lost in the contract source: the `on_payout` callback records the amount for that account, which can call `claim()` with 1 yoctoNEAR attached. Nothing retries automatically, and the record is lost if the callback itself fails. The failure path is covered by unit tests only; the testnet run had no failed payout. Acceptable on testnet, not on mainnet.
+- **Storage.** The contract pays account storage out of the same balance that holds the pool's NEAR. Every new balance entry locks part of that balance as storage stake, and it stays locked for as long as the entry exists; nobody can withdraw it. This grows with ordinary holder growth, not only with dust transfers to fresh accounts. Once the spare balance is used up, the stake is covered by the NEAR that backs the pool, and nothing fails at that moment. Later a call that pays NEAR (`sell`, `leave`, `claim`) fails when its payout would take the account balance below that stake, so the last sellers are the ones hit, unless someone donates NEAR to the token account. There is no admin and no method that could fix it. A failed call changes nothing, so the seller keeps the tokens. Acceptable on testnet, not on mainnet.
+- **Failed payouts.** A payout whose NEAR transfer fails after the call itself succeeded (for example because the receiving account no longer exists) is no longer lost in the contract source: the `on_payout` callback records the amount for that account, which can call `claim()` with 1 yoctoNEAR attached. Nothing retries automatically, and the record is lost if the callback itself fails. The failure path is covered by unit tests only; the testnet run had no failed payout. Acceptable on testnet, not on mainnet.
+- **The exit list above 100 open exits.** Up to 100 open exits `get_exits` returns them sorted in one call. Above 100 it returns pages in storage order, and that order changes when an exit closes, so a reader that fetches the pages at different blocks can skip or repeat an exit.
 - **Sybil resistance.** The cap is global, so more accounts never mean more exit room. That is the whole defence; there is no per-person fairness and no identity.
 - No fee, no liquidity migration, no audit, no mainnet token.
 

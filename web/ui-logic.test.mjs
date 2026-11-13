@@ -599,3 +599,177 @@ test('proof: a failed run and a key on the account are not shown as passing', ()
   assert.equal(r.split.result, 'FAIL');
   assert.equal(r.error, 'step 10 failed');
 });
+
+test('proof: an unresolved transaction is never called "not executed" and qualifies the headline', () => {
+  const { receipts } = fixture();
+  const withUnknown = (n) => receipts.steps.map((s) => {
+    if (s.n !== 9) return s;
+    let left = n;
+    return {
+      ...s,
+      txs: s.txs.map((t) => (t.outcome === 'failure' && left-- > 0
+        ? { ...t, outcome: 'unknown', error_code: null, error: 'transaction was not final after 120s' } : t)),
+    };
+  });
+
+  // None unresolved: the headline is the plain one and no count is added.
+  const none = L.receiptsView(receipts);
+  assert.equal(none.unresolved, 0);
+  assert.equal(none.headline, 'All 10 steps passed on NEAR testnet.');
+  assert.ok(!/unresolved/.test(none.steps[8].txSummary));
+
+  // Four unresolved, as in the saved run.
+  const four = L.receiptsView({ ...receipts, steps: withUnknown(4) });
+  assert.equal(four.unresolved, 4);
+  assert.equal(four.headline, "All 10 steps passed on NEAR testnet. 4 transactions were sent but their outcome was not confirmed; the cap check rests on the contract's own counter.");
+  const nine = four.steps[8];
+  assert.equal(nine.unresolved, 4);
+  assert.match(nine.txSummary, /^300 transactions: 100 succeeded, 196 failed on chain as recorded, 4 unresolved \(sent, outcome not confirmed\)$/);
+  const unknown = nine.txs.filter((t) => t.outcome === 'unknown');
+  assert.equal(unknown.length, 4);
+  assert.ok(unknown.every((t) => t.label === L.UNRESOLVED_LABEL));
+  assert.ok(nine.txs.filter((t) => t.outcome !== 'unknown').every((t) => t.label === t.outcome));
+  assert.ok(!/not executed/.test(JSON.stringify({ h: four.headline, s: four.steps.map((s) => [s.txSummary, s.txs.map((t) => t.label)]) })));
+
+  // One unresolved: singular wording. A missing or unrecognised outcome counts as unresolved too.
+  const one = L.receiptsView({ ...receipts, steps: withUnknown(1) });
+  assert.match(one.headline, / 1 transaction was sent but its outcome was not confirmed; the cap check rests on the contract's own counter\.$/);
+  const odd = L.receiptsView({ ...receipts, steps: receipts.steps.map((s) => (s.n === 4 ? { ...s, txs: [{ hash: H('G'), account: 'a.testnet' }] } : s)) });
+  assert.equal(odd.unresolved, 1);
+
+  // "invalid" is a confirmed rejection before execution, not an unresolved call.
+  const inv = L.receiptsView({ ...receipts, steps: receipts.steps.map((s) => (s.n === 4 ? { ...s, txs: [{ hash: H('G'), account: 'a.testnet', outcome: 'invalid' }] } : s)) });
+  assert.equal(inv.unresolved, 0);
+  assert.match(inv.steps[3].txSummary, /1 rejected before execution$/);
+
+  // A null count (the script could not count) falls back to the records.
+  const nullCount = L.receiptsView({ ...receipts, unresolved_txs: null, unresolved_note: null, steps: withUnknown(2) });
+  assert.equal(nullCount.unresolved, 2);
+
+  // A failed run keeps its own headline.
+  const failed = L.receiptsView({ ...receipts, status: 'failed', steps: withUnknown(4) });
+  assert.ok(!/outcome was not confirmed/.test(failed.headline));
+  assert.equal(failed.unresolved, 4);
+
+  // The file in the repository: the headline agrees with its own records.
+  const disk = JSON.parse(read('./receipts.json'));
+  // A file with the script's own count uses that; an older file is counted from its records
+  // (sent, so with a hash; step 1 holds only the faucet's transaction in the saved run).
+  const counted = (Array.isArray(disk.steps) ? disk.steps : []).reduce((a, s) => a + (Array.isArray(s.txs) ? s.txs : [])
+    .filter((t) => Number(s.n) !== 1 && t && t.hash && !['success', 'failure', 'invalid'].includes(t.outcome)).length, 0);
+  const n = Number.isInteger(disk.unresolved_txs) ? disk.unresolved_txs : counted;
+  const onDisk = L.receiptsView(disk);
+  assert.equal(onDisk.unresolved, n);
+  if (onDisk.state === 'ok') assert.equal(/outcome was not confirmed|no confirmed outcome/.test(onDisk.headline), n > 0);
+  // The transaction list prints `label`: every record has one, and none says "unknown" or "not executed".
+  const labels = onDisk.steps.flatMap((s) => s.txs.map((x) => x.label));
+  assert.ok(labels.every((x) => typeof x === 'string' && x.length > 0 && !/^unknown$|not executed/.test(x)));
+  // A recorded step text that puts unconfirmed calls under "not executed" is never shown alone.
+  for (const s of onDisk.steps) {
+    const own = s.txs.filter((x) => x.unresolved).length;
+    if (!Number.isInteger(disk.unresolved_txs) && own > 0 && /not executed/.test(s.got)) {
+      assert.match(s.gotNote, new RegExp(`^Added by this page: .*${own} of the calls in this step .* no confirmed outcome`));
+    } else {
+      assert.equal(s.gotNote, '');
+    }
+  }
+});
+
+test('proof: the keys of the newer proof script are shown, and an older file still renders', () => {
+  const { receipts } = fixture();
+  const w = 'w01.loud-ab12.testnet';
+  const NOTE = '3 transactions that the run sent have no confirmed outcome: text written by the script.';
+  const nine = [
+    { hash: H('C'), account: w, outcome: 'success', error: null, round: 1, filled: String(40_000n * UNIT), settled: true },
+    { hash: H('U'), account: w, outcome: 'unknown', error: 'transaction was not final after 120s', round: 1, filled: null },
+    // A send that was signed three times: V has no lookup result, X was not found on chain.
+    { hash: H('D'), account: w, outcome: 'failure', error: 'E_CAP: used up', error_code: 'E_CAP', round: 2,
+      earlier_attempts: [H('V'), H('X')], earlier_attempt_outcomes: [{ hash: H('X'), outcome: 'invalid', error: null }] },
+    // An earlier broadcast that did execute has a record of its own.
+    { hash: H('Y'), account: w, outcome: 'success', error: null, round: 3, filled: String(1_000n * UNIT), settled: true, retried_as: H('Z') },
+    { hash: H('Z'), account: w, outcome: 'failure', error: 'E_CAP: used up', error_code: 'E_CAP', round: 3,
+      earlier_attempts: [H('Y')], earlier_attempt_outcomes: [{ hash: H('Y'), outcome: 'success', error: null }] },
+    { hash: H('R'), account: w, outcome: 'failure', error: 'E_CAP: used up', error_code: 'E_CAP', round: 4, resolved_late: true },
+    { hash: null, account: w, outcome: 'unknown', error: 'could not read the access key', round: 5 },
+    { hash: H('I'), account: w, outcome: 'invalid', error: 'InvalidNonce', round: 5 },
+  ];
+  const newer = {
+    ...receipts,
+    unresolved_txs: 3,
+    unresolved_hashes: [H('U'), H('V'), H('W')],
+    unresolved_note: NOTE,
+    split: { ...receipts.split, attempts: 8, fills: 2, cap_hits: 3, executed_failed: 3, not_executed: 2, unresolved: 1 },
+    steps: receipts.steps.map((s) => {
+      if (s.n === 9) return { ...s, got: '8 leave calls from 20 wallets: 2 filled; 3 executed and failed (3 E_CAP, 0 E_EXPIRED, 0 other); 2 not executed (refused before execution or never broadcast); 1 unresolved', txs: nine, executed_failed: 3, not_executed: 2, unresolved: 1 };
+      if (s.n === 4) return { ...s, txs: [{ hash: H('E'), account: 'insider.loud-ab12.testnet', outcome: 'success', error: null, earlier_attempts: [H('W')], earlier_attempt_outcomes: [{ hash: H('W'), outcome: 'unknown', error: 'lookup failed' }] }] };
+      // The faucet's own transaction, returned without a status: the script did not send it.
+      if (s.n === 1) return { ...s, txs: [{ hash: H('F'), account: null, outcome: 'unknown', error: null }] };
+      return s;
+    }),
+  };
+  const v = L.receiptsView(newer);
+  assert.equal(v.state, 'ok');
+  // The script's count and its own paragraph are used.
+  assert.equal(v.unresolved, 3);
+  assert.equal(v.headline, `All 10 steps passed on NEAR testnet. ${NOTE}`);
+  assert.deepEqual(v.unresolvedHashes, [H('U'), H('V'), H('W')]);
+  // Here the records give the same number: 1 record and 1 earlier broadcast in step 9, 1 earlier broadcast in step 4, none in step 1.
+  assert.deepEqual([v.steps[0].unresolved, v.steps[3].unresolved, v.steps[8].unresolved], [0, 1, 2]);
+  // Every hash the script lists as unresolved is on the page, with a link.
+  const shown = new Map(v.steps.flatMap((s) => s.txs.flatMap((t) => [[t.hash, t.href], ...t.earlier.map((e) => [e.hash, e.href])])));
+  for (const hsh of v.unresolvedHashes) assert.equal(shown.get(hsh), `https://testnet.nearblocks.io/txns/${hsh}`);
+
+  const s9 = v.steps[8];
+  assert.equal(s9.gotNote, ''); // the newer step text keeps the groups apart itself
+  assert.equal(s9.txSummary, '8 transactions: 2 succeeded, 3 failed on chain as recorded, 1 rejected before execution, 1 not sent, 1 unresolved (sent, outcome not confirmed); 3 earlier broadcasts replaced by a retry, 1 of them with no confirmed outcome');
+  assert.equal(s9.txs[1].label, L.UNRESOLVED_LABEL);
+  assert.deepEqual(s9.txs[2].earlier.map((e) => [e.hash, e.label]), [[H('V'), 'outcome not confirmed'], [H('X'), 'not found on chain']]);
+  assert.match(s9.txs[3].note, /^filled 1,000, an earlier broadcast that did execute; the send was retried as /);
+  assert.deepEqual(s9.txs[4].earlier.map((e) => e.label), ['succeeded']);
+  assert.equal(s9.txs[5].note, 'E_CAP, outcome confirmed by a later lookup by hash');
+  assert.equal(s9.txs[6].label, 'not sent (no transaction hash on record)');
+  assert.equal(s9.txs[6].unresolved, false);
+  assert.equal(s9.txs[7].label, 'invalid (rejected before execution)');
+  assert.equal(v.steps[0].txs[0].label, 'outcome not reported by the faucet');
+  assert.equal(v.steps[3].txSummary, '1 transaction: 1 succeeded, 0 failed on chain as recorded; 1 earlier broadcast replaced by a retry, 1 of them with no confirmed outcome');
+  const rows = Object.fromEntries(v.split.rows);
+  assert.equal(rows['Leave calls executed and failed / not executed / unresolved (sent, outcome not confirmed)'], '3 / 2 / 1');
+
+  // The script's count wins over the records, also when it is 0 (only the faucet's record is unknown).
+  const zero = L.receiptsView({ ...receipts, unresolved_txs: 0, unresolved_hashes: [], unresolved_note: null,
+    steps: receipts.steps.map((s) => (s.n === 1 ? { ...s, txs: [{ hash: H('F'), account: 'testnet', outcome: 'unknown', error: null }] } : s)) });
+  assert.equal(zero.unresolved, 0);
+  assert.equal(zero.headline, 'All 10 steps passed on NEAR testnet.');
+  // A count without a note falls back to the page's own sentence.
+  const noNote = L.receiptsView({ ...newer, unresolved_note: null });
+  assert.match(noNote.headline, / 3 transactions were sent but their outcome was not confirmed; the cap check rests on the contract's own counter\.$/);
+
+  // An older file: none of the keys, no added row, no earlier broadcasts, and the old step text gets the page's note.
+  const older = L.receiptsView({ ...receipts, steps: receipts.steps.map((s) => (s.n === 9
+    ? { ...s, got: '300 leave calls from 20 wallets: 100 filled, 199 E_CAP, 0 E_EXPIRED, 0 other failures, 1 not executed', txs: s.txs.map((t, i) => (i === 1 ? { ...t, outcome: 'unknown', error_code: null } : t)) } : s)) });
+  assert.equal(older.unresolved, 1);
+  assert.deepEqual(older.unresolvedHashes, []);
+  assert.ok(older.steps.every((s) => s.txs.every((t) => t.earlier.length === 0)));
+  assert.ok(!older.split.rows.some(([label]) => /executed and failed/.test(label)));
+  assert.match(older.steps[8].gotNote, /^Added by this page: .* 1 of the calls in this step was sent and has no confirmed outcome; it is not known whether it never executed or executed and failed\.$/);
+  assert.equal(older.steps[8].got, '300 leave calls from 20 wallets: 100 filled, 199 E_CAP, 0 E_EXPIRED, 0 other failures, 1 not executed');
+});
+
+test('snapshot: unpinned pages above 100 exits carry the paging caveat', () => {
+  const s = { now: 1_800_000_000_000_000_000n, open_exits: 150 };
+  const exits = Array.from({ length: 150 }, (_, i) => ({ id: BigInt(i + 1) }));
+  const caveat = /pages in storage order, and these pages were not read at one block/;
+  assert.match(L.liveSummary({ state: s, exits, exitsCapped: false, block: { pinned: false, height: 500, heights: [500, 501] } }, 't.testnet'), caveat);
+  assert.ok(!caveat.test(L.liveSummary({ state: s, exits, exitsCapped: false, block: { pinned: true, height: 500, heights: [500] } }, 't.testnet')));
+  assert.ok(!caveat.test(L.liveSummary({ state: { ...s, open_exits: 100 }, exits: exits.slice(0, 100), exitsCapped: false, block: { pinned: false, height: 500, heights: [500, 501] } }, 't.testnet')));
+});
+
+test('index.html: the corrected claims are in the static text', () => {
+  const html = read('./index.html');
+  assert.ok(!/all at once\.<\/h1>/.test(html));
+  assert.ok(!/covers the minutes when bundles and snipers buy/.test(html));
+  assert.ok(!/Nothing can be sold/.test(html));
+  assert.ok(!/until someone sends NEAR/.test(html));
+  assert.match(html, /Waiting out the launch window avoids the tag/);
+  assert.match(html, /calls whose outcome could not be confirmed are listed as unresolved/);
+});

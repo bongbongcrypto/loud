@@ -5,7 +5,8 @@
 //   buy(account, nearYocto, minOut, now)            -> tokens out
 //   sell(account, amount, minNearOut, now)          -> yoctoNEAR out (quiet only)
 //   shout(account, amount, now)                     -> exit id
-//   leave(account, exitId, minNearOut, now)         -> units filled (near in last_near_out)
+//   leave(account, exitId, minNearOut, now)         -> units filled (near in last_near_out);
+//       minNearOut is for everything left in the exit and is scaled to the part filled
 //   hush(account, exitId, now)                      -> units returned to loud
 //   transfer(account, receiver, amount, now)        -> { quiet_amount, loud_amount }
 //   transferLoud(account, receiver, amount, now)    -> amount
@@ -200,11 +201,17 @@ class Pool {
     return out;
   }
 
-  _poolSell(x, minNearOut) {
+  // minNearOut is the limit for `whole` units and is scaled to the x units sold
+  // now: the sale needs nearOut * whole >= minNearOut * x. A plain sell has
+  // whole === x, which is nearOut >= minNearOut.
+  _poolSell(x, minNearOut, whole = x) {
     const nearOut = this.quoteSell(x);
     if (nearOut === 0n) fail('E_AMOUNT', 'this sale is too small to pay anything');
     if (nearOut > this.pool_near) fail('E_POOL_EMPTY', 'pool does not hold enough NEAR');
-    if (nearOut < minNearOut) fail('E_SLIPPAGE', `near out ${nearOut} below minimum ${minNearOut}`);
+    if (nearOut * whole < minNearOut * x) {
+      if (x === whole) fail('E_SLIPPAGE', `near out ${nearOut} below minimum ${minNearOut}`);
+      fail('E_SLIPPAGE', `near out ${nearOut} for ${x} of ${whole} units is below minimum ${minNearOut} scaled to the part filled`);
+    }
     return nearOut;
   }
 
@@ -388,7 +395,10 @@ export class LoudToken extends Pool {
       const x = big(amount, 'amount');
       const held = this._loudOf(account);
       if (x === 0n || x > held) fail('E_NO_LOUD', `you hold ${held} loud units`);
-      if (x < this.dust_units) fail('E_DUST', `shout at least ${this.dust_units} units`);
+      // A whole balance below the dust floor may be shouted, so it is never stuck.
+      if (x < this.dust_units && x !== held) {
+        fail('E_DUST', `shout at least ${this.dust_units} units, or your whole loud balance of ${held} units`);
+      }
       if (this._openExitsOf(account).length >= MAX_EXITS_PER_ACCOUNT) {
         fail('E_TOO_MANY', `at most ${MAX_EXITS_PER_ACCOUNT} open exits per account`);
       }
@@ -436,7 +446,9 @@ export class LoudToken extends Pool {
         fill = min(fill, this.maxSellable());
         if (fill === 0n) fail('E_POOL_EMPTY', 'the pool cannot pay for any part of this exit');
       }
-      const nearOut = this._poolSell(fill, big(minNearOut, 'min_near_out'));
+      // The limit is for everything left in the exit; a partial fill is held to
+      // the same price (remaining is read before this fill).
+      const nearOut = this._poolSell(fill, big(minNearOut, 'min_near_out'), ex.remaining);
       this.bucket_units -= fill;
       this.escrowed -= fill;
       this.loud_outstanding -= fill;
@@ -477,6 +489,7 @@ export class LoudToken extends Pool {
     return this._tx(account, now, (t) => {
       checkAccount(receiver);
       if (receiver === account) fail('E_SELF', 'sender and receiver are the same');
+      if (receiver === CONTRACT_ACCOUNT) fail('E_RECEIVER', 'the token account cannot receive tokens');
       const x = big(amount, 'amount');
       if (x === 0n) fail('E_AMOUNT', 'amount must be positive');
       const quiet = this._quietOf(account);
@@ -502,6 +515,7 @@ export class LoudToken extends Pool {
     return this._tx(account, now, (t) => {
       checkAccount(receiver);
       if (receiver === account) fail('E_SELF', 'sender and receiver are the same');
+      if (receiver === CONTRACT_ACCOUNT) fail('E_RECEIVER', 'the token account cannot receive tokens');
       const x = big(amount, 'amount');
       const loud = this._loudOf(account);
       if (x === 0n || x > loud) fail('E_NO_LOUD', `you hold ${loud} loud units`);
@@ -520,6 +534,7 @@ export class LoudToken extends Pool {
     return this._tx(account, now, (t) => {
       checkAccount(receiver);
       if (receiver === account) fail('E_SELF', 'sender and receiver are the same');
+      if (receiver === CONTRACT_ACCOUNT) fail('E_RECEIVER', 'the token account cannot receive tokens');
       const x = big(amount, 'amount');
       if (x === 0n) fail('E_AMOUNT', 'amount must be positive');
       const quiet = this._quietOf(account);
@@ -716,7 +731,8 @@ export class PerWalletToken extends NaiveToken {
 // strategy. It is not the fastest possible exit: the gate at the top of
 // _shout() waits for the current batch to near its expiry before it shouts
 // again, so near the end of a position the cap can have room while no exit is
-// open. A remainder below dust_units cannot be shouted at all (E_DUST).
+// open. It never shouts less than dust_units: the token accepts a smaller shout
+// only for a wallet's whole loud balance, and this driver does not use that.
 // It keeps one batch of exits ready at all times: a new batch is shouted early
 // enough to become ready before the previous one expires, and each batch is
 // sized to the most the cap could release during one exit window.

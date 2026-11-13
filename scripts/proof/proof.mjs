@@ -17,6 +17,7 @@ import {
   failureText, errorCode, parseEvents, returnValueBigInt, leaveFilled, evaluateSplit,
   txLink, accountLink, jsonReplacer,
   receiptSettlement, base58Encode, faucetTx, paramMismatches,
+  txRecord, needsLookup, leaveCounts, leaveCountsText, unresolvedSummary,
 } from './lib.mjs';
 
 const { KeyPair, transactions: T, utils } = nearApi;
@@ -114,10 +115,23 @@ const receipts = {
     payouts_settled: 0,
     fail_reasons: null,
     pass: false,
+    // Leave calls by what is known about them (set at the end of step 9).
+    executed_failed: null,
+    not_executed: null,
+    unresolved: null,
   },
   error: null,
+  // Transactions the script sent whose outcome stayed unknown (set when the run ends).
+  unresolved_txs: null,
+  unresolved_hashes: null,
+  unresolved_note: null,
   generated_at: null,
 };
+
+// Records the faucet returned (the script did not send those transactions) and the leave
+// records of step 9 (looked up again inside step 9, before its counts are taken).
+const faucetRecs = new WeakSet();
+const leaveRecs = new WeakSet();
 
 function addStep(n, title, expect) {
   const step = { n, title, ok: false, expect, got: null, txs: [] };
@@ -131,11 +145,6 @@ function finishStep(step, ok, got) {
   step.ok = Boolean(ok);
   step.got = got;
   log(`step ${step.n}: ${step.ok ? 'ok' : 'FAILED'} - ${got}`);
-}
-
-// What a transaction looks like inside receipts.json.
-function txRecord(r, extra = {}) {
-  return { hash: r.hash, account: r.account, outcome: r.outcome, error: r.error, ...extra };
 }
 
 // Record of a call that pays NEAR when it succeeds (sell, leave). `settled` is true only
@@ -198,8 +207,12 @@ async function nextNonce(signer) {
 // Sign, send and wait for finality. Never throws for an on-chain or validation failure:
 // the result says what happened.
 //   outcome: "success" | "failure" (executed and failed) | "invalid" (rejected, not executed) | "unknown"
+// A retry after InvalidNonce / Expired signs a new transaction with a new hash. The hash of
+// every earlier broadcast is kept in `earlierAttempts` (receipts.json: `earlier_attempts`).
+// `hash` is null when the last attempt failed before it was broadcast.
 async function sendTx(signer, receiverId, actions) {
   let hash = null;
+  const earlierAttempts = [];
   for (let attempt = 0; attempt < 3; attempt++) {
     try {
       const nonce = await nextNonce(signer);
@@ -221,10 +234,13 @@ async function sendTx(signer, receiverId, actions) {
         hash,
         senderId: signer.id,
       });
-      return summarize(result, hash, signer.id);
+      return { ...summarize(result, hash, signer.id), earlierAttempts };
     } catch (e) {
       const text = e instanceof RpcError ? e.text : String(e?.message ?? e);
       if (e instanceof RpcError && /InvalidNonce|Expired/.test(text) && attempt < 2) {
+        // The refused transaction stays on record; the next attempt gets its own hash.
+        if (hash) earlierAttempts.push(hash);
+        hash = null;
         signer.nonce = null;
         recentBlock = { promise: null, at: 0 };
         continue;
@@ -234,11 +250,90 @@ async function sendTx(signer, receiverId, actions) {
       return {
         hash, account: signer.id, outcome: invalid ? 'invalid' : 'unknown',
         error: text.slice(0, 400), code: errorCode(text), logs: [], successValue: null, blockHash: null,
-        settled: false, receiptsFailed: 0, receiptError: null,
+        settled: false, receiptsFailed: 0, receiptError: null, earlierAttempts,
       };
     }
   }
   throw new Error('unreachable');
+}
+
+// One status query by hash (RPC `tx`, wait_until FINAL, through the client's failover).
+// -> { found, notSeen, error }: `found` is the summarized final result or null; `notSeen`
+// is true when the node answered that it does not know the transaction or did not see it
+// become final. Never throws.
+async function lookupTx(hash, senderId, tries = 3) {
+  try {
+    const result = await rpc.call('tx', { tx_hash: hash, sender_account_id: senderId, wait_until: 'FINAL' }, { tries });
+    const st = result?.status;
+    const final = st !== null && typeof st === 'object' && (typeof st.SuccessValue === 'string' || st.Failure !== undefined);
+    if (!final) return { found: null, notSeen: false, error: 'the answer carries no final status' };
+    return { found: summarize(result, hash, senderId), notSeen: false, error: null };
+  } catch (e) {
+    const notSeen = e instanceof RpcError && (e.cause_ === 'UNKNOWN_TRANSACTION' || e.cause_ === 'TIMEOUT_ERROR');
+    return { found: null, notSeen, error: String(e?.message ?? e).slice(0, 160) };
+  }
+}
+
+// Look up every earlier broadcast of a record and write `earlier_attempt_outcomes`.
+// An earlier broadcast was refused by a node (InvalidNonce / Expired); it is recorded as
+// "invalid" when the lookup does not find it either, with its real outcome when the lookup
+// finds it on chain, and as "unknown" when the lookup itself failed. Hashes not reached
+// before `until` (wall clock, ms) get no entry and count as unresolved.
+// Returns the summarized results of the earlier broadcasts that did execute. Never throws.
+async function resolveEarlier(rec, until, tries = 3) {
+  const hashes = Array.isArray(rec.earlier_attempts) ? rec.earlier_attempts : [];
+  const executed = [];
+  if (hashes.length === 0) return executed;
+  const outcomes = [];
+  for (const h of hashes) {
+    if (Date.now() > until) break;
+    const look = await lookupTx(h, rec.account, tries);
+    if (look.found) {
+      outcomes.push({ hash: h, outcome: look.found.outcome, error: look.found.error });
+      executed.push(look.found);
+      log(`earlier broadcast ${h} of ${rec.hash ?? 'a transaction without a hash'} did execute: ${look.found.outcome}`);
+    } else if (look.notSeen) {
+      outcomes.push({ hash: h, outcome: 'invalid', error: 'refused at broadcast (InvalidNonce or Expired); one more lookup by hash did not find it' });
+    } else {
+      outcomes.push({ hash: h, outcome: 'unknown', error: look.error });
+    }
+  }
+  rec.earlier_attempt_outcomes = outcomes;
+  return executed;
+}
+
+// After the steps: one more lookup for every transaction outside step 9 whose outcome is
+// still unknown, and for earlier broadcasts. Only the record changes (outcome, error,
+// `resolved_late`); step results stay as they were decided, from chain state read at the
+// time. Bounded by wall clock so the job limit is not reached. Never throws.
+async function finalLookups() {
+  const until = Math.min(Date.now() + 180_000, startedAt + MAX_RUNTIME_MS + 240_000);
+  for (const step of receipts.steps) {
+    for (const rec of step.txs) {
+      if (faucetRecs.has(rec) || leaveRecs.has(rec)) continue;
+      try {
+        if (needsLookup(rec)) {
+          if (Date.now() > until) return;
+          const look = await lookupTx(rec.hash, rec.account, 2);
+          if (look.found) {
+            rec.outcome = look.found.outcome;
+            rec.error = look.found.error;
+            if ('settled' in rec) rec.settled = look.found.outcome === 'success' ? look.found.settled === true : null;
+            rec.resolved_late = true;
+            log(`step ${step.n}: ${rec.hash} was confirmed on a later lookup: ${rec.outcome}`);
+          } else {
+            log(`step ${step.n}: ${rec.hash} is still unconfirmed: ${look.error}`);
+          }
+        }
+        if (Array.isArray(rec.earlier_attempts) && !rec.earlier_attempt_outcomes) {
+          if (Date.now() > until) return;
+          await resolveEarlier(rec, until, 2);
+        }
+      } catch (e) {
+        log(`step ${step.n}: lookup of ${rec.hash} failed: ${String(e?.message ?? e).slice(0, 160)}`);
+      }
+    }
+  }
 }
 
 function summarize(result, hash, account) {
@@ -357,7 +452,10 @@ async function main() {
   deployment.root_account = root.id;
   deployment.explorer.root = accountLink(root.id);
   const faucet = await faucetCreate(root);
-  if (faucet.tx) s1.txs.push(faucet.tx);
+  if (faucet.tx) {
+    faucetRecs.add(faucet.tx);
+    s1.txs.push(faucet.tx);
+  }
   let rootBalance = await balanceOf(root.id);
   let plan = budget({ wasmBytes: wasm.length, balance: rootBalance, wallets: WALLETS });
   // Top-up: if one faucet grant is too small, create up to three more faucet accounts and
@@ -367,7 +465,10 @@ async function main() {
     const extra = newSigner(root.id.replace('.testnet', `f${i}.testnet`));
     try {
       const extraFaucet = await faucetCreate(extra);
-      if (extraFaucet.tx) s1.txs.push(extraFaucet.tx);
+      if (extraFaucet.tx) {
+        faucetRecs.add(extraFaucet.tx);
+        s1.txs.push(extraFaucet.tx);
+      }
       const r = await sendTx(extra, extra.id, [T.deleteAccount(root.id)]);
       s1.txs.push(txRecord(r));
     } catch (e) {
@@ -573,7 +674,7 @@ async function main() {
 
   // ----- step 9: all wallets leave for one cap window -----
   const s9 = addStep(9, `After the notice, all ${WALLETS} wallets call leave() in rounds for one full cap window`,
-    'at least one fill; every rejected call fails with E_CAP (or E_EXPIRED at the very end); no successful leave has a failed receipt or a payout_failed event');
+    'at least one fill; every call that executed and failed did so with E_CAP (or E_EXPIRED at the very end); no successful leave has a failed receipt or a payout_failed event; calls that were not executed or whose outcome stayed unknown are counted apart');
   const readyAt = open.reduce((m, e) => (e.readyAt > m ? e.readyAt : m), 0n);
   await waitChainTime(readyAt, 'the end of the notice period');
   const state0 = await view('get_state');
@@ -618,6 +719,7 @@ async function main() {
     const { remaining, fields } = await leaveFields(r);
     // A successful leave pays NEAR, so the record carries `settled` (all receipts succeeded).
     const rec = payRecord(r, { round, exit_id: e.id, ...fields });
+    leaveRecs.add(rec);
     attempts.push(rec);
     s9.txs.push(rec);
     trail.push({ rec, e, blockHash: r.blockHash });
@@ -645,22 +747,40 @@ async function main() {
     await sleep(Math.max(0, ROUND_MS - (Date.now() - roundStart)));
   }
 
-  // One more look at calls whose result no endpoint confirmed and at fills without a block
-  // time: step 10 needs every fill on record with its time, or it fails.
+  // Before step 9 is closed: one more lookup by hash for every leave whose result no
+  // endpoint confirmed, for every earlier broadcast that a retry replaced, and for fills
+  // without a block time. Step 10 needs every fill on record with its time, or it fails.
+  // What is still unknown after this is counted as unresolved, never as "not executed".
+  // (The loop also visits the records it appends.)
+  const lookupUntil = startedAt + MAX_RUNTIME_MS;
   for (const p of trail) {
     const { rec } = p;
-    if (Date.now() - startedAt > MAX_RUNTIME_MS) break;
-    if (rec.outcome === 'unknown' && rec.hash) {
-      try {
-        const result = await rpc.call('tx', { tx_hash: rec.hash, sender_account_id: p.e.wallet.id, wait_until: 'FINAL' }, { tries: 3 });
-        const r = summarize(result, rec.hash, p.e.wallet.id);
-        const { fields } = await leaveFields(r);
-        Object.assign(rec, payRecord(r, { round: rec.round, exit_id: rec.exit_id, ...fields }));
-        p.blockHash = r.blockHash;
-        log(`leave ${rec.hash} was confirmed on a second look: ${rec.outcome}`);
-      } catch (e) {
-        log(`leave ${rec.hash} is still unconfirmed: ${String(e?.message ?? e).slice(0, 160)}`);
+    if (Date.now() > lookupUntil) break;
+    try {
+      if (needsLookup(rec)) {
+        const look = await lookupTx(rec.hash, rec.account);
+        if (look.found) {
+          const r = look.found;
+          const { fields } = await leaveFields(r);
+          Object.assign(rec, payRecord(r, { round: rec.round, exit_id: rec.exit_id, ...fields }), { resolved_late: true });
+          p.blockHash = r.blockHash;
+          log(`leave ${rec.hash} was confirmed on a second look: ${rec.outcome}`);
+        } else {
+          log(`leave ${rec.hash} is still unconfirmed: ${look.error}`);
+        }
       }
+      // An earlier broadcast that did execute is a leave call of its own: it gets its own
+      // record, so that its fill (if any) is on record for step 10.
+      for (const r of await resolveEarlier(rec, lookupUntil)) {
+        const { fields } = await leaveFields(r);
+        const extra = payRecord(r, { round: rec.round, exit_id: rec.exit_id, ...fields, retried_as: rec.hash });
+        leaveRecs.add(extra);
+        attempts.push(extra);
+        s9.txs.push(extra);
+        trail.push({ rec: extra, e: p.e, blockHash: r.blockHash });
+      }
+    } catch (e) {
+      log(`second look at leave ${rec.hash} failed: ${String(e?.message ?? e).slice(0, 160)}`);
     }
     if (rec.filled !== null && rec.block_timestamp === null && p.blockHash) {
       try {
@@ -673,23 +793,30 @@ async function main() {
     }
   }
 
-  const fillsCount = attempts.filter((a) => a.filled !== null && BigInt(a.filled) > 0n).length;
-  const capHits = attempts.filter((a) => a.error_code === 'E_CAP').length;
-  // Only an executed call that failed for another reason counts as an unexpected failure.
-  // "invalid" and "unknown" calls are listed as not executed; if one of them did change the
-  // contract counter, step 10 fails because the receipts no longer match the counter.
-  const unexpected = attempts.filter((a) => a.outcome === 'failure' && a.error_code !== 'E_CAP' && a.error_code !== 'E_EXPIRED').length;
-  const payoutCalls = attempts.filter((a) => a.outcome === 'success').length;
-  const payoutsSettled = attempts.filter((a) => a.outcome === 'success' && a.settled === true).length;
+  // Three groups stay apart: executed and failed (E_CAP, E_EXPIRED, other), not executed
+  // ("invalid", or never broadcast) and unresolved (broadcast, outcome unknown). Only an
+  // executed call that failed for a reason other than E_CAP / E_EXPIRED is an unexpected
+  // failure. An unresolved call does not fail this step; the run result carries it
+  // (`unresolved_txs`). If such a call did change the contract counter, step 10 fails
+  // because the fills on record no longer add up to the counter.
+  const c9 = leaveCounts(attempts);
+  const fillsCount = c9.fills;
+  const unexpected = c9.other_failures;
+  const payoutCalls = c9.payout_calls;
+  const payoutsSettled = c9.payouts_settled;
   s9.payout_calls = payoutCalls;
   s9.payouts_settled = payoutsSettled;
+  s9.executed_failed = c9.executed_failed;
+  s9.not_executed = c9.not_executed;
+  s9.unresolved = c9.unresolved;
   receipts.split.attempts = attempts.length;
-  receipts.split.cap_hits = capHits;
+  receipts.split.cap_hits = c9.cap_hits;
   receipts.split.payout_calls = payoutCalls;
   receipts.split.payouts_settled = payoutsSettled;
-  finishStep(s9, fillsCount > 0 && unexpected === 0 && payoutsSettled === payoutCalls,
-    `${attempts.length} leave calls from ${open.length} wallets: ${fillsCount} filled, ${capHits} E_CAP, ${attempts.filter((a) => a.error_code === 'E_EXPIRED').length} E_EXPIRED, ${unexpected} other failures, ${attempts.filter((a) => a.outcome === 'invalid' || a.outcome === 'unknown').length} not executed; `
-    + `${payoutsSettled} of ${payoutCalls} successful leaves have no failed receipt and no payout_failed event`);
+  receipts.split.executed_failed = c9.executed_failed;
+  receipts.split.not_executed = c9.not_executed;
+  receipts.split.unresolved = c9.unresolved;
+  finishStep(s9, fillsCount > 0 && unexpected === 0 && payoutsSettled === payoutCalls, leaveCountsText(c9, open.length));
 
   // ----- step 10: the cap held -----
   const s10 = addStep(10, 'Total loud units that left during the cap window stay within the cap',
@@ -731,6 +858,12 @@ async function main() {
     `${open.length} wallets sold ${unitsToTokens(ev.soldTotal)} LOUD in ${(t1 - t0) / 10n ** 9n}s (cap window ${capWindowNs / 10n ** 9n}s); bound ${unitsToTokens(ev.bound)} LOUD `
     + `(bucket ${unitsToTokens(bucketAtStart)} + refill); in the window: ${unitsToTokens(ev.soldInWindow)} <= ${unitsToTokens(ev.looseBound)}; `
     + `receipts ${ev.receiptsMatchCounter ? 'match' : 'do not match'} the contract counter`
+    + '; the cap check rests on the contract counter total_left, not on the per-transaction statuses'
+    + (c9.unresolved > 0
+      ? `; unresolved leave calls: ${c9.unresolved}. `
+        + (ev.receiptsMatchCounter ? 'The fills on record add up to the counter, so none of them added a fill in the measured interval, but it' : 'It')
+        + ' is not known whether each of them never executed or executed and failed'
+      : '')
     + (reasons.length > 0 ? `; not passed because: ${reasons.join('; ').slice(0, 600)}` : ''));
 }
 
@@ -746,6 +879,22 @@ try {
   console.error(`proof run stopped: ${receipts.error}`);
 } finally {
   if (deployment.status !== 'ok') deployment.status = 'failed';
+  // Whatever the run sent and could not confirm is stated in the result, also when the
+  // run passed or stopped early. The step results and `status` are not changed by this.
+  try {
+    await finalLookups();
+  } catch (e) {
+    console.error(`final lookups stopped: ${String(e?.message ?? e).slice(0, 200)}`);
+  }
+  try {
+    const sent = receipts.steps.flatMap((s) => s.txs).filter((rec) => !faucetRecs.has(rec));
+    const u = unresolvedSummary(sent);
+    receipts.unresolved_txs = u.count;
+    receipts.unresolved_hashes = u.hashes;
+    receipts.unresolved_note = u.note;
+  } catch (e) {
+    console.error(`could not count the unresolved transactions: ${String(e?.message ?? e).slice(0, 200)}`);
+  }
   try {
     await writeOutputs();
   } catch (e) {
@@ -754,5 +903,6 @@ try {
   }
 }
 for (const s of receipts.steps) console.log(`${s.ok ? 'PASS' : 'FAIL'} step ${s.n}: ${s.title}`);
-console.log(`result: ${receipts.status}; token ${deployment.token_account ?? '-'}`);
+console.log(`result: ${receipts.status}${receipts.unresolved_txs > 0 ? `, unresolved transactions (sent, outcome unknown): ${receipts.unresolved_txs}` : ''}; token ${deployment.token_account ?? '-'}`);
+if (receipts.unresolved_note) console.log(receipts.unresolved_note);
 process.exit(exitCode);

@@ -175,6 +175,72 @@ test('shout: escrow, timestamps, E_NO_LOUD, E_DUST, E_TOO_MANY', () => {
   checkInvariants(t);
 });
 
+test('shout: a whole loud balance below the dust floor can be shouted; a part of it cannot', () => {
+  const t = seeded();
+  t.transferLoud(CREATOR, 'small', DUST - 1n, 11n * MIN);
+  assert.throws(() => t.shout('small', DUST - 2n, 11n * MIN), code('E_DUST'));
+  assert.equal(t.getAccount('small').loud, DUST - 1n);
+  const id = t.shout('small', DUST - 1n, 11n * MIN);
+  assert.equal(t.getAccount('small').loud, 0n);
+  assert.equal(t.getAccount('small').exits[0].remaining, DUST - 1n);
+  const quote = t.quoteSell(DUST - 1n);
+  assert.ok(quote > 0n);
+  assert.equal(t.leave('small', id, quote, 41n * MIN), DUST - 1n);
+  assert.equal(t.last_near_out, quote);
+  assert.equal(t.getAccount('small').exits.length, 0);
+  checkInvariants(t);
+  // One unit is worth less than one yoctoNEAR here: the shout is accepted,
+  // leave fails with E_AMOUNT and hush returns the unit.
+  t.transferLoud(CREATOR, 'tiny', 1n, 41n * MIN);
+  const tinyId = t.shout('tiny', 1n, 41n * MIN);
+  assert.equal(t.quoteSell(1n), 0n);
+  assert.throws(() => t.leave('tiny', tinyId, 0n, 71n * MIN), code('E_AMOUNT'));
+  assert.equal(t.escrowed, 1n);
+  assert.equal(t.hush('tiny', tinyId, 71n * MIN), 1n);
+  assert.equal(t.getAccount('tiny').loud, 1n);
+  checkInvariants(t);
+});
+
+test('leave: min_near_out is scaled to the part filled; a full fill keeps the plain limit', () => {
+  const t = seeded();
+  const amount = 3n * CAP;
+  const id = t.shout(CREATOR, amount, 10n * MIN);
+  const ready = 40n * MIN;
+  const avail = t.getState(ready).cap_available;
+  assert.ok(avail > 0n && avail < amount);
+  const quoteWhole = t.quoteSell(amount);
+  const quotePart = t.quoteSell(avail);
+  assert.ok(quoteWhole > quotePart, 'an absolute limit could not pass');
+  // The highest limit this fill meets: floor(near_out * remaining / fill).
+  const edge = (quotePart * amount) / avail;
+  assert.ok(edge >= quoteWhole);
+  const before = snapshot(t);
+  assert.throws(() => t.leave(CREATOR, id, edge + 1n, ready), code('E_SLIPPAGE'));
+  assert.deepEqual(snapshot(t), before);
+  // The quote for the whole exit is a fair limit for a part of it.
+  assert.equal(t.leave(CREATOR, id, quoteWhole, ready), avail);
+  assert.equal(t.last_near_out, quotePart);
+  // The next fill is measured against what was left before it.
+  const left = amount - avail;
+  const t2 = ready + 6n * MIN;
+  const avail2 = t.getState(t2).cap_available;
+  assert.ok(avail2 > 0n && avail2 < left);
+  const quote2 = t.quoteSell(avail2);
+  const edge2 = (quote2 * left) / avail2;
+  assert.throws(() => t.leave(CREATOR, id, edge2 + 1n, t2), code('E_SLIPPAGE'));
+  assert.equal(t.leave(CREATOR, id, edge2, t2), avail2);
+  assert.equal(t.getAccount(CREATOR).exits[0].remaining, left - avail2);
+  checkInvariants(t);
+  // Full fill: exactly the old rule, near_out >= min_near_out.
+  const small = t.shout('early', DUST * 10n, t2);
+  const t3 = t2 + 60n * MIN;
+  const quoteSmall = t.quoteSell(DUST * 10n);
+  assert.throws(() => t.leave('early', small, quoteSmall + 1n, t3), code('E_SLIPPAGE'));
+  assert.equal(t.leave('early', small, quoteSmall, t3), DUST * 10n);
+  assert.equal(t.last_near_out, quoteSmall);
+  checkInvariants(t);
+});
+
 test('leave: notice, expiry, ownership, cap fill, tokens become quiet inventory', () => {
   const t = seeded();
   const amount = 3n * CAP;
@@ -187,10 +253,12 @@ test('leave: notice, expiry, ownership, cap fill, tokens become quiet inventory'
   const avail = t.getState(ready).cap_available;
   assert.equal(avail, (CAP * 40n) / 60n);
   const quote = t.quoteSell(avail);
-  assert.throws(() => t.leave(CREATOR, id, quote + 1n, ready), code('E_SLIPPAGE'));
+  // A partial fill: the limit is for the whole exit and is scaled to the fill.
+  const limit = (quote * amount) / avail;
+  assert.throws(() => t.leave(CREATOR, id, limit + 1n, ready), code('E_SLIPPAGE'));
   const poolBefore = t.pool_tokens;
   const nearBefore = t.pool_near;
-  assert.equal(t.leave(CREATOR, id, quote, ready), avail);
+  assert.equal(t.leave(CREATOR, id, limit, ready), avail);
   assert.equal(t.last_near_out, quote);
   assert.equal(t.pool_tokens, poolBefore + avail);
   assert.equal(t.pool_near, nearBefore - quote);
@@ -273,6 +341,10 @@ test('transfer: quiet first, then loud, and the tag follows the tokens (SPEC 8.2
   }
   assert.throws(() => t.transferLoud('holder-0', 'w1', 1n, 12n * MIN), code('E_NO_LOUD'));
   assert.throws(() => t.transferLoud(CREATOR, CREATOR, 1n, 12n * MIN), code('E_SELF'));
+  // The token account cannot receive tokens through any transfer method.
+  assert.throws(() => t.transfer('bob', CONTRACT_ACCOUNT, 1n, 12n * MIN), code('E_RECEIVER'));
+  assert.throws(() => t.transferLoud('w1', CONTRACT_ACCOUNT, 1n, 12n * MIN), code('E_RECEIVER'));
+  assert.throws(() => t.transferCall('bob', CONTRACT_ACCOUNT, 1n, 12n * MIN), code('E_RECEIVER'));
   // ft_transfer_call takes quiet only.
   assert.throws(() => t.transferCall('w1', 'dex', 1n, 12n * MIN), code('E_QUIET_DOOR'));
   assert.throws(() => t.transferCall('bob', 'dex', q + 1n, 12n * MIN), code('E_QUIET_DOOR'));
@@ -622,8 +694,13 @@ test('balanceOf: the token account holds pool and escrow, balances add up and ma
   check('shout');
   t.transfer('late', 'friend', got / 4n, 11n * MIN);
   t.transferLoud(CREATOR, 'friend', DUST, 11n * MIN);
-  t.transfer('late', CONTRACT_ACCOUNT, got / 4n, 11n * MIN);
-  assert.equal(t.balanceOf(CONTRACT_ACCOUNT), t.pool_tokens + t.escrowed + got / 4n);
+  // A transfer to the token account is refused, quiet or loud, so its balance
+  // stays the pool inventory plus the escrow.
+  assert.throws(() => t.transfer('late', CONTRACT_ACCOUNT, got / 4n, 11n * MIN), code('E_RECEIVER'));
+  assert.throws(() => t.transferLoud(CREATOR, CONTRACT_ACCOUNT, DUST, 11n * MIN), code('E_RECEIVER'));
+  assert.throws(() => t.transferCall('late', CONTRACT_ACCOUNT, got / 4n, 11n * MIN), code('E_RECEIVER'));
+  assert.equal(t.balanceOf(CONTRACT_ACCOUNT), t.pool_tokens + t.escrowed);
+  assert.equal(t.getAccount('late').quiet, got - got / 4n);
   check('transfers');
   const filled = t.leave(CREATOR, id, 0n, 41n * MIN);
   assert.ok(filled > 0n && filled < 4n * CAP, 'partial leave');
