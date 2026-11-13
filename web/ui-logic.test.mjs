@@ -70,7 +70,7 @@ test('index.html states the SPEC claim and the standard preset values', () => {
   // A shout stays locked for the notice plus the exit window.
   const lockMin = Number((PRESETS.standard.notice_ns + PRESETS.standard.exit_window_ns) / MIN);
   assert.ok(html.includes(`the exit expires ${lockMin} min after the shout, and they stay locked until someone calls <code>hush</code>.`));
-  assert.ok(html.includes(`There is no penalty beyond gas and the ${lockMin} min lock.`));
+  assert.ok(html.includes(`There is no penalty beyond gas and the lock, ${lockMin} min in the standard preset.`));
   // The hero is the kicker, the headline and one line on why, nothing else.
   const lede = html.slice(html.indexOf('<section class="lede"'), html.indexOf('</section>', html.indexOf('<section class="lede"')));
   assert.equal((lede.match(/<p[ >]/g) || []).length, 2);

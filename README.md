@@ -42,7 +42,7 @@ Run from the repository root. The Node rows need Node 22 or newer and nothing in
 | `node sim/run.mjs` (about 2 min) | Writes `sim/results.json` and `sim/RESULTS.md` again, byte for byte the same. |
 | `python3 -m http.server -d web 8000` | The same page at http://localhost:8000, served from static files with no build step. |
 
-The testnet token runs a faster demo preset (launch window 2 min, notice 1 min, exit window 10 min, cap 0.5% per 10 min)<!-- proof:commit --> and was built from commit `ff615c3`, named in `deployment.json` as `run.commit`<!-- /proof:commit -->.<!-- proof:scope --><!-- /proof:scope -->
+The testnet token runs a faster demo preset (launch window 2 min, notice 1 min, exit window 10 min, cap 0.5% per 10 min)<!-- proof:commit --> and was built from commit `ff615c3`, named in `deployment.json` as `run.commit`<!-- /proof:commit -->.<!-- proof:scope --><!-- /proof:scope --> The testnet run shows 20 wallets staying inside the cap. The unit and engine tests show that 1 wallet and 100 wallets sell the same amount.
 
 ## What the track asked for
 
@@ -68,9 +68,9 @@ Insiders dump 13.6% of supply from 30 wallets at 24 h:
 | Per-wallet limit | 44.6% | at once | 0% | 61.9% | 58.9% |
 | LOUD | 19.5% | 27.1 h | 100% | 100.0% | 84.9% |
 
-Each cell is the median of 9 seeds. The holder quote is the price for selling 0.01% of supply, as a share of the price just before the first sign. That sign is the first shout under LOUD and the first sale under the other rules. Nobody in the run makes that sale. The announced column is 100% under LOUD by construction. The LOUD seller goes through the notice and the cap and does not buy back.
+Each cell is the median of 9 seeds. The holder quote is the price for selling 0.01% of supply, as a share of the price just before the first sign. When the pool cannot pay for all of it, the quote covers only the part it can pay. That sign is the first shout under LOUD and the first sale under the other rules. Nobody in the run makes that sale. The announced column is 100% under LOUD by construction. The LOUD seller goes through the notice and the cap and does not buy back.
 
-Standard LOUD does worse than no rule when early supply does not dump. By the same 1-hour measure it falls 14.0% against 11.0% in a calm launch, where early supply never sells, and 14.0% against 10.7% in a slow bleed, where it sells a twentieth a day. In the calm launch the cause is an assumption: holders rush out when they see a shout. With that rush set to zero the day-1 dump scenario gives 8.8%, and at three times the assumed rush 39.2%. A loose setting (2% per hour, 10 min notice) gives 44.2%, about the same as no rule.
+Standard LOUD does worse than no rule when early supply does not dump. By the same 1-hour measure it falls 14.0% against 11.0% in a calm launch, where the modelled insider group never sells, and 14.0% against 10.7% in a slow bleed, where it sells a twentieth a day. Ordinary launch-window buyers still sell through exits in both. In the calm launch the cause is an assumption: holders rush out when they see a shout. With that rush set to zero the day-1 dump scenario gives 8.8%, and at three times the assumed rush 39.2%. A loose setting (2% per hour, 10 min notice) gives 44.2%, about the same as no rule.
 
 Every number in this section comes from the simulation. The next section replays two real dumps.
 
@@ -102,7 +102,7 @@ Under LOUD, holders in both cases also get 30 minutes of public notice before th
 <details>
 <summary>Contract-level limits</summary>
 
-- **Other pools.** `ft_transfer_call` refuses loud tokens. Other venues decide which quiet tokens they accept.
+- **Other pools.** `ft_transfer_call` refuses loud tokens. Quiet tokens can be sent with it. The receiving contract gets a fixed 30 Tgas for its `ft_on_transfer`, and if that is not enough the transfer is refunded.
 - **Small positions leave in one call.** What fits the cap room sells in one `leave` after notice if the pool can pay. A full cap plus one refill lets out up to 1% of supply in an hour.
 - **When the pool cannot pay.** `sell` fails with `E_POOL_EMPTY`, and `leave` fills only what the pool can pay.
 - **Storage is never refunded.** There is no withdraw and no unregister. A transfer to an unregistered account fails with `E_UNREGISTERED`. The 0.03 NEAR covers the account's records and eight open exits, the most one account can have.
@@ -118,7 +118,7 @@ Under LOUD, holders in both cases also get 30 minutes of public notice before th
 |---|---|
 | `contracts/loud-math` | Pool and cap integer math, no dependency. |
 | `contracts/loud` | The token: NEP-141, the two balances, the built-in pool and the exits. |
-| `web/engine.js` | The same rules in JavaScript, used by the page and the simulator. It keeps no registration and charges no storage. |
+| `web/engine.js` | The same rules in JavaScript, used by the page and the simulator. It leaves out account registration, the 0.03 NEAR storage payment, asynchronous payouts and `ft_transfer_call` refunds. |
 | `web/` | The static page, no build step. |
 | `sim/` | The 60-day simulation, and the replay of two real launches with its data. |
 | `scripts/proof` | The testnet run. |
