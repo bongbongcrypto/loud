@@ -519,7 +519,7 @@ export function toMarkdown(result) {
   for (const [k, v] of Object.entries(result.model)) out.push(`| ${k} | ${v} |`);
   out.push('');
   out.push('Buy arrivals are Poisson with rate `buyRatePerHour + launchBuyRatePerHour * exp(-hours / launchDecayHours)`; ' +
-    'sizes are lognormal. Each holder sells everything after an exponential holding time with mean `holdDays`; ' +
+    'sizes are lognormal. Each holder sells everything after an exponential holding time with mean `holdDays`, except that under LOUD the model keeps a loud balance or loud remainder below the shout minimum (one millionth of supply), although the contract accepts a shout of a whole loud balance that small; ' +
     'when the price has fallen more than `panicThreshold` over the last hour the sell rate is multiplied by ' +
     '`1 + panicSlope * (drop - panicThreshold) / 0.10`, at most `panicMax`. Under LOUD, when open exits first exceed ' +
     '`boardThresholdBps` of supply, each remaining holder sells with probability `min(rushMax, rushPerPct * board size in % of supply)` at a random moment within the notice period.');

@@ -4,7 +4,7 @@
 
 LOUD makes launch supply announce its exit. The creator allocation and the tokens bought in the launch window are *loud*. They sell into the token's own pool only after a public notice, and every wallet draws on one shared cap, so splitting a bag across 100 wallets adds no room. While a notice is up, anyone else can *catch* the exit: buy the tokens from the seller, for no less than the pool's price when the exit was shouted, and take them, still loud, so that sale never hits the pool. Tokens bought later are *quiet* and sell at once. That includes tokens a holder sells through the cap and then buys back: the cap sets how fast early supply can be sold into the pool or converted, and it does not stop a price from falling ([Limits](#limits)).
 
-- **Use it now, no wallet needed:** https://bongbongcrypto.github.io/loud/#try. One click gives you a funded NEAR testnet account inside the page. Buy, get refused on `sell`, shout, catch from a second wallet, leave. Every click is a real transaction with an explorer link.
+- **Use it now, no wallet needed:** https://bongbongcrypto.github.io/loud/#try. One click gives you a funded NEAR testnet account inside the page. Buy, get refused on `sell`, shout, catch from a second wallet, leave. Each of those is a real transaction with an explorer link.
 - Live token to try: [t.loud-live-mwg2oscvef9c57.testnet](https://testnet.nearblocks.io/address/t.loud-live-mwg2oscvef9c57.testnet), no access keys, launch window open until 2026-11-21 so every visitor's buy is loud.
 - Live page: https://bongbongcrypto.github.io/loud/
 - Testnet token: <!-- proof:token -->[t.loud-mwfw1nxp3572b6.testnet](https://testnet.nearblocks.io/address/t.loud-mwfw1nxp3572b6.testnet), no access keys, demo preset, recorded 2026-11-14<!-- /proof:token -->. Every transaction: [Testnet proof](https://bongbongcrypto.github.io/loud/#proof).
@@ -14,16 +14,16 @@ Built at NEAR HACKATHON, memecoins track. Testnet only. Unaudited.
 
 ## Use it on testnet
 
-The page's first section talks to the live token directly. There is no backend and no wallet extension.
+The page's "Use it on testnet" section, right after the simulated exits board at the top, talks to the live token directly. There is no backend and no wallet extension.
 
 1. **Get a test wallet.** The page makes a key pair in your browser and asks the public NEAR testnet faucet for a funded account. The key stays in that browser's storage. It is a throwaway and holds no real funds.
-2. **Buy** with 2 NEAR. The launch window of this token is open for seven days, so the tokens arrive loud.
+2. **Buy** with 2 NEAR. The launch window of this token is open until 2026-11-21, so the tokens arrive loud.
 3. **Sell.** The contract refuses: `E_NO_QUIET`.
-4. **Shout.** Your exit appears on the board that every visitor sees. Try **Hush**: refused, `E_NOTICE_BINDING`.
-5. **Get a second wallet** and **Catch quarter** of your own exit from it. The tokens arrive loud and the pool sells nothing.
-6. Switch back, wait out the 1 min notice and **Leave**. The shared cap fills part of it.
+4. **Shout.** After the buy the page fills in the wallet's whole loud balance. Your exit appears on the board that every visitor sees. Try **Hush**: refused, `E_NOTICE_BINDING`.
+5. **Get a second wallet**: the page makes it from your first wallet with 3 of its test NEAR, in one transaction, so the faucet is asked only once. **Catch quarter** of your own exit from it. The tokens arrive loud and the pool sells nothing.
+6. Switch back, wait out the 1 min notice and **Leave**. When what is left of the exit is larger than the room in the shared cap, `leave` sells part of it; the result line says how much, and whether the cap or the pool's NEAR set the limit.
 
-The live token runs a demo setting: launch window 7 days (the longest the contract allows), notice 1 min, exit window 30 min, cap 0.5% of supply per 10 min, no creator allocation. So nobody holds quiet tokens on it yet. It was deployed by [a workflow](.github/workflows/live.yml) that then walked this same path on chain with the page's own client; the record is [web/live.json](web/live.json). Transactions are signed by [web/chain.js](web/chain.js), which has no dependency: Ed25519 from the browser's WebCrypto, its own transaction encoding, checked byte for byte against near-api-js in CI. It needs a current Chrome, Edge, Firefox or Safari. Connecting an existing wallet app is not built.
+The live token runs a demo setting: launch window 7 days (the longest the contract allows), notice 1 min, exit window 30 min, cap 0.5% of supply per 10 min, no creator allocation. So nobody holds quiet tokens on it yet. It was deployed by [a workflow](.github/workflows/live.yml); the deployment is recorded in [web/live.json](web/live.json). Transactions are signed by [web/chain.js](web/chain.js), which has no dependency: Ed25519 from the browser's WebCrypto, its own transaction encoding, checked byte for byte against near-api-js in CI. It needs a current Chrome, Edge, Firefox or Safari. An existing testnet account can be imported with its private key (throwaway testnet accounts only); connecting a wallet app is not built.
 
 ## What happened on testnet
 
@@ -172,7 +172,7 @@ Under LOUD, holders in both cases also get 30 minutes of public notice before th
 | `contracts/loud-math` | Pool and cap integer math, no dependency. |
 | `contracts/loud` | The token: NEP-141, the two balances, the built-in pool and the exits. |
 | `web/engine.js` | The same rules in JavaScript, used by the page and the simulator. It leaves out account registration, the 0.03 NEAR storage payment, asynchronous payouts and `ft_transfer_call` refunds. Its views differ in small ways: a quote that overflows throws instead of returning 0, the state has no `cap_full_ts`, and exits page in insertion order. |
-| `web/chain.js` | The page's NEAR client: test wallets from the faucet, signing, RPC. No dependency. |
+| `web/chain.js` | The page's NEAR client: test wallets from the faucet or from another wallet, signing, sending (a send whose answer is lost is looked up by hash, never signed again), RPC. No dependency. |
 | `web/live-ui.js`, `web/live.json` | The "Use it on testnet" section and the record of the live token. |
 | `web/` | The static page, no build step. |
 | `sim/` | The 60-day simulation, and the replay of two real launches with its data. |
