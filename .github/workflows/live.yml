@@ -31,6 +31,10 @@ on:
         description: "Walk the visitor's path on chain after the deploy"
         type: boolean
         default: true
+      record_failure:
+        description: "Commit web/live-e2e.json also when the walk stops at a step that did not hold"
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -213,8 +217,9 @@ jobs:
   record-e2e:
     name: Commit web/live-e2e.json
     needs: e2e
-    # The latest walk is recorded whether it passed or stopped: the file says which.
-    if: ${{ always() && (needs.e2e.result == 'success' || needs.e2e.result == 'failure') }}
+    # A walk that passed is committed. One that stopped is committed only on request; its
+    # record is in the run's artifact either way.
+    if: ${{ always() && (needs.e2e.result == 'success' || (needs.e2e.result == 'failure' && inputs.record_failure)) }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:

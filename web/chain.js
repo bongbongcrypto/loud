@@ -499,6 +499,11 @@ async function nextNonce(wallet) {
 }
 
 const isNonceRefusal = (e) => e instanceof RpcError && /InvalidNonce|Expired/.test(e.text);
+// A node's answer that the transaction was not taken: it is invalid (INVALID_TRANSACTION),
+// or the request itself was malformed. Any other error may come after the node passed
+// the transaction on, so it counts as "may have been sent".
+const isCertainRefusal = (e) => e instanceof RpcError
+  && (e.cause_ === 'INVALID_TRANSACTION' || e.rpcName === 'REQUEST_VALIDATION_ERROR');
 
 // Asks every endpoint once for the final outcome of a transaction.
 // -> { result } when a node returned it, else { result: null, seen } where `seen` means a
@@ -551,6 +556,11 @@ async function submit(signedBase64, hash, senderId) {
       if (e.cause_ === 'TIMEOUT_ERROR') {
         maybeSent = true;
         break;
+      }
+      // Another error than a refusal: the node may have passed it on.
+      if (!isCertainRefusal(e)) {
+        maybeSent = true;
+        continue;
       }
       // A refusal before any earlier request could have landed is certain.
       if (!maybeSent) return { kind: 'refused', error: e };
@@ -681,9 +691,9 @@ export class FaucetError extends Error {
 
 // Create a key pair and ask the testnet faucet for a funded account that it controls.
 // -> { accountId, publicKey, secretKey }. Throws a FaucetError when no faucet created it.
-// The public faucet limits accounts per caller address, so a refusal (HTTP 4xx, 429
-// included) ends the attempt at once: one request, no retry. Only a network error or a
-// server error moves on to the next faucet URL, with the same account id and key.
+// The public faucet limits accounts per caller address, so any HTTP answer that is not a
+// success ends the attempt: one request, no retry. Only a request that got no HTTP answer
+// at all (network error) moves on to the next faucet URL, with the same account id and key.
 // `onAnswer({ host, status, text })` sees each answer.
 export async function createTestWallet({ prefix = 'loud-try', onAnswer = null } = {}) {
   const keys = await generateKeyPair();
@@ -707,7 +717,7 @@ export async function createTestWallet({ prefix = 'loud-try', onAnswer = null } 
       text = `request failed: ${e.message}`;
     }
     if (onAnswer) onAnswer({ host, status, text });
-    const refused = status !== null && status >= 400 && status < 500;
+    const refused = status !== null && status >= 300;
     // The account may exist even when the HTTP call failed, so the chain decides.
     const polls = status !== null && status < 300 ? 12 : refused ? 1 : 4;
     for (let i = 0; i < polls; i++) {
@@ -736,8 +746,13 @@ export async function createSubWallet(parent, { amountYocto = SUB_WALLET_YOCTO }
   const result = await sendActions(parent, accountId, [createAccount(), transfer(BigInt(amountYocto)), addFullAccessKey(keys.publicKey)]);
   const wallet = { accountId, ...keys, hash: result.hash, explorerUrl: result.explorerUrl, result };
   if (result.ok || result.outcome === 'unknown') {
+    // The key pair is returned whatever these reads say: NEAR may already sit behind it.
     for (let i = 0; i < 8; i++) {
-      if (await accessKey(accountId, keys.publicKey)) return { ...wallet, outcome: 'success' };
+      try {
+        if (await accessKey(accountId, keys.publicKey)) return { ...wallet, outcome: 'success' };
+      } catch {
+        break;
+      }
       await sleep(1500);
     }
     return { ...wallet, outcome: result.ok ? 'success' : 'unknown' };

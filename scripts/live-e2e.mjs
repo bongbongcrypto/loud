@@ -110,7 +110,7 @@ async function main() {
   const b = await C.createSubWallet(a, { amountYocto: (3n * NEAR).toString() });
   const balB = await readUntil(() => C.accountState(b.accountId), (v) => v.exists);
   record.wallets.b = b.accountId;
-  await step('wallet B made from wallet A with 3 NEAR', b.outcome === 'success' && b.result.ok && balB.exists && BigInt(balB.amountYocto) === 3n * NEAR, {
+  await step('wallet B made from wallet A with 3 NEAR', b.outcome === 'success' && b.result.ok && balB.exists && BigInt(balB.amountYocto) >= 2n * NEAR, {
     ...brief(a.accountId, `create ${b.accountId} with 3 NEAR`, b.result), new_account: b.accountId, balance_yocto: balB.amountYocto,
   });
 

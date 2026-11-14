@@ -731,17 +731,34 @@ async function trSend(build) {
   if (!w) return;
   trBusy(true);
   let ctx = { accountId: w.accountId, call: '' };
+  let plan = null;
+  let res = null;
   try {
-    const plan = await build(w, trAccount(w.accountId));
+    plan = await build(w, trAccount(w.accountId));
     ctx = { accountId: w.accountId, ...plan.ctx };
     // chain.call throws only before it has broadcast anything. A send it could not
     // confirm comes back as outcome "unknown", with its hash.
-    const res = await tr.chain.call(w, tr.cfg.token, plan.method, plan.args, { gasTgas: plan.gasTgas ?? TL.GAS_DEFAULT, depositYocto: plan.depositYocto });
-    if (plan.kind === 'leave' && res.ok) ctx.after = await trAfterLeave(res);
-    tr.last = TL.describeResult(plan.kind, ctx, res);
-    tr.log.push(tr.last);
+    res = await tr.chain.call(w, tr.cfg.token, plan.method, plan.args, { gasTgas: plan.gasTgas ?? TL.GAS_DEFAULT, depositYocto: plan.depositYocto });
   } catch (e) {
     trNote(false, `${ctx.accountId}  ${ctx.call || 'not sent'}`, e && e.message ? e.message : String(e), 'Nothing was sent to the chain.');
+  }
+  // From here on a transaction exists: whatever fails below keeps its hash and link.
+  if (res) {
+    try {
+      if (plan.kind === 'leave' && res.ok) ctx.after = await trAfterLeave(res);
+    } catch {
+      ctx.after = null;
+    }
+    try {
+      tr.last = TL.describeResult(plan.kind, ctx, res);
+    } catch (e) {
+      tr.last = {
+        ok: Boolean(res.ok), unknown: res.outcome === 'unknown', call: `${ctx.accountId}  ${ctx.call}  ${res.outcome}`,
+        message: `The transaction ${res.outcome === 'unknown' ? 'was sent and may still execute' : `ended as ${res.outcome}`}; the page could not word its result (${e && e.message ? e.message : e}).`,
+        hint: 'The explorer shows what happened.', explorerUrl: res.explorerUrl || null, hash: res.hash || null,
+      };
+    }
+    tr.log.push(tr.last);
   }
   const bought = Boolean(tr.last && tr.last.ok && ctx.call.startsWith('buy '));
   try {

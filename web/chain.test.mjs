@@ -366,7 +366,6 @@ function fakeNet({ akNonce = 41, signer = 'twice.testnet', hook = () => undefine
     const signed = C.base64Decode(b64);
     const txBytes = signed.slice(0, signed.length - 65);
     const hash = C.base58Encode(sha(txBytes));
-    if (net.executed.has(hash)) return { hash, result: net.executed.get(hash) };
     const at = 4 + signer.length + 1 + 32;
     let n = 0n;
     for (let i = 7; i >= 0; i--) n = n * 256n + BigInt(txBytes[at + i]);
@@ -498,6 +497,23 @@ test('a broadcast transaction without a final outcome in time is "unknown" with 
   assert.equal(slow.sendBodies.length, 1);
 });
 
+test('an error other than a refusal counts as "may have been sent": looked up, not signed again', async () => {
+  const net = fakeNet({
+    hook: (url, body, n, execute) => {
+      if (url === URLS[0] && body.method === 'send_tx') {
+        execute(body.params.signed_tx_base64);
+        return { error: { name: 'HANDLER_ERROR', cause: { name: 'ROUTING_FAILED' } } };
+      }
+      return undefined;
+    },
+  });
+  C.configure({ rpcUrls: URLS, fetch: net.fetch, confirmMs: 60_000 });
+  const r = await withoutWaits(async () => C.call(await twice(), 't.testnet', 'buy', {}, { depositYocto: '5' }));
+  assert.equal(r.outcome, 'success');
+  assert.deepEqual(net.nonces, [42n]);
+  assert.deepEqual(r.signedHashes, [r.hash]);
+});
+
 test('a refusal before any copy could have landed is certain, and a stale nonce gets one new signature', async () => {
   let first = true;
   const net = fakeNet({
@@ -554,6 +570,24 @@ test('createSubWallet makes <random>.<parent> with 3 NEAR and a new full-access 
   // A parent id too long for a sub-account is refused before anything is signed.
   await assert.rejects(C.createSubWallet({ ...parent, accountId: `${'a'.repeat(50)}.testnet` }), /too long/);
   assert.equal(net.sendBodies.length, 1);
+});
+
+test('createSubWallet keeps the new key when the account cannot be read back', async () => {
+  const { wallet } = await fixedWallet();
+  const parent = { ...wallet, accountId: 'twice.testnet' };
+  let sent = false;
+  const net = fakeNet({
+    hook: (url, body) => {
+      if (body.method === 'send_tx') sent = true;
+      if (sent && body.method === 'query') return new Error('fetch failed'); // every endpoint down after the send
+      return undefined;
+    },
+  });
+  C.configure({ rpcUrls: URLS, fetch: net.fetch, confirmMs: 60_000 });
+  const b = await withoutWaits(() => C.createSubWallet(parent));
+  assert.equal(b.outcome, 'success');
+  assert.match(b.secretKey, /^ed25519:/);
+  assert.equal(b.result.ok, true);
 });
 
 test('the faucet is asked once: a refusal such as HTTP 429 ends the attempt with its answer', async () => {
