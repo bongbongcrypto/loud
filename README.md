@@ -6,6 +6,7 @@ LOUD makes launch supply announce its exit. The creator allocation and the token
 
 - **Use it now, no wallet needed:** https://bongbongcrypto.github.io/loud/#try. One click gives you a funded NEAR testnet account inside the page. Buy, get refused on `sell`, shout, catch from a second wallet, leave. Each of those is a real transaction with an explorer link.
 - Live token to try: [t.loud-live-mwg2oscvef9c57.testnet](https://testnet.nearblocks.io/address/t.loud-live-mwg2oscvef9c57.testnet), no access keys, launch window open until 2026-11-21 so every visitor's buy is loud.
+- **Launch your own LOUD token on testnet:** https://bongbongcrypto.github.io/loud/launch.html. Pick a name and the rule's numbers; one transaction creates a token account with no access key. Then open it and trade it.
 - Live page: https://bongbongcrypto.github.io/loud/
 - Testnet token: <!-- proof:token -->[t.loud-mwfw1nxp3572b6.testnet](https://testnet.nearblocks.io/address/t.loud-mwfw1nxp3572b6.testnet), no access keys, demo preset, recorded 2026-11-14<!-- /proof:token -->. Every transaction: [Testnet proof](https://bongbongcrypto.github.io/loud/#proof).
 - Contract: [contracts/loud/src/lib.rs](contracts/loud/src/lib.rs). Exact rules and numbers: [SPEC.md](SPEC.md).
@@ -24,6 +25,17 @@ The page's "Use it on testnet" section, right after the simulated exits board at
 6. Switch back, wait out the 1 min notice and **Leave**. When what is left of the exit is larger than the room in the shared cap, `leave` sells part of it; the result line says how much, and whether the cap or the pool's NEAR set the limit.
 
 The live token runs a demo setting: launch window 7 days (the longest the contract allows), notice 1 min, exit window 30 min, cap 0.5% of supply per 10 min, no creator allocation. So nobody holds quiet tokens on it yet. It was deployed by [a workflow](.github/workflows/live.yml); the deployment is recorded in [web/live.json](web/live.json). The same workflow walks the visitor's path on it with two fresh wallets (buy, a refused sell, shout, a refused early leave and hush, a refused self-catch, a catch by the second wallet, then a leave that the cap fills in part) and records every step with its transaction hash in [web/live-e2e.json](web/live-e2e.json). Test wallets sign with [web/chain.js](web/chain.js), which has no dependency: Ed25519 from the browser's WebCrypto, its own transaction encoding, checked byte for byte against near-api-js in CI. It needs a current Chrome, Edge, Firefox or Safari. An existing testnet account can be imported with its private key (throwaway testnet accounts only). A NEAR wallet app that supports testnet, such as Meteor or Intear, can also sign (beta): the page loads the NEAR wallet connector ([@hot-labs/near-connect](https://github.com/azbang/near-connect) 0.12.0) only when a visitor presses "Connect a NEAR wallet", from a URL pinned to one commit and checked against its SHA-384 before it runs, and [web/wallet-connect.js](web/wallet-connect.js) reads every transaction the wallet sends back from the chain by its hash. Once running, the connector fetches its list of wallets and each wallet's own script from their own, unpinned URLs. The wallet path is not covered by the automated walk and has not yet been tried with a real wallet.
+
+## Launch your own token
+
+[launch.html](https://bongbongcrypto.github.io/loud/launch.html) launches a new LOUD token from a test wallet.
+
+1. Choose a preset or set the numbers yourself: name, symbol, creator allocation (0 to 20%), virtual reserve, launch window, notice, exit window, cap. A value outside the contract's bounds shows the contract's own `E_PARAMS` text before anything is sent.
+2. Press launch. One transaction creates the token account under your wallet's account, funds it for storage (about 2.9 test NEAR, shown on the page), deploys [web/loud.wasm](web/loud.wasm) and calls `new`. It adds no key, so nobody can change the token afterwards, you included.
+3. The page then checks on chain and shows: the account exists, its access key list is empty, `get_params` equals what you asked, and the code hash equals the wasm's.
+4. **Open your token** leads to the main page with `?token=<your token>`, where the same buttons trade it. With the "Try in 5 minutes" preset the launch window closes after five minutes, so you can hold loud and quiet tokens on the same coin and see the difference.
+
+`web/loud.wasm` is built and committed by [a workflow](.github/workflows/wasm.yml); its hash is the code hash of the live token. [Another workflow](.github/workflows/launch-e2e.yml) launches a token on testnet with the page's own code and checks the four points. Launching from a connected wallet app is not built: that path signs function calls only.
 
 ## What happened on testnet
 
@@ -175,6 +187,7 @@ Under LOUD, holders in both cases also get 30 minutes of public notice before th
 | `web/chain.js` | The page's NEAR client: test wallets from the faucet or from another wallet, signing, sending (a send whose answer is lost is looked up by hash, never signed again), RPC. No dependency. |
 | `web/wallet-connect.js` | Connecting a NEAR wallet app (beta): loads the pinned connector on demand and turns what the wallet returns into the same result as a test wallet's call. |
 | `web/live-ui.js`, `web/live.json`, `web/live-e2e.json` | The "Use it on testnet" section, the record of the live token and the latest on-chain walk of the visitor's path. |
+| `web/launch.html`, `web/launch.js`, `web/loud.wasm` | Launch a new LOUD token from the page, and the contract build it deploys. |
 | `web/` | The static page, no build step. |
 | `sim/` | The 60-day simulation, and the replay of two real launches with its data. |
 | `scripts/proof` | The testnet run. |
