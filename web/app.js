@@ -1053,7 +1053,7 @@ async function trConnect() {
     wc.conn = await wc.mod.connectedAccount(wallet, tr.chain);
     wc.use = true;
     trSaveConnected();
-    trNote(true, `${wc.conn.accountId}  connected`, `Connected ${wc.conn.accountId} via ${wc.conn.walletName}. Every action now asks ${wc.conn.walletName} to approve a transaction; the page never sees its key.`, 'Beta: checked by hand, not by the automated walk.');
+    trNote(true, `${wc.conn.accountId}  connected`, `Connected ${wc.conn.accountId} via ${wc.conn.walletName}. Every action now asks ${wc.conn.walletName} to approve a transaction; the page never sees its key.`, 'Beta: not covered by the automated walk and not yet tried here with a real wallet.');
   } catch (e) {
     if (wallet && wc.connector) wc.connector.disconnect(wallet).catch(() => {});
     trNote(false, 'wallet  not connected', wc.mod ? wc.mod.connectFailure(e) : `No wallet was connected: the connector did not load (${e && e.message ? e.message : e}). Test wallets work as before.`);

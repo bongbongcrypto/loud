@@ -372,6 +372,19 @@ test('a keyless launch (CreateAccount, Transfer, DeployContract, FunctionCall) i
   assert.throws(() => C.encodeAction(C.deployContract('not bytes')), /non-empty Uint8Array/);
 });
 
+test('a launch with a contract-sized code (256 KiB) signs, and its base64 decodes to the same bytes', async () => {
+  const { wallet } = await fixedWallet();
+  const code = new Uint8Array(256 * 1024).map((_, i) => (i * 131 + 17) & 0xff);
+  const txBytes = C.encodeTransaction({
+    signerId: 'alice.testnet', publicKey: wallet.publicKey, nonce: 1n, receiverId: 't1.alice.testnet', blockHash: new Uint8Array(32).fill(9),
+    actions: [C.createAccount(), C.transfer(5n * C.YOCTO), C.deployContract(code), C.functionCall('new', {}, 200n * C.TGAS, 0n)],
+  });
+  const signed = await C.signTransaction(wallet.secretKey, txBytes);
+  assert.equal(hex(C.base64Decode(signed.signedBase64)), hex(signed.signedBytes));
+  assert.equal(signed.signedBytes.length, txBytes.length + 65);
+  assert.equal(signed.hash, C.base58Encode(createHash('sha256').update(txBytes).digest()));
+});
+
 test('sendActions sends a launch in one transaction under the same rules as call', async () => {
   const net = fakeNet({});
   C.configure({ rpcUrls: URLS, fetch: net.fetch, confirmMs: 60_000 });
