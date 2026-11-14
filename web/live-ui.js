@@ -80,6 +80,52 @@ export function liveConfig(json) {
   };
 }
 
+// A token chosen in the address (?token=<account id>) instead of web/live.json's. Its facts
+// are read from the chain: the access keys by chain.accessKeyList, the rest by get_params.
+export function tokenFromSearch(search) {
+  let raw = null;
+  try {
+    raw = new URLSearchParams(search).get('token');
+  } catch {
+    raw = null;
+  }
+  if (raw === null) return null;
+  const id = raw.trim().toLowerCase();
+  return isAccountId(id) && id.length <= 64 ? id : { invalid: raw.slice(0, 80) };
+}
+
+export function configForToken(token, base = null) {
+  return {
+    token,
+    tokenHref: `${EXPLORER}/address/${token}`,
+    zeroKeys: false,
+    loudUntilMs: null,
+    preset: '',
+    chosen: true,
+    defaultToken: base && base.token !== token ? base.token : null,
+    keyCount: null, // set from the chain
+  };
+}
+
+// Access keys of the token account, read from the chain into cfg.keyCount (null when the
+// read failed: unknown, not zero).
+export async function readKeyCount(chain, cfg) {
+  try {
+    // An account that does not exist also lists no keys.
+    const st = await chain.accountState(cfg.token);
+    cfg.keyCount = st && st.exists ? (await chain.accessKeyList(cfg.token)).length : null;
+  } catch {
+    cfg.keyCount = null;
+  }
+  return cfg.keyCount;
+}
+
+// "You are looking at <token>, launched by <creator>".
+export function chosenTokenLine(live, cfg) {
+  if (!cfg || !cfg.chosen || !live) return '';
+  return `You are looking at ${cfg.token}, launched by ${live.params.creator}.`;
+}
+
 // Reading the token
 
 const DEC = /^[0-9]+$/;
@@ -173,7 +219,7 @@ export function liveHeader(live, cfg) {
   const open = s.is_loud_window === true;
   return [
     ['Token account', cfg.token],
-    ['Access keys', cfg.zeroKeys ? '0. Nobody can sign for the token account.' : 'not recorded'],
+    ['Access keys', accessKeysText(cfg)],
     ['Launch window', open ? `open until ${until}. Every buy until then is loud.` : `closed since ${until}. Buys are quiet now.`],
     ['Notice', fmtDuration(nsToSeconds(p.notice_ns))],
     ['Exit window', fmtDuration(nsToSeconds(p.exit_window_ns))],
@@ -181,6 +227,15 @@ export function liveHeader(live, cfg) {
     ['Open exits', openExitsText(live)],
     ['In the pool', `${fmtNear(s.pool_near)} NEAR paid in by buyers`],
   ];
+}
+
+function accessKeysText(cfg) {
+  if (typeof cfg.keyCount === 'number') {
+    return cfg.keyCount === 0 ? '0. Nobody can sign for the token account.'
+      : `${cfg.keyCount}. Whoever holds ${cfg.keyCount === 1 ? 'that key' : 'those keys'} can sign for the token account.`;
+  }
+  if (cfg.chosen) return 'could not be read from NEAR testnet';
+  return cfg.zeroKeys ? '0. Nobody can sign for the token account.' : 'not recorded';
 }
 
 function openExitsText(live) {
@@ -212,12 +267,14 @@ export function boardNote(live, readError = '', source = 'NEAR testnet') {
 
 // The demo-setting note, from the chain: it stops saying that buys are loud once
 // the launch window has closed.
-export function demoNote(live) {
+export function demoNote(live, cfg = null) {
   const p = live.params;
   const until = `${fmtUtcDate(p.loud_until)} ${fmtUtcTime(p.loud_until)} UTC`;
+  const noCreatorBag = p.creator_alloc_bps !== undefined && big(p.creator_alloc_bps) === 0n;
   const window = live.state.is_loud_window === true
-    ? `Its launch window is open until ${until}, so every buy until then is loud and every visitor can shout, leave and catch. Nobody holds quiet tokens on it yet.`
+    ? `Its launch window is open until ${until}, so every buy until then is loud and every visitor can shout, leave and catch.${noCreatorBag ? ' Nobody holds quiet tokens on it yet.' : ''}`
     : `Its launch window closed at ${until}. Buys are quiet now and sell at once with Sell; tokens bought before then stay loud and still have to shout.`;
+  if (cfg && cfg.chosen) return `${window} The notice is ${fmtDuration(nsToSeconds(p.notice_ns))} on this token, against 30 min in the standard preset.`;
   return `This token runs a demo setting. ${window} The notice is ${fmtDuration(nsToSeconds(p.notice_ns))} here, against 30 min in the standard preset.`;
 }
 
@@ -614,6 +671,7 @@ export function createMockChain({ startMs = 1_800_000_000_000, nowMs = () => Dat
   }
 
   async function accountState(accountId) {
+    if (accountId === MOCK_TOKEN) return { exists: true, amountYocto: '0' };
     return near.has(accountId) ? { exists: true, amountYocto: near.get(accountId).toString() } : { exists: false, amountYocto: '0' };
   }
 
@@ -730,6 +788,10 @@ export function createMockChain({ startMs = 1_800_000_000_000, nowMs = () => Dat
     view,
     accountState,
     call,
+    async accessKeyList(accountId) {
+      if (accountId === MOCK_TOKEN) return [];
+      throw new Error(`mock has no account ${accountId}`);
+    },
     async txStatus(hash) {
       const r = results.get(hash);
       return r ? { ...r, refusedHash: null, signedHashes: [hash] } : null;

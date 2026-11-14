@@ -383,6 +383,15 @@ export async function accessKey(accountId, publicKey) {
   }
 }
 
+// Every access key of an account: [{ public_key, access_key }]. NEAR answers an empty list
+// for an account that does not exist, so "no keys" also needs accountState(...).exists.
+// A failed read throws: an error is not "no keys".
+export async function accessKeyList(accountId) {
+  const r = await query({ request_type: 'view_access_key_list', account_id: accountId });
+  if (!r || !Array.isArray(r.keys)) throw new Error(`no key list for ${accountId}`);
+  return r.keys;
+}
+
 // ---------------------------------------------------------------------------------------
 // Reading a transaction result
 // ---------------------------------------------------------------------------------------

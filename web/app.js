@@ -664,7 +664,8 @@ function trRender() {
   $('#try-actions').hidden = !w;
   if (live) {
     facts($('#try-facts'), TL.liveHeader(live, tr.cfg).map(([label, value], i) => ({ label, value, href: i === 0 && !tr.chain.isMock ? tr.cfg.tokenHref : null })));
-    setText($('#try-note'), TL.demoNote(live));
+    setText($('#try-note'), TL.demoNote(live, tr.cfg));
+    trTokenLine();
   }
   if (count === 1) {
     const route = TL.secondWalletRoute(tr.store.wallets[0], trAccount(tr.store.wallets[0].accountId));
@@ -1130,20 +1131,42 @@ async function trRestoreConnected() {
   trRefresh().catch(() => trRender());
 }
 
+// The token chosen in the address, who launched it, and the way back to the live token.
+function trTokenLine() {
+  const line = $('#try-token-line');
+  const bad = tr.tokenInvalid;
+  if (!tr.cfg.chosen && !bad) {
+    line.hidden = true;
+    return;
+  }
+  const back = `${location.pathname}${tr.chain.isMock ? '?mock=1' : ''}#try`;
+  line.hidden = false;
+  if (bad) {
+    put(line, document.createTextNode(`"${bad}" in the address is not a NEAR account id, so this section shows the live token. `));
+    return;
+  }
+  const text = tr.live ? TL.chosenTokenLine(tr.live, tr.cfg) : `You are looking at ${tr.cfg.token}.`;
+  put(line, document.createTextNode(`${text} `), tr.cfg.defaultToken ? link(back, 'Back to the live demo token') : null);
+}
+
 async function trStart() {
   const state = $('#try-state');
   const retry = $('#try-retry');
   retry.hidden = true;
   state.dataset.state = 'pending';
-  setText(state, 'Reading the live token from NEAR testnet…');
+  setText(state, tr.cfg.chosen ? `Reading ${tr.cfg.token} from NEAR testnet…` : 'Reading the live token from NEAR testnet…');
   try {
+    if (tr.cfg.chosen) await TL.readKeyCount(tr.chain, tr.cfg);
     await trRefresh();
     state.hidden = true;
     $('#try-app').hidden = false;
   } catch (e) {
     state.dataset.state = 'failed';
-    setText(state, `Could not read the live token from NEAR testnet in this browser (${e && e.message ? e.message : e}).`);
+    setText(state, tr.cfg.chosen
+      ? `Could not read ${tr.cfg.token} as a LOUD token on NEAR testnet in this browser (${e && e.message ? e.message : e}).`
+      : `Could not read the live token from NEAR testnet in this browser (${e && e.message ? e.message : e}).`);
     retry.hidden = false;
+    trTokenLine();
   }
 }
 
@@ -1166,6 +1189,10 @@ async function initTry() {
     }
   }
   tr.cfg = TL.liveConfig(json);
+  // ?token=<account id> shows that token instead of the live one.
+  const chosen = TL.tokenFromSearch(location.search);
+  if (chosen && typeof chosen === 'object') tr.tokenInvalid = chosen.invalid;
+  else if (chosen) tr.cfg = TL.configForToken(chosen, tr.cfg);
   if (!tr.cfg) {
     state.dataset.state = 'failed';
     setText(state, 'The live token is not deployed yet.');

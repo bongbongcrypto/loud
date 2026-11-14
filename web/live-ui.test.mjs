@@ -426,3 +426,32 @@ test('wallet storage helpers keep the key and format', () => {
   assert.equal(mem.get('loud.live.wallets.v1'), TL.serializeWallets({ wallets: [w], active: 0 }));
   assert.deepEqual(TL.loadWallets(storage), TL.parseWallets(mem.get('loud.live.wallets.v1')));
 });
+
+test('a token chosen in the address: validated, its keys read from the chain, unknown on a failed read', async () => {
+  assert.equal(TL.tokenFromSearch('?mock=1'), null);
+  assert.equal(TL.tokenFromSearch('?token=T1.Alice.testnet'), 't1.alice.testnet');
+  assert.deepEqual(TL.tokenFromSearch('?token=no%20spaces'), { invalid: 'no spaces' });
+  const cfg = TL.configForToken('t1.alice.testnet', { token: 't.live.testnet' });
+  assert.equal(cfg.defaultToken, 't.live.testnet');
+  const chain = (exists, keys) => ({
+    accountState: async () => ({ exists }),
+    accessKeyList: async () => {
+      if (keys instanceof Error) throw keys;
+      return keys;
+    },
+  });
+  assert.equal(await TL.readKeyCount(chain(true, []), cfg), 0);
+  assert.equal(await TL.readKeyCount(chain(true, [{}, {}]), cfg), 2);
+  // NEAR lists no keys for an account that does not exist: that is not "0 keys".
+  assert.equal(await TL.readKeyCount(chain(false, []), cfg), null);
+  assert.equal(await TL.readKeyCount(chain(true, new Error('fetch failed')), cfg), null);
+  const mock = TL.createMockChain();
+  const live = await TL.readLive(mock, TL.MOCK_TOKEN, []);
+  const mcfg = TL.configForToken(TL.MOCK_TOKEN, { token: 'x.testnet' });
+  assert.equal(TL.liveHeader(live, mcfg)[1][1], 'could not be read from NEAR testnet');
+  await TL.readKeyCount(mock, mcfg);
+  assert.equal(TL.liveHeader(live, mcfg)[1][1], '0. Nobody can sign for the token account.');
+  assert.equal(TL.chosenTokenLine(live, mcfg), `You are looking at ${TL.MOCK_TOKEN}, launched by creator.testnet.`);
+  assert.doesNotMatch(TL.demoNote(live, mcfg), /demo setting/);
+  assert.match(TL.demoNote(live), /^This token runs a demo setting/);
+});
