@@ -25,9 +25,9 @@ A script put the token on NEAR testnet and attacked it with 20 split wallets. Ea
 | A late buyer catches a quarter of that exit while the notice is still up | Paid 0.0212 NEAR and got 2,604,167 LOUD, still loud. The pool sold nothing, kept the 1% fee, and the cap was not used | [DVdwSM…](https://testnet.nearblocks.io/txns/DVdwSMPa55767UfJeC2QkewndXFVSWAN5JHCYjHLvBgX) |
 | After the notice, a wallet calls `leave` while the cap has room | Sold 1,637,413 LOUD | [83o4MK…](https://testnet.nearblocks.io/txns/83o4MKSNxZkr53crq6htWt36GrfkNWnsNKkDXDERpFu4) |
 | Another wallet calls `leave` when the cap is empty | Rejected: `E_CAP` | [9YRMyL…](https://testnet.nearblocks.io/txns/9YRMyLWMQd9LjQVc4nT7ayKKgL9V2t6MA6876h4yZyPu) |
-| All 20 wallets keep calling `leave` for one full cap window, 620 calls | 37 sales, 563 `E_CAP` rejections, 20 `E_EXPIRED` once the exit window had closed. 6,498,659 LOUD got out; the cap allowed at most 6,649,928 | [receipts.json](web/receipts.json) |
+| All 20 wallets keep calling `leave` for 605 s, one cap window and the calls still in flight, 620 calls | 37 sales, 563 `E_CAP` rejections, 20 `E_EXPIRED` once the exit window had closed. 6,498,659 LOUD got out; the cap allowed at most 6,649,928 in that time | [receipts.json](web/receipts.json) |
 
-The run shows 20 wallets staying inside one cap on chain. That 1 wallet and 100 wallets sell the same amount is shown by the contract and engine tests, not by this run. Ten checks, every transaction: [Testnet proof](https://bongbongcrypto.github.io/loud/#proof).
+The run shows 20 wallets staying inside one cap on chain. That 1 wallet and 100 wallets sell the same amount on the standard preset is shown by the contract and engine tests, not by this run. Ten checks, every transaction: [Testnet proof](https://bongbongcrypto.github.io/loud/#proof).
 
 ## The problem
 
@@ -35,13 +35,13 @@ The creator and the launch buyers hold the cheap early supply. A per-wallet sell
 
 ## How it works: shout, wait, leave
 
-No launch token reaches the pool quietly. Every sale of launch tokens into the pool goes up on a public departures board first.
+No loud token reaches the pool quietly. Every sale of loud tokens into the pool goes up on a public departures board first.
 
 1. Tokens bought during the launch window, and the creator allocation, are **loud**. Later buys are **quiet** and sell at once. The tag travels with the tokens through every transfer.
 2. Loud tokens cannot use `sell`. To sell into the pool the holder calls `shout`, which locks them and posts a public notice, then `leave` when the notice ends.
 3. Every wallet's `leave` draws on one shared cap. More wallets never mean more room.
 4. The owner's account cannot cancel a shout. The tokens stay locked until they are sold, caught, or the exit ends, and then `hush` returns what is left, still loud.
-5. From the moment of the shout until the exit ends, any other registered account can call `catch` on it with NEAR attached. The price is the higher of the pool's sell quote now and its quote when the exit was shouted, so a catch never costs less than the same share of what the pool would have paid for the whole exit when it was shouted. The catcher receives the tokens as loud. Of the price, 1% stays in the pool and the seller gets the rest. The pool sells nothing and the cap is not used, so an exit that is fully caught never pushes the price down. Holders who believe in the coin can take an announced exit off the board before it reaches the pool, and what they catch is as loud as it was: to sell it they must shout too.
+5. From the moment of the shout until the exit ends, any other registered account can call `catch` on it with NEAR attached. The price is the higher of the pool formula's sell quote now and its quote when the exit was shouted (the formula's figure, whether or not the pool holds enough NEAR to pay it), so a catch never costs less than the same share of what the pool would have paid for the whole exit when it was shouted. The catcher receives the tokens as loud. Of the price, 1% stays in the pool and the seller gets the rest. The pool sells nothing and the cap is not used, so an exit that is fully caught never pushes the price down. Holders who believe in the coin can take an announced exit off the board before it reaches the pool, and what they catch is as loud as it was: to sell it they must shout too.
 6. Every wallet but the creator's needs a one-time 0.03 NEAR storage fee. Nobody, the creator included, can change or pause the token: it has no owner method and its account has no access key.
 
 Standard preset: 1,000,000,000 supply, 5% creator, launch window 10 min, notice 30 min, exit window 60 min, cap 0.5% of supply per 60 min. The cap is a bucket that holds 0.5% and refills 0.5% per 60 min, so a full bucket plus one refill lets at most 1% into the pool through `leave` in any 60 min. Quiet sales are not counted.
@@ -61,7 +61,7 @@ Run from the repository root. The Node rows need Node 22 or newer and nothing in
 
 | Do | See |
 |---|---|
-| `node --test web/*.test.mjs sim/*.test.mjs scripts/proof/*.test.mjs scripts/*.test.mjs` | All tests pass. Under LOUD, 1, 7, 20 and 100 wallets sell the same amount at every step, within rounding. Under a per-wallet limit, 100 wallets sell 100 times as much per minute as 1 when each holds enough to use its whole limit; the test uses a 50% position. A 5% position is gone in 1 minute against 10. |
+| `node --test web/*.test.mjs sim/*.test.mjs scripts/proof/*.test.mjs scripts/*.test.mjs` | All tests pass. Under LOUD on the standard preset, 1, 7, 20 and 100 wallets sell the same amount at every step, within rounding. Under a per-wallet limit, 100 wallets sell 100 times as much per minute as 1 when each holds enough to use its whole limit; the test uses a 50% position. A 5% position is gone in 1 minute against 10. |
 | `(cd contracts && cargo test --workspace)` | All tests pass. `split_test_one_wallet_vs_one_hundred` compares 1 wallet with 100. |
 | `(cd contracts/loud && cargo near build non-reproducible-wasm --locked --no-abi)` with cargo-near 0.23.0 | One wasm of about 0.2 MB. [CI](.github/workflows/ci.yml) runs both Rust steps on every push. |
 | Live page, "Run the split attack": run it with 1 wallet, then with 100 | The LOUD line stays the same. With more wallets the per-wallet rule sells the whole position sooner. |
@@ -87,13 +87,13 @@ The mechanic is `shout`, `leave`, `hush` and `catch`. The table maps each item o
 | Page with status and log | Live page: the exits board and "Testnet proof" |
 | 60-day simulation under scenarios | [sim/RESULTS.md](sim/RESULTS.md), reproduced by `node sim/run.mjs` |
 
-## Splitting changes nothing
+## Splitting adds no room
 
-This is the claim the tests pin down. Under LOUD, 1, 7, 20 and 100 wallets holding the same position sell the same amount at every step, within rounding: `split_test_one_wallet_vs_one_hundred` in the contract tests, and the same comparison in the engine tests. Under a per-wallet limit the same split sells a 5% position in 1 minute against 10. The live page runs it with up to 1000 wallets.
+This is the claim the tests pin down. Splitting cannot enlarge the shared cap, under any parameters. On the standard preset that means 1, 7, 20 and 100 wallets holding the same position sell the same amount at every step, within rounding: `split_test_one_wallet_vs_one_hundred` in the contract tests, and the same comparison in the engine tests. Under a per-wallet limit the same split sells a 5% position in 1 minute against 10. The live page runs it with up to 1000 wallets. What a group actually sells under the cap can still differ with other parameters: an account has eight exit slots, so with a very short exit window one wallet can use less of the cap than many.
 
 ## Simulation
 
-`node sim/run.mjs` runs the page's rule engine for 60 days: three rule sets, four scenarios, nine seeds each. The sale budgets are not matched. The per-wallet baseline (0.5% of supply per sale, one sale per wallet per 60 s) lets even one wallet sell far faster than the LOUD cap, so the price figures below mix a tighter budget, the notice and assumed holder reactions. They do not isolate what the shared cap adds; the split tests above do that. How holders behave is an assumption. Nobody measured it. Full tables and assumptions: [sim/RESULTS.md](sim/RESULTS.md).
+`node sim/run.mjs` runs the page's rule engine for 60 days: three rule sets, four scenarios, nine seeds each. The sale budgets are not matched. The per-wallet baseline (0.5% of supply per sale, one sale per wallet per 60 s) lets even one wallet sell far faster than the LOUD cap, so the price figures below mix a tighter budget, the notice and assumed holder reactions. They do not isolate what the shared cap adds; the split tests above do that. How holders behave is an assumption. Nobody measured it. Nobody catches in the simulation, so it says nothing about catching. Full tables and assumptions: [sim/RESULTS.md](sim/RESULTS.md).
 
 Modelled scenario: at hour 24, 30 insider wallets try to sell 13.6% of supply.
 
@@ -139,7 +139,7 @@ Under LOUD, holders in both cases also get 30 minutes of public notice before th
 <details>
 <summary>Contract-level limits</summary>
 
-- **Other pools.** `ft_transfer_call` refuses loud tokens. Quiet tokens can be sent with it. The receiving contract gets a fixed 30 Tgas for its `ft_on_transfer`, and if that is not enough the contract takes the tokens back, up to what the receiver still holds.
+- **Other pools.** `ft_transfer_call` refuses loud tokens. Quiet tokens can be sent with it. The receiving contract gets a fixed 30 Tgas for its `ft_on_transfer`, and if that is not enough the contract takes the tokens back, up to the quiet balance the receiver still holds.
 - **Small positions leave in one call.** What fits the cap room sells in one `leave` after notice if the pool can pay. A full cap plus one refill lets out up to 1% of supply in an hour.
 - **When the pool cannot pay.** `sell` fails with `E_POOL_EMPTY`, and `leave` fills only what the pool can pay.
 - **The 0.03 NEAR storage fee is never refunded.** A `storage_deposit` above it is refunded at once. On a first buy the fee comes out of the attached NEAR and the rest buys tokens. There is no withdraw and no unregister. A transfer to an unregistered account fails with `E_UNREGISTERED`. The 0.03 NEAR covers the account's records and eight open exits, the most one account can have.

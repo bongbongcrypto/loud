@@ -110,7 +110,7 @@
         <span>Sell into the token's own pool, as far as the cap has room.</span>
       </li>
     </ol>
-    <p class="law law-catch"><b>The room can answer.</b> From the shout until the exit ends, any other account can <code>catch</code> it: pay for the tokens and take them. The price is the pool's price now or its price at the moment of the shout, whichever is higher. So a catch never costs less than the same share of what the pool would have paid for the whole exit when it was shouted. The seller gets 99% of it and 1% stays in the pool. The tokens stay loud. That part of the sale never hits the pool.</p>
+    <p class="law law-catch"><b>The room can answer.</b> From the shout until the exit ends, any other account can <code>catch</code> it: pay for the tokens and take them. The price is the pool formula's price now or its price at the moment of the shout, whichever is higher. So a catch never costs less than the same share of what the pool would have paid for the whole exit when it was shouted. The seller gets 99% of it and 1% stays in the pool. The tokens stay loud. That part of the sale never hits the pool.</p>
     <p class="law"><b>The owner cannot cancel a shout.</b> The tokens stay locked until they are sold, caught or, after the exit expires, returned by <code>hush</code>. The owner's own account cannot take them back sooner. A second account can, by catching the exit and paying the 1% fee. If they are not sold or caught, the exit expires 90 min after the shout, and they stay locked until someone calls <code>hush</code>.</p>
     <p class="law"><b>One cap for everyone.</b> All loud sales into the pool share one cap. It holds at most 0.5% of supply and refills 0.5% of supply per 60 min. A hundred wallets get the same room as one.</p>
     <p class="law"><b>No insider list.</b> The contract never decides who is an insider. It only tags launch-window buys. The creator allocation is loud from the start.</p>
@@ -432,7 +432,7 @@
       <div><dt>Side deals and wrappers</dt>
       <dd>Loud tokens can be sent with a plain transfer to another registered account. That covers a private sale, and it covers a contract that issues its own token against them. Whoever buys that wrapper token holds no tag.</dd></div>
       <div><dt>Other pools</dt>
-      <dd><code>ft_transfer_call</code> refuses loud tokens. Quiet tokens can be sent with it. The receiving contract gets a fixed 30 Tgas for its <code>ft_on_transfer</code>, and if that is not enough the contract takes the tokens back, up to what the receiver still holds.</dd></div>
+      <dd><code>ft_transfer_call</code> refuses loud tokens. Quiet tokens can be sent with it. The receiving contract gets a fixed 30 Tgas for its <code>ft_on_transfer</code>, and if that is not enough the contract takes the tokens back, up to the quiet balance the receiver still holds.</dd></div>
       <div><dt>Waiting out the launch window avoids the tag</dt>
       <dd>Only buys inside the launch window are loud. A sniper who waits until it ends gets quiet tokens at the going price, with no notice and no cap. The creator allocation starts loud.</dd></div>
       <div><dt>Early honest buyers are loud too</dt>

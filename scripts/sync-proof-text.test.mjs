@@ -276,7 +276,7 @@ test('README: every linked transaction and the run totals are in the recorded ru
   const sp = receipts.split;
   assert.ok(readme.includes(`${sp.attempts} calls`));
   assert.ok(readme.includes(`${sp.fills} sales, ${sp.cap_hits} \`E_CAP\` rejections`));
-  assert.ok(readme.includes(`${whole(sp.sold_total)} LOUD got out; the cap allowed at most ${whole(sp.bound)}`));
+  assert.ok(readme.includes(`${whole(sp.sold_total)} LOUD got out; the cap allowed at most ${whole(sp.bound)} in that time`));
 });
 
 test('check 8 names the catch only for a run that recorded one', () => {
