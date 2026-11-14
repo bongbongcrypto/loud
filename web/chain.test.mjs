@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import * as C from './chain.js';
 
 const hex = (bytes) => [...bytes].map((b) => b.toString(16).padStart(2, '0')).join('');
@@ -314,4 +315,300 @@ test('links', () => {
   assert.equal(C.accountUrl('a.testnet'), 'https://testnet.nearblocks.io/address/a.testnet');
   assert.equal(C.NETWORK, 'testnet');
   assert.equal(C.RPC_URLS[0], 'https://test.rpc.fastnear.com');
+});
+
+test('CreateAccount, Transfer and AddKey are laid out as NEAR nodes read them', async () => {
+  const { pub, wallet } = await fixedWallet();
+  const other = await C.generateKeyPair();
+  const blockHash = Uint8Array.from({ length: 32 }, (_, i) => i);
+  const bytes = C.encodeTransaction({
+    signerId: 'alice.testnet', publicKey: wallet.publicKey, nonce: 5n, receiverId: 'b0a1b2c3d.alice.testnet', blockHash,
+    actions: [C.createAccount(), C.transfer(3n * C.YOCTO), C.addFullAccessKey(other.publicKey)],
+  });
+  const expected = [
+    '0d000000', utf8('alice.testnet'),
+    '00', hex(pub),
+    '0500000000000000',
+    '17000000', utf8('b0a1b2c3d.alice.testnet'),
+    hex(blockHash),
+    '03000000', // three actions
+    '00', // CreateAccount
+    '03', '000000e3c8666c53467b020000000000', // Transfer 3 NEAR = 3 * 10^24 yocto, u128 little endian
+    '05', '00', hex(C.publicKeyBytes(other.publicKey)), '0000000000000000', '01', // AddKey: ed25519 key, nonce 0, FullAccess
+  ].join('');
+  assert.equal(hex(bytes), expected);
+  // One FunctionCall in the list form is the same bytes as the single-call form.
+  const one = { signerId: 'a.testnet', publicKey: wallet.publicKey, nonce: 9n, receiverId: 't.testnet', blockHash };
+  assert.equal(
+    hex(C.encodeTransaction({ ...one, actions: [C.functionCall('buy', { min_tokens_out: '1' }, 50n * C.TGAS, 7n)] })),
+    hex(C.encodeTransaction({ ...one, method: 'buy', args: { min_tokens_out: '1' }, gas: 50n * C.TGAS, deposit: 7n })),
+  );
+  assert.throws(() => C.encodeTransaction({ ...one, actions: [] }), /at least one action/);
+  assert.throws(() => C.encodeAction({ type: 'Stake' }), /not supported/);
+});
+
+test('the public key is derived from a private key in either near-cli form', async () => {
+  const { wallet } = await fixedWallet();
+  assert.equal(await C.publicKeyFromSecret(wallet.secretKey), wallet.publicKey);
+  const seedOnly = `ed25519:${C.base58Encode(SEED)}`;
+  assert.equal(await C.publicKeyFromSecret(seedOnly), wallet.publicKey);
+  const other = await C.generateKeyPair();
+  const mixed = `ed25519:${C.base58Encode([...SEED, ...C.publicKeyBytes(other.publicKey)])}`;
+  await assert.rejects(C.publicKeyFromSecret(mixed), /not a valid ed25519 key pair/);
+});
+
+// A small simulated testnet: nodes that share one access key nonce and remember what they
+// executed. `hook(url, body, net, execute)` may answer a request first (undefined: go on).
+const sha = (bytes) => new Uint8Array(createHash('sha256').update(bytes).digest());
+function fakeNet({ akNonce = 41, signer = 'twice.testnet', hook = () => undefined } = {}) {
+  const net = { nonce: akNonce, executed: new Map(), sendBodies: [], txLookups: 0, nonces: [] };
+  const execute = (b64) => {
+    const signed = C.base64Decode(b64);
+    const txBytes = signed.slice(0, signed.length - 65);
+    const hash = C.base58Encode(sha(txBytes));
+    if (net.executed.has(hash)) return { hash, result: net.executed.get(hash) };
+    const at = 4 + signer.length + 1 + 32;
+    let n = 0n;
+    for (let i = 7; i >= 0; i--) n = n * 256n + BigInt(txBytes[at + i]);
+    if (n <= BigInt(net.nonce)) {
+      return { hash, error: { name: 'HANDLER_ERROR', cause: { name: 'INVALID_TRANSACTION' }, data: { TxExecutionError: { InvalidTxError: { InvalidNonce: { tx_nonce: Number(n), ak_nonce: net.nonce } } } } } };
+    }
+    net.nonce = Number(n);
+    net.nonces.push(n);
+    const result = { status: { SuccessValue: b64json(String(n)) }, transaction: { hash }, receipts_outcome: [okReceipt()] };
+    net.executed.set(hash, result);
+    return { hash, result };
+  };
+  net.fetch = async (url, init) => {
+    const body = JSON.parse(init.body);
+    const reply = (x) => ({ ok: true, status: 200, json: async () => ({ jsonrpc: '2.0', id: body.id, ...x }) });
+    if (body.method === 'send_tx' || body.method === 'broadcast_tx_async') {
+      net.sendBodies.push({ url, method: body.method, b64: body.method === 'send_tx' ? body.params.signed_tx_base64 : body.params[0] });
+    }
+    if (body.method === 'tx') net.txLookups += 1;
+    const hooked = await hook(url, body, net, execute);
+    if (hooked instanceof Error) throw hooked;
+    if (hooked !== undefined) return reply(hooked);
+    if (body.method === 'query') return reply({ result: { nonce: net.nonce, permission: 'FullAccess' } });
+    if (body.method === 'block') return reply({ result: { header: { hash: C.base58Encode(new Uint8Array(32).fill(8)) } } });
+    if (body.method === 'send_tx') {
+      const r = execute(body.params.signed_tx_base64);
+      return reply(r.error ? { error: r.error } : { result: r.result });
+    }
+    if (body.method === 'broadcast_tx_async') {
+      const r = execute(body.params[0]);
+      return reply(r.error ? { error: r.error } : { result: r.hash });
+    }
+    if (body.method === 'tx') {
+      const r = net.executed.get(body.params.tx_hash);
+      return reply(r ? { result: r } : { error: { name: 'HANDLER_ERROR', cause: { name: 'UNKNOWN_TRANSACTION' } } });
+    }
+    throw new Error(`unexpected ${body.method}`);
+  };
+  return net;
+}
+
+async function withoutWaits(fn) {
+  const realSetTimeout = globalThis.setTimeout;
+  globalThis.setTimeout = (f, _ms, ...a) => realSetTimeout(f, 0, ...a);
+  try {
+    return await fn();
+  } finally {
+    globalThis.setTimeout = realSetTimeout;
+  }
+}
+
+const twice = async () => ({ ...(await fixedWallet()).wallet, accountId: 'twice.testnet' });
+const URLS = ['https://one.example', 'https://two.example', 'https://three.example'];
+
+test('a send whose answer is lost after the node executed it is looked up by hash, not signed again', async () => {
+  // The first node executes the transaction and the connection drops before the answer.
+  const net = fakeNet({
+    hook: (url, body, n, execute) => {
+      if (url === URLS[0] && body.method === 'send_tx') {
+        execute(body.params.signed_tx_base64);
+        return new Error('socket hang up');
+      }
+      return undefined;
+    },
+  });
+  C.configure({ rpcUrls: URLS, fetch: net.fetch, confirmMs: 60_000 });
+  const r = await withoutWaits(async () => C.call(await twice(), 't.testnet', 'leave', { exit_id: '1', min_near_out: '0' }, { depositYocto: '1' }));
+  assert.equal(r.outcome, 'success');
+  assert.equal(r.ok, true);
+  assert.deepEqual(net.nonces, [42n], 'exactly one nonce executed');
+  assert.equal(net.sendBodies.length, 1, 'found by hash before any second broadcast');
+  assert.ok(net.txLookups >= 1);
+  assert.deepEqual(r.signedHashes, [r.hash]);
+  assert.equal(r.value, '42');
+});
+
+test('InvalidNonce after a send that may have landed means "look it up", and only the same bytes go out again', async () => {
+  // The first node executes and its answer is lost; the next lookups
+  // do not see the hash yet; the next node then refuses the same bytes with InvalidNonce,
+  // because they already executed. The earlier client signed the action again here.
+  let hidden = 3; // lookups that do not see it yet: one per endpoint
+  const net = fakeNet({
+    hook: (url, body, n, execute) => {
+      if (url === URLS[0] && body.method === 'send_tx') {
+        execute(body.params.signed_tx_base64);
+        return new Error('fetch failed');
+      }
+      if (body.method === 'tx' && hidden > 0) {
+        hidden -= 1;
+        return { error: { name: 'HANDLER_ERROR', cause: { name: 'UNKNOWN_TRANSACTION' } } };
+      }
+      return undefined;
+    },
+  });
+  C.configure({ rpcUrls: URLS, fetch: net.fetch, confirmMs: 60_000 });
+  const r = await withoutWaits(async () => C.call(await twice(), 't.testnet', 'leave', { exit_id: '1', min_near_out: '0' }, { depositYocto: '1' }));
+  assert.equal(r.outcome, 'success');
+  assert.deepEqual(net.nonces, [42n], 'one nonce: the action executed once');
+  assert.equal(net.sendBodies.length, 2, 'the same transaction was offered to the next node');
+  assert.equal(new Set(net.sendBodies.map((s) => s.b64)).size, 1, 'every broadcast carried the same signed bytes');
+  assert.deepEqual(r.signedHashes, [r.hash]);
+  assert.equal(r.value, '42', "the result is the first transaction's");
+});
+
+test('a broadcast transaction without a final outcome in time is "unknown" with its hash, never an exception', async () => {
+  const net = fakeNet({
+    hook: (url, body) => {
+      if (body.method === 'send_tx' || body.method === 'broadcast_tx_async') return new Error('fetch failed');
+      if (body.method === 'tx') return { error: { name: 'HANDLER_ERROR', cause: { name: 'UNKNOWN_TRANSACTION' } } };
+      return undefined;
+    },
+  });
+  C.configure({ rpcUrls: URLS, fetch: net.fetch, confirmMs: 40 });
+  const r = await withoutWaits(async () => C.call(await twice(), 't.testnet', 'buy', { min_tokens_out: '1' }, { depositYocto: '5' }));
+  assert.equal(r.ok, false);
+  assert.equal(r.outcome, 'unknown');
+  assert.match(r.hash, /^[1-9A-HJ-NP-Za-km-z]{43,44}$/);
+  assert.equal(r.explorerUrl, `https://testnet.nearblocks.io/txns/${r.hash}`);
+  assert.match(r.errorMessage, /was sent, but no node returned its final outcome/);
+  assert.equal(new Set(net.sendBodies.map((s) => s.b64)).size, 1);
+  assert.deepEqual(r.signedHashes, [r.hash]);
+  // A node-side timeout on send_tx means "taken, not final": looked up, never sent again.
+  const slow = fakeNet({
+    hook: (url, body) => (body.method === 'send_tx' || body.method === 'tx' ? { error: { name: 'HANDLER_ERROR', cause: { name: 'TIMEOUT_ERROR' } } } : undefined),
+  });
+  C.configure({ rpcUrls: URLS, fetch: slow.fetch, confirmMs: 40 });
+  const r2 = await withoutWaits(async () => C.call(await twice(), 't.testnet', 'buy', {}, {}));
+  assert.equal(r2.outcome, 'unknown');
+  assert.equal(slow.sendBodies.length, 1);
+});
+
+test('a refusal before any copy could have landed is certain, and a stale nonce gets one new signature', async () => {
+  let first = true;
+  const net = fakeNet({
+    hook: (url, body) => {
+      if (body.method === 'send_tx' && first) {
+        first = false;
+        return { error: { name: 'HANDLER_ERROR', cause: { name: 'INVALID_TRANSACTION' }, data: { TxExecutionError: { InvalidTxError: { InvalidNonce: { tx_nonce: 42, ak_nonce: 42 } } } } } };
+      }
+      return undefined;
+    },
+  });
+  C.configure({ rpcUrls: URLS, fetch: net.fetch, confirmMs: 60_000 });
+  const r = await withoutWaits(async () => C.call(await twice(), 't.testnet', 'shout', { amount: '5' }, { depositYocto: '1' }));
+  assert.equal(r.outcome, 'success');
+  assert.equal(r.signedHashes.length, 2);
+  assert.equal(r.hash, r.signedHashes[1]);
+  assert.deepEqual(net.nonces, [42n]);
+});
+
+test('createSubWallet makes <random>.<parent> with 3 NEAR and a new full-access key in one transaction', async () => {
+  const { wallet } = await fixedWallet();
+  const parent = { ...wallet, accountId: 'twice.testnet' };
+  let added = null;
+  const net = fakeNet({
+    hook: (url, body) => {
+      if (body.method === 'send_tx') {
+        const signed = C.base64Decode(body.params.signed_tx_base64);
+        const at = signed.length - 65 - 43; // AddKey: tag, key enum, 32-byte key, u64 nonce, permission
+        added = `ed25519:${C.base58Encode(signed.slice(at + 2, at + 34))}`;
+      }
+      if (body.method === 'query' && body.params.account_id !== 'twice.testnet') {
+        return added && body.params.public_key === added
+          ? { result: { nonce: 0, permission: 'FullAccess' } }
+          : { error: { name: 'HANDLER_ERROR', cause: { name: 'UNKNOWN_ACCOUNT' } } };
+      }
+      return undefined;
+    },
+  });
+  C.configure({ rpcUrls: URLS, fetch: net.fetch, confirmMs: 60_000 });
+  const b = await withoutWaits(() => C.createSubWallet(parent));
+  assert.match(b.accountId, /^b[0-9a-f]{8}\.twice\.testnet$/);
+  assert.equal(b.outcome, 'success');
+  assert.equal(b.publicKey, added);
+  assert.deepEqual(C.importWallet(b), { accountId: b.accountId, publicKey: b.publicKey, secretKey: b.secretKey });
+  assert.equal(b.explorerUrl, `https://testnet.nearblocks.io/txns/${b.hash}`);
+  // The bytes sent are exactly this transaction.
+  const sent = C.base64Decode(net.sendBodies[0].b64);
+  const expected = C.encodeTransaction({
+    signerId: 'twice.testnet', publicKey: parent.publicKey, nonce: 42n, receiverId: b.accountId,
+    blockHash: C.base58Encode(new Uint8Array(32).fill(8)),
+    actions: [C.createAccount(), C.transfer(3n * C.YOCTO), C.addFullAccessKey(b.publicKey)],
+  });
+  assert.equal(hex(sent.slice(0, sent.length - 65)), hex(expected));
+  // A parent id too long for a sub-account is refused before anything is signed.
+  await assert.rejects(C.createSubWallet({ ...parent, accountId: `${'a'.repeat(50)}.testnet` }), /too long/);
+  assert.equal(net.sendBodies.length, 1);
+});
+
+test('the faucet is asked once: a refusal such as HTTP 429 ends the attempt with its answer', async () => {
+  let asked = 0;
+  const fetch = async (url, init) => {
+    const body = JSON.parse(init.body);
+    if (url.includes('faucet')) {
+      asked += 1;
+      return { ok: false, status: 429, text: async () => '{"error":"Too many requests, retry in 12 hours"}' };
+    }
+    return { ok: true, status: 200, json: async () => ({ id: body.id, error: { name: 'HANDLER_ERROR', cause: { name: 'UNKNOWN_ACCOUNT' } } }) };
+  };
+  C.configure({ rpcUrls: URLS, faucetUrls: ['https://faucet.example/account', 'https://faucet2.example/account'], fetch });
+  const answers = [];
+  const err = await C.createTestWallet({ prefix: 'unit', onAnswer: (a) => answers.push(a) }).catch((e) => e);
+  assert.ok(err instanceof C.FaucetError);
+  assert.equal(err.status, 429);
+  assert.match(err.answer, /retry in 12 hours/);
+  assert.match(err.message, /refused to create .*HTTP 429/);
+  assert.equal(asked, 1);
+  assert.deepEqual(answers.map((a) => [a.host, a.status]), [['faucet.example', 429]]);
+});
+
+test('importTestWallet needs a testnet id and a full-access key that is on the account', async () => {
+  const { wallet } = await fixedWallet();
+  let permission = 'FullAccess';
+  const fetch = async (url, init) => {
+    const body = JSON.parse(init.body);
+    const p = body.params;
+    const ok = p.account_id === 'mine.testnet' && p.public_key === wallet.publicKey;
+    return { ok: true, status: 200, json: async () => (ok
+      ? { id: body.id, result: { nonce: 3, permission } }
+      : { id: body.id, error: { name: 'HANDLER_ERROR', cause: { name: 'UNKNOWN_ACCESS_KEY' } } }) };
+  };
+  C.configure({ rpcUrls: URLS, fetch });
+  const seedOnly = `ed25519:${C.base58Encode(SEED)}`;
+  assert.deepEqual(await C.importTestWallet(' mine.testnet ', seedOnly), { accountId: 'mine.testnet', publicKey: wallet.publicKey, secretKey: seedOnly });
+  assert.deepEqual(await C.importTestWallet('mine.testnet', wallet.secretKey), { accountId: 'mine.testnet', publicKey: wallet.publicKey, secretKey: wallet.secretKey });
+  await assert.rejects(C.importTestWallet('mine.near', wallet.secretKey), /testnet account id/);
+  await assert.rejects(C.importTestWallet('other.testnet', wallet.secretKey), /not on other\.testnet/);
+  const bad = await C.importTestWallet('mine.testnet', 'ed25519:notakey0OIl').catch((e) => e);
+  assert.match(bad.message, /not an ed25519 private key/);
+  assert.ok(!bad.message.includes('notakey'));
+  permission = { FunctionCall: { allowance: null, receiver_id: 't.testnet', method_names: [] } };
+  await assert.rejects(C.importTestWallet('mine.testnet', wallet.secretKey), /full-access key/);
+});
+
+test('settlement tells a payout recorded for claim from one that is not confirmed', () => {
+  const unpaid = 'EVENT_JSON:{"standard":"loud","version":"1.0.0","event":"payout_failed","data":[{"account":"seller.testnet","amount":"5"}]}';
+  const owed = C.summarizeResult({ status: { SuccessValue: b64json('1') }, receipts_outcome: [okReceipt(), okReceipt([unpaid])] }, 'H');
+  assert.equal(owed.settlement, 'payout_failed');
+  assert.deepEqual(owed.payoutsFailed, [{ account: 'seller.testnet', amount: '5' }]);
+  const lost = C.summarizeResult({ status: { SuccessValue: b64json('1') }, receipts_outcome: [okReceipt(), { id: 'r', outcome: { logs: [], status: { Failure: {} } } }] }, 'H');
+  assert.equal(lost.settlement, 'unconfirmed');
+  assert.deepEqual(lost.payoutsFailed, []);
+  const fine = C.summarizeResult({ status: { SuccessValue: b64json('1') }, receipts_outcome: [okReceipt()] }, 'H');
+  assert.equal(fine.settlement, 'settled');
 });

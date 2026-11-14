@@ -43,6 +43,25 @@ jobs:
           printf 'test file: %s\n' "${files[@]}"
           node --test "${files[@]}"
 
+  compat:
+    # web/chain.js encodes and signs transactions itself; this compares its bytes with
+    # near-api-js, which is installed only here, with a read-only token.
+    name: chain.js against near-api-js
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install the pinned client library
+        working-directory: scripts/proof
+        run: npm install --ignore-scripts --no-audit --no-fund
+      - name: Compare
+        run: node --test scripts/proof/chain-compat.check.mjs
+
   contract:
     name: Contract tests and wasm
     runs-on: ubuntu-latest

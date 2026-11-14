@@ -54,6 +54,38 @@ test('web/chain.js encodes and signs exactly as near-api-js does', async () => {
   }
 });
 
+// The second wallet: CreateAccount, Transfer and AddKey (full access) in one transaction,
+// signed by the parent account and received by the new sub-account.
+test('web/chain.js encodes and signs the sub-account transaction exactly as near-api-js does', async () => {
+  const parent = await C.generateKeyPair();
+  const child = await C.generateKeyPair();
+  const kp = KeyPair.fromString(parent.secretKey);
+  const childKey = KeyPair.fromString(child.secretKey).getPublicKey();
+  assert.equal(childKey.toString(), child.publicKey);
+  const blockHash = b58encode(createHash('sha256').update('another block').digest());
+  const signerId = 'loud-try-compat.testnet';
+  const receiverId = `b0a1b2c3d.${signerId}`;
+  for (const amount of [3n * 10n ** 24n, 1n, 340282366920938463463374607431768211455n]) {
+    const nonce = 98765432109876n;
+    const tx = T.createTransaction(signerId, kp.getPublicKey(), receiverId, nonce,
+      [T.createAccount(), T.transfer(amount), T.addKey(childKey, T.fullAccessKey())], b58decode(blockHash));
+    const theirs = tx.encode();
+    const ours = C.encodeTransaction({
+      signerId, publicKey: parent.publicKey, nonce, receiverId, blockHash,
+      actions: [C.createAccount(), C.transfer(amount), C.addFullAccessKey(child.publicKey)],
+    });
+    assert.equal(hex(ours), hex(theirs), `transaction bytes, transfer ${amount}`);
+    const digest = new Uint8Array(createHash('sha256').update(theirs).digest());
+    const theirSigned = new T.SignedTransaction({
+      transaction: tx,
+      signature: new T.Signature({ keyType: tx.publicKey.keyType, data: kp.sign(digest).signature }),
+    }).encode();
+    const signed = await C.signTransaction(parent.secretKey, ours);
+    assert.equal(signed.hash, b58encode(digest));
+    assert.equal(hex(signed.signedBytes), hex(theirSigned));
+  }
+});
+
 test('a key pair made by near-api-js signs through web/chain.js', async () => {
   const kp = KeyPair.fromRandom('ed25519');
   const secretKey = kp.toString();
@@ -62,4 +94,6 @@ test('a key pair made by near-api-js signs through web/chain.js', async () => {
   assert.equal(hex(ours), hex(kp.sign(msg).signature));
   assert.deepEqual(C.importWallet({ accountId: 'x.testnet', publicKey: kp.getPublicKey().toString(), secretKey }),
     { accountId: 'x.testnet', publicKey: kp.getPublicKey().toString(), secretKey });
+  // The public key the import form derives from a near-cli private key is near-api-js's.
+  assert.equal(await C.publicKeyFromSecret(secretKey), kp.getPublicKey().toString());
 });
