@@ -8,18 +8,22 @@
 <meta property="og:type" content="website">
 <meta property="og:title" content="Launch your own LOUD token on NEAR testnet">
 <meta property="og:description" content="Pick the launch window, notice and shared cap, and launch a LOUD token on NEAR testnet in one transaction. Nobody holds a key to it.">
-<meta name="color-scheme" content="light">
+<meta name="color-scheme" content="dark">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%231e1d1b'/%3E%3Crect x='3' y='4' width='3' height='8' fill='%23f2b23e'/%3E%3Crect x='3' y='10' width='10' height='2' fill='%23f2b23e'/%3E%3C/svg%3E">
-<link rel="stylesheet" href="styles.css">
-<link rel="stylesheet" href="launch.css">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700;800&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<link rel="stylesheet" href="styles.css?v=4">
+<link rel="stylesheet" href="launch.css?v=2">
 <script type="module" src="launch.js"></script>
 </head>
-<body>
+<body class="launch-page">
 <a class="skip" href="#main">Skip to content</a>
 
 <header class="masthead">
   <p class="wordmark"><a href="index.html">LOUD</a></p>
   <nav aria-label="Pages">
+    <a href="index.html">Back to LOUD</a>
     <a href="index.html#try">Use it on testnet</a>
     <a href="index.html#rule">Rule</a>
     <a href="launch.html" aria-current="page">Launch your own</a>
@@ -43,7 +47,7 @@
     <p class="mock-banner" id="l-mock" role="note" hidden></p>
 
     <div class="try-wallets l-wallet" aria-labelledby="l-wallet-h">
-      <h3 id="l-wallet-h">1. Wallet</h3>
+      <h3 id="l-wallet-h" class="l-step"><span class="l-idx">01</span> Wallet</h3>
       <div id="l-wallet-none">
         <div class="try-wallet-buttons">
           <button type="button" id="l-new">Get a test wallet</button>
@@ -75,7 +79,7 @@
     </div>
 
     <form id="launch-form" class="l-form" novalidate autocomplete="off">
-      <h3>2. Rules</h3>
+      <h3 class="l-step"><span class="l-idx">02</span> Your token's rules</h3>
       <div class="l-presets" role="group" aria-label="Presets">
         <button type="button" data-preset="quick" aria-pressed="false">Try in 5 minutes</button>
         <button type="button" data-preset="standard" aria-pressed="false">Standard</button>
@@ -84,6 +88,9 @@
       <p class="fine l-preset-note" id="l-preset-note"></p>
 
       <div class="l-fields">
+        <div class="l-group l-g-id">
+          <p class="l-group-h">Identity</p>
+          <div class="l-grid">
         <div class="l-field">
           <label for="f-name">Name</label>
           <input id="f-name" maxlength="80" spellcheck="false" aria-describedby="f-name-err">
@@ -95,6 +102,11 @@
           <p class="l-hint" id="f-symbol-hint">At most 16 bytes. It also names the token account.</p>
           <p class="l-err" id="f-symbol-err" hidden></p>
         </div>
+          </div>
+        </div>
+        <div class="l-group l-g-supply">
+          <p class="l-group-h">Supply and reserve</p>
+          <div class="l-grid">
         <div class="l-field">
           <label for="f-creator">Creator allocation</label>
           <div class="l-in"><input id="f-creator" inputmode="decimal" aria-describedby="f-creator-err f-creator-hint"><span class="l-unit">%</span></div>
@@ -107,6 +119,11 @@
           <p class="l-hint" id="f-virtual-hint">Sets the starting price. 0.1 to 1,000,000 NEAR.</p>
           <p class="l-err" id="f-virtual-err" hidden></p>
         </div>
+          </div>
+        </div>
+        <div class="l-group l-g-door">
+          <p class="l-group-h">The door</p>
+          <div class="l-grid">
         <div class="l-field">
           <label for="f-loud">Launch window</label>
           <div class="l-in"><input id="f-loud" inputmode="decimal" aria-describedby="f-loud-err f-loud-hint"><select id="f-loud-unit" aria-label="Launch window unit"><option value="s">seconds</option><option value="min">minutes</option><option value="h">hours</option><option value="d">days</option></select></div>
@@ -137,11 +154,13 @@
           <p class="l-hint" id="f-capwin-hint">Time the cap takes to refill. 1 min to 7 days.</p>
           <p class="l-err" id="f-capwin-err" hidden></p>
         </div>
+          </div>
+        </div>
       </div>
       <p class="l-err" id="l-form-err" hidden></p>
       <p class="fine">Supply is fixed at 1,000,000,000 tokens with 18 decimals. Out-of-range values show the error the contract itself would return.</p>
 
-      <h3>3. Cost and launch</h3>
+      <h3 class="l-step"><span class="l-idx">03</span> Launch</h3>
       <dl class="facts l-cost-facts">
         <div><dt>Token account</dt><dd id="l-token-id">get a wallet first</dd></div>
       </dl>

@@ -1,0 +1,467 @@
+/* LOUD page, the sections below the live demo: summary, rule, split attack, simulator,
+   testnet proof, limits, parameters, footer. Loads after styles.css. */
+
+/* Shared language for these sections */
+
+.summary, #rule, #split, #sandbox, #proof, #limits, #parameters, .foot { font-family: var(--sans); }
+
+#rule .row-head h2, #split .row-head h2, #sandbox .row-head h2, #proof .row-head h2,
+#limits .row-head h2, #parameters .row-head h2 {
+  font-family: var(--display);
+  text-transform: uppercase;
+  font-weight: 800;
+  font-size: clamp(30px, 3.4vw, 44px);
+  line-height: 0.98;
+  letter-spacing: 0.01em;
+  color: var(--ink);
+}
+#rule .say, #split .say, #sandbox .say, #proof .say, #limits .say, #parameters .say {
+  font-family: var(--sans);
+  font-size: clamp(18px, 1.7vw, 21px);
+  line-height: 1.4;
+  color: var(--ink);
+  max-width: 36em;
+}
+#rule .fine, #split .fine, #sandbox .fine, #proof .fine, #limits .fine, #parameters .fine { color: var(--ink-2); }
+
+#rule code, #split code, #sandbox code, #proof code, #limits code, #parameters code, .summary code {
+  background: var(--panel);
+  color: var(--accent);
+  padding: 1px 5px;
+  font-family: var(--mono);
+}
+#rule a, #split a, #sandbox a, #proof a, #limits a, #parameters a, .summary a, .foot a { color: var(--accent); }
+#rule a:hover, #split a:hover, #sandbox a:hover, #proof a:hover, #limits a:hover, #parameters a:hover, .summary a:hover, .foot a:hover { color: var(--ink); }
+
+/* Buttons and inputs */
+
+#rule .row-body button, #split .row-body button, #sandbox .row-body button, #proof .row-body button,
+#limits .row-body button, #parameters .row-body button, #split .view button {
+  font-family: var(--mono);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-size: 13px;
+  min-height: 44px;
+  background: transparent;
+  color: var(--ink);
+  border: 1px solid var(--dim);
+}
+#split .row-body button:hover:not(:disabled), #sandbox .row-body button:hover:not(:disabled),
+#proof .row-body button:hover:not(:disabled) { background: var(--panel); border-color: var(--accent); color: var(--accent); }
+#split .row-body button.primary, #sandbox .row-body button.primary {
+  background: var(--accent);
+  color: var(--accent-ink);
+  border-color: var(--accent);
+  font-weight: 700;
+  padding-left: 30px;
+  padding-right: 30px;
+}
+#split .row-body button.primary:hover:not(:disabled), #sandbox .row-body button.primary:hover:not(:disabled) { background: var(--ink); border-color: var(--ink); color: var(--accent-ink); }
+#split .row-body button[aria-pressed="true"], #sandbox .row-body button[aria-pressed="true"] { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+#split .row-body button:disabled, #sandbox .row-body button:disabled, #proof .row-body button:disabled { color: var(--dim); border-color: var(--rule); }
+#sandbox .row-body button.link, #split .row-body button.link, #proof .row-body button.link {
+  min-height: 0;
+  border: 0;
+  background: transparent;
+  color: var(--accent);
+  text-transform: none;
+  letter-spacing: 0;
+}
+#sandbox .row-body .board button { min-height: 32px; font-size: 12px; }
+#split .view button { min-height: 36px; font-size: 12px; }
+
+#sandbox input, #split input[type="text"], #split input:not([type="radio"]) {
+  background: var(--panel);
+  color: var(--ink);
+  border: 1px solid var(--rule);
+  font-family: var(--mono);
+}
+#sandbox input:focus-visible { outline: 2px solid var(--accent); outline-offset: 0; border-color: var(--accent); }
+
+/* Segmented radio groups */
+#split legend, #sandbox legend {
+  font-family: var(--mono);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  font-size: 12px;
+  color: var(--accent);
+}
+#split fieldset label span {
+  font-family: var(--mono);
+  min-height: 44px;
+  min-width: 56px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  color: var(--ink);
+  border: 1px solid var(--dim);
+}
+#split fieldset input:checked + span { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); font-weight: 700; }
+#split fieldset input:focus-visible + span { outline: 2px solid var(--ink); outline-offset: 2px; }
+#split .run-status { color: var(--ink-2); }
+
+/* Folds */
+#rule .fine-print, #split .fine-print, #sandbox .fine-print, #proof .fine-print, #limits .fine-print, #parameters .fine-print { border-color: var(--rule); }
+#rule .fine-print > summary, #split .fine-print > summary, #sandbox .fine-print > summary,
+#proof .fine-print > summary, #limits .fine-print > summary, #parameters .fine-print > summary {
+  font-family: var(--mono);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  font-size: 13px;
+  color: var(--ink);
+  min-height: 44px;
+}
+#rule .fine-print > summary::before, #split .fine-print > summary::before, #sandbox .fine-print > summary::before,
+#proof .fine-print > summary::before, #limits .fine-print > summary::before, #parameters .fine-print > summary::before {
+  background:
+    linear-gradient(var(--accent), var(--accent)) center / 100% 2px no-repeat,
+    linear-gradient(var(--accent), var(--accent)) center / 2px 100% no-repeat;
+}
+#rule .fine-print[open] > summary::before, #split .fine-print[open] > summary::before, #sandbox .fine-print[open] > summary::before,
+#proof .fine-print[open] > summary::before, #limits .fine-print[open] > summary::before, #parameters .fine-print[open] > summary::before {
+  background: linear-gradient(var(--accent), var(--accent)) center / 100% 2px no-repeat;
+}
+#rule .fine-print > summary:hover, #split .fine-print > summary:hover, #sandbox .fine-print > summary:hover,
+#proof .fine-print > summary:hover, #limits .fine-print > summary:hover, #parameters .fine-print > summary:hover { color: var(--accent); }
+.fine-print > :not(summary) { color: var(--ink-2); }
+.fine-print .plain li::before, .plain li::before { background: var(--accent); }
+
+/* Tables */
+#split table.data, #proof table.data, #parameters table.data, #sandbox table.data { font-family: var(--sans); }
+#split table.data th, #split table.data td, #proof table.data th, #proof table.data td,
+#parameters table.data th, #parameters table.data td { border-color: var(--rule); }
+#split table.data thead th, #proof table.data thead th, #parameters table.data thead th {
+  font-family: var(--mono);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-size: 11.5px;
+  font-weight: 500;
+  color: var(--accent);
+  border-bottom: 1px solid var(--accent);
+}
+#split-table td:not(:first-child), #parameters table.data td:nth-child(2), #parameters table.data th[scope="row"] { font-family: var(--mono); }
+#split-table tr[data-rule="loud"] td { color: var(--accent); }
+#split-table .sub { color: var(--ink-2); }
+#parameters table.data tbody th { color: var(--ink); font-weight: 500; text-transform: uppercase; letter-spacing: 0.06em; font-size: 13px; }
+#parameters table.data td:nth-child(2) { color: var(--accent); }
+
+/* Summary: a fact strip */
+
+.summary { padding-top: 34px; }
+.summary dl {
+  background: var(--panel);
+  border: 1px solid var(--rule);
+  border-left: 3px solid var(--accent);
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 0;
+  padding: 0;
+}
+.summary dl > div {
+  display: block;
+  padding: 16px 18px 18px;
+  border: 0;
+  border-top: 1px solid var(--rule);
+  grid-column: span 3;
+}
+.summary dl > div:nth-child(1) { grid-column: 1 / -1; border-top: 0; }
+.summary dl > div:nth-child(2), .summary dl > div:nth-child(3) { grid-column: span 3; }
+.summary dl > div:nth-child(4), .summary dl > div:nth-child(5) { grid-column: 1 / -1; }
+.summary dl > div:nth-child(6) { grid-column: 1 / -1; }
+.summary dl > div:nth-child(3) { border-left: 1px solid var(--rule); }
+.summary dt {
+  font-family: var(--mono);
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  font-size: 11.5px;
+  color: var(--accent);
+  margin-bottom: 6px;
+}
+.summary dd { font-family: var(--mono); font-size: 14.5px; line-height: 1.5; color: var(--ink); max-width: 70em; }
+.summary dl > div:nth-child(1) dd { font-family: var(--sans); font-size: 17px; line-height: 1.45; }
+
+/* The rule: three numbered tiles and the catch band */
+
+#rule .door {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  border: 0;
+  counter-reset: door;
+}
+#rule .door li, #rule .door li + li {
+  counter-increment: door;
+  background: var(--panel);
+  border: 1px solid var(--rule);
+  border-top: 3px solid var(--accent);
+  padding: 14px 18px 20px;
+  position: relative;
+}
+#rule .door li::before {
+  content: "0" counter(door);
+  display: block;
+  font-family: var(--display);
+  font-weight: 800;
+  font-size: clamp(64px, 7.5vw, 104px);
+  line-height: 0.86;
+  letter-spacing: -0.01em;
+  color: var(--accent);
+  margin: 0 0 14px;
+  position: static;
+}
+#rule .door b {
+  font-family: var(--display);
+  text-transform: uppercase;
+  font-weight: 800;
+  font-size: clamp(26px, 2.6vw, 34px);
+  line-height: 1;
+  letter-spacing: 0.01em;
+  color: var(--ink);
+  margin-bottom: 8px;
+}
+#rule .door span { font-family: var(--sans); font-size: 16px; line-height: 1.45; color: var(--ink-2); }
+#rule .door-notice { background: var(--panel); }
+#rule .door-notice::before { color: var(--ink) !important; }
+
+#rule .row-body > .law {
+  border-bottom: 1px solid var(--rule);
+  font-size: 17px;
+  line-height: 1.5;
+  color: var(--ink-2);
+  padding: 15px 0;
+  max-width: none;
+}
+#rule .row-body > .law b {
+  font-family: var(--display);
+  text-transform: uppercase;
+  font-weight: 700;
+  font-size: 21px;
+  letter-spacing: 0.02em;
+  color: var(--ink);
+  margin-right: 6px;
+}
+#rule .row-body > .door + .law, #rule .row-body > .law.law-catch {
+  margin-top: 12px;
+  background: var(--board);
+  border: 1px solid var(--rule);
+  border-left: 6px solid var(--accent);
+  padding: 18px 20px 20px;
+  color: var(--ink);
+}
+#rule .row-body > .law.law-catch b { display: block; color: var(--accent); font-size: clamp(26px, 2.6vw, 34px); font-weight: 800; line-height: 1; margin: 0 0 8px; }
+#rule .row-body > .law.law-catch + .law { margin-top: 6px; }
+
+/* Split attack */
+
+#split .controls { gap: 18px 28px; align-items: end; }
+#split .verdicts, #split .verdicts.real-case { border-top: 2px solid var(--ink); }
+#split .verdicts li { border-color: var(--rule); align-items: baseline; }
+#split .v-rule {
+  font-family: var(--mono);
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  font-size: 12px;
+  color: var(--ink-2);
+}
+#split .v-line {
+  font-family: var(--display);
+  text-transform: uppercase;
+  font-weight: 800;
+  font-size: clamp(30px, 4vw, 52px);
+  line-height: 0.98;
+  letter-spacing: 0.01em;
+  color: var(--coral);
+}
+#split .v-sub { font-family: var(--sans); font-size: 15.5px; color: var(--ink-2); }
+#split .verdicts li[data-rule="naive"] .v-line { color: var(--ink); }
+#split .verdicts li[data-rule="loud"] {
+  background: var(--board);
+  border: 1px solid var(--accent);
+  border-left: 6px solid var(--accent);
+  padding: 20px 20px 20px;
+  margin-top: 10px;
+}
+#split .verdicts li[data-rule="loud"] .v-rule { color: var(--accent); }
+#split .verdicts li[data-rule="loud"] .v-line {
+  font-family: var(--display);
+  color: var(--accent);
+  font-size: clamp(34px, 4.8vw, 64px);
+}
+#split .verdicts li[data-rule="loud"] .v-sub { color: var(--ink); }
+
+#split figure { background: var(--panel); border: 1px solid var(--rule); padding: 16px 18px 14px; }
+#split figcaption { font-family: var(--mono); font-size: 13px; color: var(--ink); }
+#split figcaption b { text-transform: uppercase; letter-spacing: 0.08em; font-weight: 500; color: var(--accent); }
+#split .legend { color: var(--ink-2); }
+#split .plot h3 { font-family: var(--mono); text-transform: uppercase; letter-spacing: 0.1em; color: var(--ink-2); }
+#split .l-split { stroke: var(--accent); stroke-width: 3.5; }
+#split .l-single { stroke: var(--ink); stroke-width: 1.5; }
+#split .l-naive { stroke: var(--ink-2); }
+#split .l-pw { stroke: var(--coral); stroke-width: 2; }
+#split .l-loud { stroke: var(--accent); }
+#split .axis { stroke: var(--ink-2); }
+#split .grid { stroke: var(--rule); }
+#split .mark { stroke: var(--ink-2); }
+#split .chart text { fill: var(--ink-2); }
+#split .chart text.series { fill: var(--ink); }
+#split .chart text.series-loud { fill: var(--accent); }
+
+#split .row-body h3.real-head {
+  font-family: var(--display);
+  text-transform: uppercase;
+  font-weight: 800;
+  font-size: clamp(26px, 2.8vw, 36px);
+  line-height: 1;
+  letter-spacing: 0.01em;
+  color: var(--ink);
+  margin-top: 40px;
+}
+#split .real-case li:nth-child(1) .v-line, #split .real-case li:nth-child(2) .v-line { color: var(--coral); }
+#split .real-src { color: var(--ink-2); }
+#split .result li { border-color: var(--rule); }
+
+/* Simulator: secondary, inset */
+
+#sandbox .row-body {
+  background: var(--paper-2);
+  border: 1px dashed var(--dim);
+  padding: 46px 22px 24px;
+  position: relative;
+}
+#sandbox .row-body::before {
+  content: "SIMULATION, NO CHAIN";
+  position: absolute;
+  top: 0;
+  left: 0;
+  font-family: var(--mono);
+  font-size: 11.5px;
+  letter-spacing: 0.14em;
+  background: var(--dim);
+  color: var(--accent-ink);
+  padding: 5px 10px;
+}
+#sandbox .row-head h2 { color: var(--ink-2); }
+#sandbox .path li { color: var(--ink-2); border-top-color: var(--rule); font-family: var(--sans); }
+#sandbox .path li[aria-current] { color: var(--ink); border-top-color: var(--accent); }
+#sandbox .path li[aria-current]::before { color: var(--accent); }
+#sandbox .path li[data-done="true"]::before { background: var(--ok); }
+#sandbox .label, #sandbox .sb-account dt, #sandbox .facts dt, #proof .facts dt, #sandbox .sb-actions label {
+  font-family: var(--mono);
+  color: var(--ink-2);
+}
+#sandbox .sb-clock b { color: var(--accent); }
+#sandbox .sb-account dd { color: var(--ink); }
+#sandbox .sb-result {
+  background: var(--panel);
+  border: 1px solid var(--rule);
+  border-left: 3px solid var(--dim);
+}
+#sandbox .sb-result[data-ok="true"] { border-left-color: var(--ok); }
+#sandbox .sb-result[data-ok="false"] { border-left-color: var(--fail); }
+#sandbox .sb-result[data-ok="unknown"] { border-left-color: var(--accent); }
+#sandbox .sb-result .call, #sandbox .sb-result .hint { color: var(--ink-2); }
+#sandbox .sb-result .msg { color: var(--ink); }
+#sandbox .sb-result[data-ok="false"] .msg { color: var(--fail); }
+#sandbox .sb-log summary { color: var(--ink); min-height: 44px; display: flex; align-items: center; }
+#sandbox .sb-log li { border-color: var(--rule); color: var(--ink-2); }
+#sandbox .sb-log li[data-ok="false"] { color: var(--fail); }
+
+/* Testnet proof */
+
+#proof .proof-facts { border-top: 2px solid var(--ink); border-bottom: 1px solid var(--rule); gap: 0; }
+#proof .proof-facts li { padding: 20px 22px 20px 0; }
+#proof .proof-facts li + li { border-left: 1px solid var(--rule); padding-left: 22px; }
+#proof .proof-facts b {
+  font-family: var(--display);
+  text-transform: uppercase;
+  font-weight: 800;
+  font-size: clamp(28px, 3.1vw, 42px);
+  line-height: 0.98;
+  letter-spacing: 0.01em;
+  color: var(--accent);
+}
+#proof .proof-facts span { font-family: var(--sans); color: var(--ink-2); }
+#proof .proof-facts a { font-family: var(--mono); color: var(--accent); }
+#proof .proof-facts li[data-state="failed"] b { color: var(--fail); }
+#proof .proof-facts li[data-state="pending"] b { color: var(--ink-2); font-style: normal; }
+#proof .state { font-family: var(--sans); color: var(--ink); }
+#proof .state[data-state="ok"] { color: var(--ok); }
+#proof .state[data-state="failed"] { color: var(--fail); }
+#proof .state[data-state="pending"] { color: var(--ink-2); }
+#proof h3 { font-family: var(--mono); text-transform: uppercase; letter-spacing: 0.12em; color: var(--accent); }
+#proof td.res { font-family: var(--mono); text-align: right; }
+#proof td.res[data-result="PASS"] { color: var(--ok); }
+#proof td.res[data-result="FAIL"] { color: var(--fail); }
+#proof table.steps td.res { width: 86px; }
+#proof table.steps .expect, #proof table.steps details { color: var(--ink-2); }
+#proof table.steps summary { color: var(--accent); min-height: 36px; }
+#proof table.steps details b { color: var(--ink); }
+#proof .facts, #proof .facts > div { border-color: var(--rule); }
+#proof .facts dd { color: var(--ink); }
+#proof .txs .bad { color: var(--fail); }
+
+/* Limits: read as warnings */
+
+#limits .limits { border-top: 2px solid var(--coral); counter-reset: lim; }
+#limits .limits > div {
+  counter-increment: lim;
+  border-bottom: 1px solid var(--rule);
+  padding: 16px 0 16px 54px;
+  position: relative;
+}
+#limits .limits > div::before {
+  content: counter(lim, decimal-leading-zero);
+  position: absolute;
+  left: 0;
+  top: 14px;
+  font-family: var(--display);
+  font-weight: 800;
+  font-size: 30px;
+  line-height: 1;
+  color: var(--coral);
+}
+#limits .limits dt {
+  font-family: var(--display);
+  text-transform: uppercase;
+  font-weight: 700;
+  font-size: 21px;
+  line-height: 1.08;
+  letter-spacing: 0.02em;
+  color: var(--ink);
+}
+#limits .limits dd { font-family: var(--sans); color: var(--ink-2); font-size: 16px; line-height: 1.5; }
+#limits .fine-print .limits { border-top: 1px solid var(--rule); }
+#limits .fine-print .limits > div::before { font-size: 22px; top: 17px; color: var(--dim); }
+#limits .fine-print .limits dt { color: var(--ink); font-size: 18px; }
+
+/* Footer */
+
+.foot {
+  border-top: 1px solid var(--rule);
+  font-family: var(--mono);
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: var(--dim);
+}
+.foot b { color: var(--ink-2); }
+.foot a { color: var(--ink-2); }
+
+/* Small screens */
+
+@media (max-width: 760px) {
+  .summary dl > div, .summary dl > div:nth-child(2), .summary dl > div:nth-child(3) { grid-column: 1 / -1; }
+  .summary dl > div:nth-child(3) { border-left: 0; }
+  #rule .door { grid-template-columns: minmax(0, 1fr); }
+  #rule .door li::before { font-size: 64px; margin-bottom: 8px; }
+  #proof .proof-facts li, #proof .proof-facts li + li { border-left: 0; padding: 18px 0; }
+  #proof .proof-facts li + li { border-top: 1px solid var(--rule); }
+  #limits .limits > div { padding-left: 42px; }
+  #limits .limits > div::before { font-size: 24px; }
+  #sandbox .row-body { padding-left: 12px; padding-right: 12px; }
+  #split figure { padding-left: 10px; padding-right: 10px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .summary *, #rule *, #split *, #sandbox *, #proof *, #limits *, #parameters *, .foot * { transition: none !important; animation: none !important; }
+}

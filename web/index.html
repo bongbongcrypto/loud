@@ -8,10 +8,12 @@
 <meta property="og:type" content="website">
 <meta property="og:title" content="LOUD: launch tokens can't hit the pool without warning">
 <meta property="og:description" content="A NEAR memecoin whose launch tokens can't hit the pool without warning. A hundred wallets get no more room than one.">
-<meta name="color-scheme" content="light">
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%231e1d1b'/%3E%3Crect x='3' y='4' width='3' height='8' fill='%23f2b23e'/%3E%3Crect x='3' y='10' width='10' height='2' fill='%23f2b23e'/%3E%3C/svg%3E">
-<link rel="stylesheet" href="styles.css">
-<script type="module" src="app.js?v=3"></script>
+<meta name="color-scheme" content="dark">
+<meta name="theme-color" content="#0b0b0c">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%230b0b0c'/%3E%3Crect x='3' y='4' width='3' height='8' fill='%23ffd400'/%3E%3Crect x='3' y='10' width='10' height='2' fill='%23ffd400'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="styles.css?v=4">
+<link rel="stylesheet" href="sections.css?v=4">
+<script type="module" src="app.js?v=4"></script>
 </head>
 <body>
 <a class="skip" href="#main">Skip to content</a>
@@ -35,6 +37,7 @@
   <p class="kicker">Memecoin on NEAR testnet</p>
   <h1 id="title">Launch tokens can't hit the pool without warning. A hundred wallets get no more room than one.</h1>
   <p class="claim">A per-wallet sell limit breaks when an insider splits the bag across 100 wallets. Here the creator allocation and tokens bought in the launch window sell into the token's own pool only after a public notice, and all of those sales share one cap.</p>
+  <div class="hero-cta"><a class="btn primary" href="#try">Use it on testnet</a><a class="btn" href="launch.html">Launch your own token</a></div>
 </section>
 
 <section class="board" id="board" aria-labelledby="board-title">
@@ -88,15 +91,29 @@
   <div class="row-body" id="try-body">
     <p class="mock-banner" id="try-mock" role="note" hidden></p>
     <p class="say">A real token on NEAR testnet. Get a wallet, buy, try to sell, shout, catch, leave. Each of those is a real transaction you can open in the explorer.</p>
+    <ol class="try-steps" aria-label="The path through the demo">
+      <li><b>1</b> Wallet</li>
+      <li><b>2</b> Buy</li>
+      <li><b>3</b> Shout</li>
+      <li><b>4</b> Catch or leave</li>
+    </ol>
     <p class="fine try-token-line" id="try-token-line" hidden></p>
     <p class="state" id="try-state" data-state="pending" role="status">Reading the live token from NEAR testnet…</p>
     <button type="button" id="try-retry" hidden>Read the token again</button>
 
     <div id="try-app" hidden>
       <div class="try-wallets">
+        <div class="try-entry">
+          <div class="try-entry-col">
+            <button type="button" id="try-new">Get a test wallet</button>
+            <p class="fine" id="try-wallet-note">Test wallet: one click, no install. A throwaway NEAR testnet account with free test NEAR, its key kept in this browser. A second wallet lets you catch your own exit.</p>
+          </div>
+          <div class="try-entry-col">
+            <button type="button" id="try-connect">Connect a NEAR wallet</button>
+            <p class="fine" id="try-connect-note"><b>Your own wallet:</b> Meteor, Intear and other NEAR wallets that support testnet. Switch the wallet's network to Testnet first. The wallet asks you to approve each transaction.</p>
+          </div>
+        </div>
         <div class="try-wallet-buttons">
-          <button type="button" id="try-new">Get a test wallet</button>
-          <button type="button" id="try-connect">Connect a NEAR wallet</button>
           <button type="button" id="try-new-2" hidden>Get a second wallet</button>
           <button type="button" id="try-switch" hidden>Switch wallet</button>
           <button type="button" id="try-use-conn" hidden>Use the connected wallet</button>
@@ -104,8 +121,6 @@
           <button type="button" class="link" id="try-forget" hidden>Forget this wallet</button>
           <button type="button" class="link" id="try-disconnect" hidden>Disconnect the wallet</button>
         </div>
-        <p class="fine" id="try-wallet-note">Test wallet: one click, no install. A throwaway NEAR testnet account with free test NEAR, its key kept in this browser. A second wallet lets you catch your own exit.</p>
-        <p class="fine" id="try-connect-note"><b>Your own wallet:</b> Meteor, Intear and other NEAR wallets that support testnet. Switch the wallet's network to Testnet first. The wallet asks you to approve each transaction.</p>
         <p class="fine" id="try-new-2-note" hidden>Wallet B is made from wallet A with 3 of its test NEAR, in one transaction. No faucet needed.</p>
         <p class="fine" id="try-launch-own">Want your own coin? <a href="launch.html">Launch a LOUD token</a> with your own numbers.</p>
         <details class="fine-print try-import" id="try-import">
