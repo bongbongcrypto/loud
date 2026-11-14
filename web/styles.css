@@ -757,3 +757,7 @@ table.steps details b { color: var(--ink); }
 #try-app > * + * { margin-top: 18px; }
 #try-app > .fine { margin-top: 10px; }
 #try-app > #try-other { margin-top: 6px; }
+
+.try-stale { display: block; margin: 10px 12px 0; color: #cfc8b4; font-size: 12px; text-align: left; }
+.try-stale:hover:not(:disabled) { color: #ffd400; }
+.try-wallets .fine { margin: 8px 0 0; max-width: 62ch; }

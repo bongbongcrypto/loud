@@ -599,7 +599,7 @@ const tr = {
   last: null, log: [], busy: false, storageOk: true, lastRead: 0, readError: '',
 };
 
-// A connected wallet app (beta). Kept apart from the test wallets and their storage: its
+// A connected wallet app. Kept apart from the test wallets and their storage: its
 // key never reaches this page, and a failure here leaves the test wallets untouched.
 const wc = { mod: null, lib: null, connector: null, conn: null, use: false, stop: null, stopNow: null };
 // Same value as CONNECTED_KEY in wallet-connect.js, which is loaded only on demand.
@@ -638,8 +638,17 @@ function trRenderBoard() {
   if (!tr.live) return;
   const now = TL.chainNow(tr.live);
   const w = trWallet();
-  const rows = TL.liveRows(tr.live.exits, now, w ? w.accountId : '', trIds());
-  tr.board.update(rows, 'No open exits on the token right now. Shout to list one.');
+  const all = TL.liveRows(tr.live.exits, now, w ? w.accountId : '', trIds());
+  // Expired exits of other visitors wait for anyone's hush; they are folded away by default.
+  const mineIds = new Set(trIds());
+  const stale = all.filter((r) => r.status === 'EXPIRED' && !mineIds.has(r.account));
+  const rows = tr.showStale ? all : all.filter((r) => !stale.includes(r));
+  tr.board.update(rows, stale.length && !tr.showStale ? 'No exit is waiting right now. Shout to list one.' : 'No open exits on the token right now. Shout to list one.');
+  const staleBtn = $('#try-stale');
+  if (staleBtn) {
+    staleBtn.hidden = stale.length === 0;
+    setText(staleBtn, tr.showStale ? 'Hide expired exits of other visitors' : `Show ${stale.length} expired ${stale.length === 1 ? 'exit' : 'exits'} of other visitors (anyone can hush them)`);
+  }
   const cap = TL.capView(tr.live, now);
   setCap($('#try-cap-bar'), $('#try-cap-text'), cap.fraction, cap.text);
 }
@@ -678,7 +687,7 @@ function trRender() {
     setText($('#try-wallet-label'), w.kind === 'connected' ? 'Wallet' : TL.walletLabel(tr.store.active));
     const acctHref = tr.chain.accountUrl(w.accountId);
     put($('#try-acct'), acctHref ? link(acctHref, w.accountId) : document.createTextNode(w.accountId),
-      w.kind === 'connected' ? document.createTextNode(` via ${w.walletName} (beta)`) : null);
+      w.kind === 'connected' ? document.createTextNode(` via ${w.walletName}`) : null);
     setText($('#try-near'), a ? (a.exists ? L.fmtNear(a.near) : 'being created…') : '…');
     setText($('#try-loud'), a ? L.fmtTokens(a.loud) : '…');
     setText($('#try-quiet'), a ? L.fmtTokens(a.quiet) : '…');
@@ -1275,6 +1284,7 @@ async function initTry() {
       else $('#try-shout-in').value = L.tokensForInput(a.loud);
     });
   }
+  $('#try-stale').addEventListener('click', () => { tr.showStale = !tr.showStale; trRenderBoard(); });
   $('#try-table').addEventListener('click', (ev) => {
     const b = ev.target.closest('button[data-do]');
     if (!b || tr.busy) return;

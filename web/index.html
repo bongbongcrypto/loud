@@ -87,7 +87,7 @@
   </div>
   <div class="row-body" id="try-body">
     <p class="mock-banner" id="try-mock" role="note" hidden></p>
-    <p class="say">A real token on NEAR testnet. Get a test wallet, buy, try to sell, shout, leave, catch. Buy, sell, shout, leave, hush, catch, claim and making the second wallet each send a transaction you can open in the explorer; switching wallets and filling in amounts send nothing.</p>
+    <p class="say">A real token on NEAR testnet. Get a wallet, buy, try to sell, shout, catch, leave. Each of those is a real transaction you can open in the explorer.</p>
     <p class="fine try-token-line" id="try-token-line" hidden></p>
     <p class="state" id="try-state" data-state="pending" role="status">Reading the live token from NEAR testnet…</p>
     <button type="button" id="try-retry" hidden>Read the token again</button>
@@ -96,12 +96,18 @@
       <div class="try-wallets">
         <div class="try-wallet-buttons">
           <button type="button" id="try-new">Get a test wallet</button>
+          <button type="button" id="try-connect">Connect a NEAR wallet</button>
           <button type="button" id="try-new-2" hidden>Get a second wallet</button>
           <button type="button" id="try-switch" hidden>Switch wallet</button>
+          <button type="button" id="try-use-conn" hidden>Use the connected wallet</button>
+          <button type="button" id="try-use-test" hidden>Use test wallet A</button>
           <button type="button" class="link" id="try-forget" hidden>Forget this wallet</button>
+          <button type="button" class="link" id="try-disconnect" hidden>Disconnect the wallet</button>
         </div>
+        <p class="fine" id="try-wallet-note"><b>Test wallet:</b> one click, no install. A throwaway NEAR testnet account with free test NEAR, its key kept in this browser.</p>
+        <p class="fine" id="try-connect-note"><b>Your own wallet:</b> Meteor, Intear and other NEAR wallets that support testnet. Switch the wallet's network to Testnet first. The wallet asks you to approve each transaction.</p>
         <p class="fine" id="try-new-2-note" hidden>Wallet B is made from wallet A with 3 of its test NEAR, in one transaction. No faucet needed.</p>
-        <p class="fine" id="try-wallet-note">A test wallet is a new NEAR testnet account that the public faucet funds with test NEAR. Testnet only, throwaway, no real funds. Its key is made in this browser, kept in this browser's storage and never sent anywhere. A second wallet lets you catch your own exit from another account.</p>
+        <p class="fine" id="try-launch-own">Want your own coin? <a href="launch.html">Launch a LOUD token</a> with your own numbers.</p>
         <details class="fine-print try-import" id="try-import">
           <summary>Import a test wallet</summary>
           <p class="fine">For a throwaway NEAR testnet account only. Never paste a key that controls real funds: this page keeps the key in this browser's storage. The page checks that the key is a full-access key of the account on NEAR testnet before it saves it.</p>
@@ -113,14 +119,6 @@
             <button type="submit">Check and import</button>
           </form>
         </details>
-        <div class="try-wallet-buttons try-connect">
-          <button type="button" id="try-connect">Connect a NEAR wallet (testnet, beta)</button>
-          <button type="button" id="try-use-conn" hidden>Use the connected wallet</button>
-          <button type="button" id="try-use-test" hidden>Use test wallet A</button>
-          <button type="button" class="link" id="try-disconnect" hidden>Disconnect the wallet</button>
-        </div>
-        <p class="fine" id="try-connect-note">Beta, not covered by the automated walk and not yet tried here with a real wallet: a NEAR wallet app that supports testnet (Meteor, Intear and others) can sign instead of a test wallet. It asks you to approve every transaction, and its key never reaches this page. Pressing the button loads the NEAR wallet connector from a URL pinned to one version, checked against its SHA-384 before it runs; the connector then fetches its list of wallets and each wallet's own script.</p>
-        <p class="fine" id="try-launch-own">Want your own? <a href="launch.html">Launch a LOUD token</a> with your own launch window, notice and cap, from the same test wallet.</p>
       </div>
 
       <dl class="sb-account try-account" id="try-account" hidden>
@@ -178,6 +176,7 @@
             </tbody>
           </table>
         </div>
+        <button type="button" class="link try-stale" id="try-stale" hidden></button>
         <div class="board-foot">
           <div class="cap">
             <span class="cap-label">Cap room</span>

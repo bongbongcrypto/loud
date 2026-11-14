@@ -1,4 +1,4 @@
-// Connecting a NEAR wallet app on testnet (beta).
+// Connecting a NEAR wallet app on testnet.
 //
 // The connector is the NEAR ecosystem's @hot-labs/near-connect, loaded only when a visitor
 // presses the connect button, from a URL pinned to one commit, and run only when its

@@ -185,7 +185,7 @@ Under LOUD, holders in both cases also get 30 minutes of public notice before th
 | `contracts/loud` | The token: NEP-141, the two balances, the built-in pool and the exits. |
 | `web/engine.js` | The same rules in JavaScript, used by the page and the simulator. It leaves out account registration, the 0.03 NEAR storage payment, asynchronous payouts and `ft_transfer_call` refunds. Its views differ in small ways: a quote that overflows throws instead of returning 0, the state has no `cap_full_ts`, and exits page in insertion order. |
 | `web/chain.js` | The page's NEAR client: test wallets from the faucet or from another wallet, signing, sending (a send whose answer is lost is looked up by hash, never signed again), RPC. No dependency. |
-| `web/wallet-connect.js` | Connecting a NEAR wallet app (beta): loads the pinned connector on demand and turns what the wallet returns into the same result as a test wallet's call. |
+| `web/wallet-connect.js` | Connecting a NEAR wallet app: loads the pinned connector on demand and turns what the wallet returns into the same result as a test wallet's call. |
 | `web/live-ui.js`, `web/live.json`, `web/live-e2e.json` | The "Use it on testnet" section, the record of the live token and the latest on-chain walk of the visitor's path. |
 | `web/launch.html`, `web/launch.js`, `web/loud.wasm` | Launch a new LOUD token from the page, and the contract build it deploys. |
 | `web/` | The static page, no build step. |

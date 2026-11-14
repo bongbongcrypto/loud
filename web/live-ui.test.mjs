@@ -397,13 +397,13 @@ test('page: the live section is wired to ids the script uses, and says what it i
   const body = html.slice(at, html.indexOf('</section>', at));
   for (const m of app.matchAll(/\$\('#(try-[\w-]+)'/g)) assert.ok(body.includes(`id="${m[1]}"`), `missing #${m[1]}`);
   assert.match(body, /<h2 id="try-h">Use it on testnet<\/h2>/);
-  assert.match(body, /Testnet only, throwaway, no real funds\./);
-  assert.match(body, /never sent anywhere/);
+  assert.match(body, /A throwaway NEAR testnet account with free test NEAR/);
+  assert.match(body, /its key kept in this browser/);
   // The launch window is read from the chain; the static text does not claim it is open.
   assert.doesNotMatch(body, /every buy is loud|Nobody holds quiet/);
   assert.match(body, /<p class="mock-banner" id="try-mock" role="note" hidden><\/p>/);
   assert.equal(TL.MOCK_BANNER, 'MOCK: no chain, invented transactions');
-  assert.match(body, /switching wallets and filling in amounts send nothing\./);
+  assert.match(body, /Each of those is a real transaction you can open in the explorer\./);
   assert.doesNotMatch(body, /Every button sends a transaction|A call takes 2 to 10 s/);
   assert.match(body, /up to about 2 minutes/);
   assert.match(body, /For a throwaway NEAR testnet account only\./);
