@@ -347,6 +347,44 @@ test('CreateAccount, Transfer and AddKey are laid out as NEAR nodes read them', 
   assert.throws(() => C.encodeAction({ type: 'Stake' }), /not supported/);
 });
 
+test('a keyless launch (CreateAccount, Transfer, DeployContract, FunctionCall) is laid out as NEAR nodes read it', async () => {
+  const { pub, wallet } = await fixedWallet();
+  const blockHash = Uint8Array.from({ length: 32 }, (_, i) => 255 - i);
+  const code = Uint8Array.of(0, 97, 115, 109, 1, 0, 0, 0); // "\0asm" version 1
+  const bytes = C.encodeTransaction({
+    signerId: 'alice.testnet', publicKey: wallet.publicKey, nonce: 7n, receiverId: 't1.alice.testnet', blockHash,
+    actions: [C.createAccount(), C.transfer(5n * C.YOCTO), C.deployContract(code), C.functionCall('new', { a: 1 }, 200n * C.TGAS, 0n)],
+  });
+  const expected = [
+    '0d000000', utf8('alice.testnet'),
+    '00', hex(pub),
+    '0700000000000000',
+    '10000000', utf8('t1.alice.testnet'),
+    hex(blockHash),
+    '04000000', // four actions
+    '00', // CreateAccount
+    '03', '00000025a4000a8bca22040000000000', // Transfer 5 NEAR, u128 little endian
+    '01', '08000000', '0061736d01000000', // DeployContract: u32 length, then the code
+    '02', '03000000', utf8('new'), '07000000', utf8('{"a":1}'), '0080f420e6b50000', '00000000000000000000000000000000', // FunctionCall new, 200 Tgas, 0 deposit
+  ].join('');
+  assert.equal(hex(bytes), expected);
+  assert.throws(() => C.encodeAction(C.deployContract(new Uint8Array(0))), /non-empty Uint8Array/);
+  assert.throws(() => C.encodeAction(C.deployContract('not bytes')), /non-empty Uint8Array/);
+});
+
+test('sendActions sends a launch in one transaction under the same rules as call', async () => {
+  const net = fakeNet({});
+  C.configure({ rpcUrls: URLS, fetch: net.fetch, confirmMs: 60_000 });
+  const code = new Uint8Array(4096).map((_, i) => i & 0xff);
+  const actions = [C.createAccount(), C.transfer(5n * C.YOCTO), C.deployContract(code), C.functionCall('new', {}, 200n * C.TGAS, 0n)];
+  const r = await withoutWaits(async () => C.sendActions(await twice(), 't1.twice.testnet', actions, { confirmMs: 30_000 }));
+  assert.equal(r.outcome, 'success');
+  assert.deepEqual(net.nonces, [42n]);
+  assert.equal(r.signedHashes.length, 1);
+  const sent = C.base64Decode(net.sendBodies[0].b64);
+  assert.ok(hex(sent).includes(`0100100000${hex(code)}`), 'the code is in the signed bytes after tag 1 and its u32 length');
+});
+
 test('the public key is derived from a private key in either near-cli form', async () => {
   const { wallet } = await fixedWallet();
   assert.equal(await C.publicKeyFromSecret(wallet.secretKey), wallet.publicKey);

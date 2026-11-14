@@ -607,7 +607,7 @@ const WC_KEY = 'loud.live.connected.v1';
 
 function trLoadStore() {
   try {
-    tr.store = TL.parseWallets(window.localStorage.getItem(TL.WALLET_KEY));
+    tr.store = TL.loadWallets(window.localStorage);
   } catch {
     tr.storageOk = false;
   }
@@ -615,7 +615,7 @@ function trLoadStore() {
 
 function trSaveStore() {
   try {
-    window.localStorage.setItem(TL.WALLET_KEY, TL.serializeWallets(tr.store));
+    TL.saveWallets(tr.store, window.localStorage);
   } catch {
     tr.storageOk = false;
   }

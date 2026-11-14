@@ -86,6 +86,37 @@ test('web/chain.js encodes and signs the sub-account transaction exactly as near
   }
 });
 
+// A keyless token launch: CreateAccount, Transfer, DeployContract and the init call in one
+// transaction, signed by the creator and received by the new token account.
+test('web/chain.js encodes and signs the keyless launch transaction exactly as near-api-js does', async () => {
+  const creator = await C.generateKeyPair();
+  const kp = KeyPair.fromString(creator.secretKey);
+  const blockHash = b58encode(createHash('sha256').update('launch block').digest());
+  const signerId = 'loud-launch-compat.testnet';
+  const receiverId = `t1.${signerId}`;
+  const codes = [Uint8Array.of(0, 97, 115, 109, 1, 0, 0, 0), new Uint8Array(70_000).map((_, i) => (i * 31 + 7) & 0xff)];
+  for (const code of codes) {
+    const args = { creator: signerId, preset: 'live', name: 'Loud test' };
+    const gas = 200n * 10n ** 12n;
+    const nonce = 5n;
+    const tx = T.createTransaction(signerId, kp.getPublicKey(), receiverId, nonce,
+      [T.createAccount(), T.transfer(5n * 10n ** 24n), T.deployContract(code), T.functionCall('new', args, gas, 0n)], b58decode(blockHash));
+    const theirs = tx.encode();
+    const ours = C.encodeTransaction({
+      signerId, publicKey: creator.publicKey, nonce, receiverId, blockHash,
+      actions: [C.createAccount(), C.transfer(5n * 10n ** 24n), C.deployContract(code), C.functionCall('new', args, gas, 0n)],
+    });
+    assert.equal(hex(ours), hex(theirs), `transaction bytes, code of ${code.length} bytes`);
+    const digest = new Uint8Array(createHash('sha256').update(theirs).digest());
+    const theirSigned = new T.SignedTransaction({
+      transaction: tx,
+      signature: new T.Signature({ keyType: tx.publicKey.keyType, data: kp.sign(digest).signature }),
+    }).encode();
+    const signed = await C.signTransaction(creator.secretKey, ours);
+    assert.equal(hex(signed.signedBytes), hex(theirSigned));
+  }
+});
+
 test('a key pair made by near-api-js signs through web/chain.js', async () => {
   const kp = KeyPair.fromRandom('ed25519');
   const secretKey = kp.toString();

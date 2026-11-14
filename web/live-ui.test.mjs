@@ -415,3 +415,14 @@ test('page: the live section is wired to ids the script uses, and says what it i
   // Chain data never goes through innerHTML.
   assert.ok(!/innerHTML/.test(app));
 });
+
+test('wallet storage helpers keep the key and format', () => {
+  const mem = new Map();
+  const storage = { getItem: (k) => (mem.has(k) ? mem.get(k) : null), setItem: (k, v) => mem.set(k, v) };
+  assert.deepEqual(TL.loadWallets(storage), { wallets: [], active: 0 });
+  const w = { accountId: 'a.testnet', publicKey: 'ed25519:11111111111111111111111111111111', secretKey: 'ed25519:x' };
+  TL.saveWallets({ wallets: [w], active: 0 }, storage);
+  assert.deepEqual([...mem.keys()], ['loud.live.wallets.v1']);
+  assert.equal(mem.get('loud.live.wallets.v1'), TL.serializeWallets({ wallets: [w], active: 0 }));
+  assert.deepEqual(TL.loadWallets(storage), TL.parseWallets(mem.get('loud.live.wallets.v1')));
+});

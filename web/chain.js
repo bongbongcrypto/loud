@@ -119,16 +119,21 @@ export function publicKeyBytes(publicKey) {
 }
 
 // Actions. The page uses FunctionCall; CreateAccount, Transfer and AddKey (full access)
-// make a second wallet as a sub-account of the first, in one transaction.
-//   args: object (sent as JSON) or Uint8Array; gas and deposit: BigInt or decimal string.
+// make a second wallet as a sub-account of the first, in one transaction. CreateAccount,
+// Transfer, DeployContract and FunctionCall (new) without AddKey launch a token account
+// that nobody holds a key to.
+//   args: object (sent as JSON) or Uint8Array; gas and deposit: BigInt or decimal string;
+//   code: Uint8Array (the wasm file).
 export const functionCall = (method, args = {}, gas, deposit = 0n) => ({ type: 'FunctionCall', method, args, gas, deposit });
 export const createAccount = () => ({ type: 'CreateAccount' });
 export const transfer = (deposit) => ({ type: 'Transfer', deposit });
 export const addFullAccessKey = (publicKey) => ({ type: 'AddKey', publicKey });
+export const deployContract = (code) => ({ type: 'DeployContract', code });
 
-// borsh(Action). Enum tags as in nearcore: 0 CreateAccount, 2 FunctionCall, 3 Transfer,
-// 5 AddKey. AddKey carries the PublicKey and an AccessKey { nonce: u64 = 0, permission },
-// and the permission enum is 1 = FullAccess.
+// borsh(Action). Enum tags as in nearcore: 0 CreateAccount, 1 DeployContract, 2 FunctionCall,
+// 3 Transfer, 5 AddKey. DeployContract carries the code as a byte vector (u32 length).
+// AddKey carries the PublicKey and an AccessKey { nonce: u64 = 0, permission }, and the
+// permission enum is 1 = FullAccess.
 export function encodeAction(action) {
   if (action.type === 'FunctionCall') {
     const argBytes = action.args instanceof Uint8Array ? action.args : enc.encode(JSON.stringify(action.args ?? {}));
@@ -141,6 +146,10 @@ export function encodeAction(action) {
     ]);
   }
   if (action.type === 'CreateAccount') return Uint8Array.of(0);
+  if (action.type === 'DeployContract') {
+    if (!(action.code instanceof Uint8Array) || action.code.length === 0) throw new Error('DeployContract needs the code as a non-empty Uint8Array');
+    return concat([Uint8Array.of(1), uintLE(action.code.length, 4), action.code]);
+  }
   if (action.type === 'Transfer') return concat([Uint8Array.of(3), uintLE(action.deposit, 16)]);
   if (action.type === 'AddKey') {
     return concat([Uint8Array.of(5), Uint8Array.of(0), publicKeyBytes(action.publicKey), uintLE(0, 8), Uint8Array.of(1)]);
@@ -528,9 +537,9 @@ async function lookupByHash(hash, senderId, deadline) {
 // -> { kind: 'final', result }
 //    { kind: 'refused', error }: a node refused it before anything could have been accepted
 //    { kind: 'unknown', error }: it may have been accepted; no final outcome in time
-async function submit(signedBase64, hash, senderId) {
+async function submit(signedBase64, hash, senderId, confirmMs = config.confirmMs) {
   const urls = config.rpcUrls;
-  const deadline = Date.now() + config.confirmMs;
+  const deadline = Date.now() + confirmMs;
   let maybeSent = false; // a request carrying these bytes may have reached a node
   let last = null;
 
@@ -604,9 +613,11 @@ export async function txStatus(hash, senderId, { waitMs = config.confirmMs } = {
   }
 }
 
-// Sign and send one transaction with the given actions and wait until it is final.
-// The result has the shape `call` documents.
-export async function sendActions(wallet, receiverId, actions) {
+// Sign and send one transaction with the given actions (made with the helpers above) and
+// wait until it is final. Same safety rules and result shape as `call`, which uses it.
+// opts.confirmMs: how long to look a sent transaction up before "unknown" (default
+// config.confirmMs).
+export async function sendActions(wallet, receiverId, actions, { confirmMs = config.confirmMs } = {}) {
   const signedHashes = []; // every transaction signed for this call, in order
   const id = `${wallet.accountId} ${wallet.publicKey}`;
   for (let attempt = 0; attempt < 3; attempt++) {
@@ -631,7 +642,7 @@ export async function sendActions(wallet, receiverId, actions) {
     signedHashes.push(signed.hash);
     let sent;
     try {
-      sent = await submit(signed.signedBase64, signed.hash, wallet.accountId);
+      sent = await submit(signed.signedBase64, signed.hash, wallet.accountId, confirmMs);
     } catch (e) {
       sent = { kind: 'unknown', error: e };
     }
@@ -643,7 +654,7 @@ export async function sendActions(wallet, receiverId, actions) {
         outcome: 'unknown',
         hash: signed.hash,
         refusedHash: null,
-        errorMessage: `The transaction was sent, but no node returned its final outcome within ${Math.round(config.confirmMs / 1000)} s${why}`,
+        errorMessage: `The transaction was sent, but no node returned its final outcome within ${Math.round(confirmMs / 1000)} s${why}`,
         explorerUrl: txUrl(signed.hash),
         signedHashes,
       };

@@ -51,6 +51,16 @@ export function serializeWallets(store) {
   return JSON.stringify({ wallets: store.wallets.map(cleanWallet).filter(Boolean).slice(0, 2), active: store.active });
 }
 
+// The test wallets kept in this browser, under WALLET_KEY in the format above (at most two,
+// with the active index). Shared by every page of the site. A blocked storage throws.
+export function loadWallets(storage = globalThis.localStorage) {
+  return parseWallets(storage.getItem(WALLET_KEY));
+}
+
+export function saveWallets(store, storage = globalThis.localStorage) {
+  storage.setItem(WALLET_KEY, serializeWallets(store));
+}
+
 export const walletLabel = (index) => (index === 0 ? 'Wallet A' : 'Wallet B');
 
 // live.json
