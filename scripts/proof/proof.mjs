@@ -19,7 +19,7 @@ import {
   receiptSettlement, base58Encode, faucetTx, paramMismatches,
   txRecord, needsLookup, leaveCounts, leaveCountsText, unresolvedSummary,
   STORAGE_MIN_YOCTO, buyEvent, evaluateBuy, tokenNear,
-  catchEvent, catchDeposit, evaluateCatch,
+  catchEvent, catchDeposit, evaluateCatch, liveDocument,
 } from './lib.mjs';
 
 const { KeyPair, transactions: T, utils } = nearApi;
@@ -33,7 +33,11 @@ const WEB_DIR = path.join(REPO, 'web');
 const env = process.env;
 const list = (v) => v.split(',').map((s) => s.trim()).filter(Boolean);
 
-const PRESET = env.PRESET || 'demo';
+// MODE=proof (default): the full run of SPEC section 8 with the demo preset.
+// MODE=deploy: only the faucet account and the keyless token deploy, for the token the
+// page's live section uses; writes web/live.json and nothing else.
+const MODE = env.MODE || 'proof';
+const PRESET = env.PRESET || (MODE === 'deploy' ? 'live' : 'demo');
 const WASM_PATH = env.LOUD_WASM || path.join(REPO, 'build', 'loud.wasm');
 // FastNEAR first: docs.near.org/api/rpc/providers lists the near.org endpoints as
 // "severely rate limited", and this run sends several hundred transactions. The near.org
@@ -469,6 +473,7 @@ async function readUntil(read, ok, tries = 10) {
 async function main() {
   log(`preset ${PRESET}; rpc ${RPC_URLS.map((u) => new URL(u).host).join(', ')}`);
   presetParams(PRESET, 'check.testnet'); // reject an unsupported preset before any account is created
+  if (PRESET !== 'demo') throw new Error(`the proof run supports only the demo preset, not "${PRESET}" (its late-buyer check needs the launch window to close)`);
   const wasm = new Uint8Array(await readFile(WASM_PATH));
   if (wasm.length < 1000 || wasm.length > MAX_TX_BYTES - 2000) throw new Error(`unexpected wasm size: ${wasm.length} bytes`);
   deployment.wasm = { bytes: wasm.length, sha256: createHash('sha256').update(wasm).digest('hex') };
@@ -1164,6 +1169,66 @@ async function main() {
     log(`at the end: owed_total ${nearAtEnd.owed_total}; the token account holds ${nearText(nearAtEnd.balance)}, pool_near is ${nearText(nearAtEnd.pool_near)}, `
       + `spare ${nearText(nearAtEnd.spare)}; the protocol locks ${nearText(nearAtEnd.storage_stake)} for ${nearAtEnd.storage_bytes} bytes of state; free ${nearText(nearAtEnd.free)}`);
   }
+}
+
+// MODE=deploy: a faucet account creates, funds, deploys and initialises the token account
+// in one transaction that adds no key, with itself as the creator (0% allocation in the
+// live preset). The checks are those of step 2: no access key, the code hash of the built
+// wasm, get_params equal to the preset. Writes web/live.json. Returns the exit code.
+async function deployOnly() {
+  log(`deploy only; preset ${PRESET}; rpc ${RPC_URLS.map((u) => new URL(u).host).join(', ')}`);
+  const doc = { token: null, root: null, params: null, onchain: null, tx: null, keys: null, codeHash: null,
+    expectedCodeHash: null, mismatches: null, deployTsNs: null, wasm: null,
+    run: { repository: env.GITHUB_REPOSITORY || null, run_id: env.GITHUB_RUN_ID || null, commit: env.GITHUB_SHA || null } };
+  let error = null;
+  try {
+    const wasm = new Uint8Array(await readFile(WASM_PATH));
+    if (wasm.length < 1000 || wasm.length > MAX_TX_BYTES - 2000) throw new Error(`unexpected wasm size: ${wasm.length} bytes`);
+    doc.wasm = { bytes: wasm.length, sha256: createHash('sha256').update(wasm).digest('hex') };
+    doc.expectedCodeHash = base58Encode(createHash('sha256').update(wasm).digest());
+    const root = newSigner(`loud-live-${Date.now().toString(36)}${randomBytes(3).toString('hex')}.testnet`);
+    doc.root = root.id;
+    doc.token = `t.${root.id}`;
+    doc.params = presetParams(PRESET, root.id);
+    const faucet = await faucetCreate(root);
+    const balance = await balanceOf(root.id);
+    const tokenDeposit = BigInt(wasm.length) * 10n ** 19n + nearToYocto('0.5'); // code + state margin
+    log(`${root.id} holds ${yoctoToNear(balance)} NEAR (faucet ${new URL(faucet.url).host}); the token account gets ${yoctoToNear(tokenDeposit)}`);
+    if (balance < tokenDeposit + nearToYocto('0.3')) throw new Error('the faucet grant is too small for the deploy');
+    const deploy = await sendTx(root, doc.token, [
+      T.createAccount(),
+      T.transfer(tokenDeposit),
+      T.deployContract(wasm),
+      T.functionCall('new', doc.params, 100n * TGAS, 0n),
+    ]);
+    doc.tx = deploy.hash;
+    mustSucceed(deploy, 'token deploy');
+    doc.deployTsNs = await blockTsOf(deploy);
+    const keys = await readUntil(() => rpc.accessKeyList(doc.token).catch(() => null), (k) => Array.isArray(k));
+    if (!Array.isArray(keys)) throw new Error('could not read the access key list of the token account');
+    doc.keys = keys.map((k) => k.public_key);
+    const account = await readUntil(() => rpc.viewAccount(doc.token), (a) => a.code_hash === doc.expectedCodeHash, 6);
+    doc.codeHash = account.code_hash;
+    doc.onchain = await readUntil(() => rpc.viewFunction(doc.token, 'get_params').catch(() => null), (v) => v !== null, 8);
+    if (!doc.onchain) throw new Error('could not read get_params');
+    doc.mismatches = paramMismatches(doc.params, doc.onchain);
+  } catch (e) {
+    error = String(e?.message ?? e).slice(0, 600);
+    console.error(`deploy stopped: ${error}`);
+  }
+  const live = liveDocument({ ...doc, now: new Date().toISOString() });
+  if (error) live.error = error;
+  await mkdir(WEB_DIR, { recursive: true });
+  await writeFile(path.join(WEB_DIR, 'live.json'), JSON.stringify(live, jsonReplacer, 2) + '\n');
+  log(`wrote web/live.json: ${live.status}; token ${live.token_account}; ${live.access_keys?.length ?? '?'} access keys; `
+    + `code hash ${live.code_hash_match ? 'matches' : 'DIFFERS'}; params ${live.params_match ? 'match' : 'DIFFER'}; launch window until ${live.loud_until}`);
+  return live.status === 'ok' ? 0 : 1;
+}
+
+if (MODE === 'deploy') process.exit(await deployOnly());
+if (MODE !== 'proof') {
+  console.error(`unknown MODE "${MODE}"`);
+  process.exit(1);
 }
 
 let exitCode = 1;

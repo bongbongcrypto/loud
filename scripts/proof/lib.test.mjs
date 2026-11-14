@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  YOCTO, ONE_TOKEN, nearToYocto, yoctoToNear, presetParams, splitEvenly, budget,
+  YOCTO, ONE_TOKEN, nearToYocto, yoctoToNear, presetParams, splitEvenly, budget, liveDocument,
   failureText, errorCode, parseEvents, returnValueBigInt, leaveFilled, capBound, evaluateSplit,
   txLink, accountLink, jsonReplacer,
   receiptSettlement, base58Encode, isTxHash, faucetTx, paramMismatches,
@@ -787,4 +787,46 @@ test('evaluateCatch: a missing event or quote is a note, and the other one suppl
   const failed = goodCatch();
   failed.outcome = 'failure';
   assert.equal(evaluateCatch(failed).record.settled, null);
+});
+
+test('live preset: 7 day launch window, no creator allocation, inside the contract bounds', () => {
+  const p = presetParams('live', 'loud-live-x.testnet');
+  assert.equal(p.creator, 'loud-live-x.testnet');
+  assert.equal(p.creator_alloc_bps, 0);
+  assert.equal(p.loud_window_ns, (7n * 24n * 3600n * 10n ** 9n).toString());
+  assert.equal(p.notice_ns, (60n * 10n ** 9n).toString());
+  assert.equal(p.exit_window_ns, (1800n * 10n ** 9n).toString());
+  assert.equal(p.cap_bps, 50);
+  assert.equal(p.cap_window_ns, (600n * 10n ** 9n).toString());
+  assert.equal(p.virtual_near, (100n * YOCTO).toString());
+  // The same keys as the demo preset, so that `new` takes both.
+  assert.deepEqual(Object.keys(p), Object.keys(presetParams('demo', 'x.testnet')));
+  // A 2 NEAR buy on an empty pool gives more than one cap (5,000,000 LOUD): a leave is partial.
+  const out = (1_000_000_000n * ONE_TOKEN) * (2n * YOCTO) / (100n * YOCTO + 2n * YOCTO);
+  assert.ok(out > 5_000_000n * ONE_TOKEN);
+});
+
+test('liveDocument: ok only with a transaction, no key, the built code and the preset', () => {
+  const base = {
+    token: 't.loud-live-x.testnet', root: 'loud-live-x.testnet', params: presetParams('live', 'loud-live-x.testnet'),
+    onchain: { loud_until: '1794600000000000000' }, tx: 'A'.repeat(44), keys: [], codeHash: 'HASH', expectedCodeHash: 'HASH',
+    mismatches: [], deployTsNs: 1793995200000000000n, wasm: { bytes: 1, sha256: 'x' }, run: { commit: 'abc' }, now: '2026-11-14T08:00:00.000Z',
+  };
+  const ok = liveDocument(base);
+  assert.equal(ok.status, 'ok');
+  assert.equal(ok.preset, 'live');
+  assert.equal(ok.zero_keys, true);
+  assert.equal(ok.creator_account, 'loud-live-x.testnet');
+  assert.equal(ok.deployed_at, new Date(1793995200000).toISOString());
+  assert.equal(ok.loud_until, new Date(1794600000000).toISOString());
+  assert.equal(ok.explorer.tx, `https://testnet.nearblocks.io/txns/${'A'.repeat(44)}`);
+  assert.doesNotThrow(() => JSON.stringify(ok));
+  assert.equal(liveDocument({ ...base, keys: ['ed25519:x'] }).status, 'failed');
+  assert.equal(liveDocument({ ...base, codeHash: 'OTHER' }).status, 'failed');
+  assert.equal(liveDocument({ ...base, mismatches: ['cap_bps'] }).status, 'failed');
+  assert.equal(liveDocument({ ...base, tx: null }).status, 'failed');
+  const early = liveDocument({ ...base, onchain: null, keys: null, mismatches: null, deployTsNs: null });
+  assert.equal(early.status, 'failed');
+  assert.equal(early.loud_until, null);
+  assert.equal(early.deployed_at, null);
 });

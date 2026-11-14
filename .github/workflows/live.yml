@@ -1,0 +1,176 @@
+name: live
+
+# Deploys the token the page's live section uses to NEAR testnet and commits
+# web/live.json. Manual trigger only. No secrets: every key is generated inside the job
+# and kept in memory.
+#
+# The live preset keeps the launch window open for 7 days, the longest the contract
+# takes, so that every buy made from the page in that time is loud. The full proof run
+# (proof.yml) cannot use it: its late-buyer check needs the window to close.
+#
+# The deploy job installs and runs npm code with a read-only token. Only the record job
+# can write to the repository, and it runs no npm code. The e2e job then walks the
+# visitor's path on chain with web/chain.js, the code the page itself runs.
+
+# A manual run needs this file on the default branch. On a work branch the same run is
+# started by a push that changes .github/live-trigger: its first word is `deploy` (deploy
+# and walk the path) or `e2e` (only walk the path against the committed web/live.json).
+
+on:
+  push:
+    branches-ignore: [main]
+    paths: [".github/live-trigger"]
+  workflow_dispatch:
+    inputs:
+      deploy:
+        description: "Deploy a new live token (off: only run the end-to-end check against web/live.json)"
+        type: boolean
+        default: true
+      e2e:
+        description: "Walk the visitor's path on chain after the deploy"
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: live
+  cancel-in-progress: false
+
+jobs:
+  plan:
+    name: What to run
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    outputs:
+      deploy: ${{ steps.plan.outputs.deploy }}
+      e2e: ${{ steps.plan.outputs.e2e }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - id: plan
+        env:
+          EVENT: ${{ github.event_name }}
+          IN_DEPLOY: ${{ inputs.deploy }}
+          IN_E2E: ${{ inputs.e2e }}
+        run: |
+          if [ "$EVENT" = "workflow_dispatch" ]; then
+            deploy="$IN_DEPLOY"; e2e="$IN_E2E"
+          else
+            word="$(head -c 32 .github/live-trigger | tr -cd 'a-z0-9' )"
+            case "$word" in
+              deploy*) deploy=true; e2e=true ;;
+              e2e*) deploy=false; e2e=true ;;
+              *) deploy=false; e2e=false ;;
+            esac
+          fi
+          echo "deploy=$deploy" >> "$GITHUB_OUTPUT"
+          echo "e2e=$e2e" >> "$GITHUB_OUTPUT"
+          echo "deploy=$deploy e2e=$e2e"
+
+  build:
+    # Same tests and the same wasm build as CI; uploads the artifact loud-wasm.
+    needs: plan
+    if: ${{ needs.plan.outputs.deploy == 'true' }}
+    uses: ./.github/workflows/ci.yml
+    permissions:
+      contents: read
+
+  deploy:
+    name: Deploy the live token
+    needs: [plan, build]
+    if: ${{ needs.plan.outputs.deploy == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: loud-wasm
+          path: build
+
+      - name: Install the pinned client library
+        working-directory: scripts/proof
+        run: npm install --ignore-scripts --no-audit --no-fund
+
+      # The page signs with its own code; this compares it with the library, byte for byte.
+      - name: Check web/chain.js against near-api-js
+        run: node --test scripts/proof/chain-compat.check.mjs
+
+      - name: Deploy
+        env:
+          MODE: deploy
+          PRESET: live
+          LOUD_WASM: ${{ github.workspace }}/build/loud.wasm
+        run: node scripts/proof/proof.mjs
+
+      - name: Upload the result file
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: live-result
+          path: web/live.json
+          if-no-files-found: error
+          retention-days: 7
+
+  record:
+    name: Commit web/live.json
+    needs: deploy
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: live-result
+          path: web
+
+      - name: Commit
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add web/live.json
+          if git diff --cached --quiet; then
+            echo "web/live.json unchanged"
+            exit 0
+          fi
+          git commit -m "chore(live): record live token deploy ${GITHUB_RUN_ID}"
+          git pull --rebase origin "${GITHUB_REF_NAME}"
+          git push origin "HEAD:${GITHUB_REF_NAME}"
+
+  e2e:
+    name: Visitor path on chain
+    needs: [plan, record]
+    # Runs after a recorded deploy, or alone against the committed web/live.json.
+    if: ${{ always() && needs.plan.outputs.e2e == 'true' && (needs.record.result == 'success' || (needs.record.result == 'skipped' && needs.plan.outputs.deploy != 'true')) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref_name }}
+          persist-credentials: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      # No install: web/chain.js and this script have no dependency.
+      - name: Walk the visitor's path
+        run: node scripts/live-e2e.mjs

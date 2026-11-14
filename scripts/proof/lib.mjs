@@ -34,22 +34,79 @@ export function unitsToTokens(units) {
 
 // SPEC section 3, preset "demo". U128/U64 values are decimal strings (SPEC section 2).
 export function presetParams(preset, creator) {
-  if (preset !== 'demo') {
-    throw new Error(`preset "${preset}" is not supported by the proof run (only "demo" fits the runtime limit)`);
+  const s = (seconds) => (BigInt(seconds) * 10n ** 9n).toString();
+  const base = { total_supply: (1_000_000_000n * ONE_TOKEN).toString(), creator, name: 'LOUD', symbol: 'LOUD', icon: null };
+  // The proof run: short windows so that the whole run fits one CI job.
+  if (preset === 'demo') {
+    return {
+      total_supply: base.total_supply,
+      creator,
+      creator_alloc_bps: 500,
+      virtual_near: (5n * YOCTO).toString(),
+      loud_window_ns: s(120),
+      notice_ns: s(60),
+      exit_window_ns: s(600),
+      cap_bps: 50,
+      cap_window_ns: s(600),
+      name: base.name,
+      symbol: base.symbol,
+      icon: base.icon,
+    };
   }
+  // The token visitors use from the page: the launch window is the longest the contract
+  // takes (7 days), so that every buy in that time is loud; no creator allocation; a
+  // 1 minute notice so that a visitor can go through shout, wait and leave in one sitting.
+  // Deploy only: the proof run cannot use it, because its late-buyer check needs the
+  // launch window to close.
+  if (preset === 'live') {
+    return {
+      total_supply: base.total_supply,
+      creator,
+      creator_alloc_bps: 0,
+      virtual_near: (100n * YOCTO).toString(),
+      loud_window_ns: s(7 * 24 * 3600),
+      notice_ns: s(60),
+      exit_window_ns: s(1800),
+      cap_bps: 50,
+      cap_window_ns: s(600),
+      name: base.name,
+      symbol: base.symbol,
+      icon: base.icon,
+    };
+  }
+  throw new Error(`preset "${preset}" is not supported ("demo" for the proof run, "live" for the deploy-only run)`);
+}
+
+// The document web/live.json: the token the page's live section talks to.
+// `deployTsNs` and `onchain.loud_until` are block times in nanoseconds.
+export function liveDocument({ token, root, params, onchain, tx, keys, codeHash, expectedCodeHash, mismatches, deployTsNs, wasm, run, now }) {
+  const iso = (ns) => (ns === null || ns === undefined ? null : new Date(Number(BigInt(ns) / 1_000_000n)).toISOString());
+  const zeroKeys = Array.isArray(keys) && keys.length === 0;
+  const codeHashMatch = typeof codeHash === 'string' && codeHash === expectedCodeHash;
+  const paramsMatch = Array.isArray(mismatches) && mismatches.length === 0;
   return {
-    total_supply: (1_000_000_000n * ONE_TOKEN).toString(),
-    creator,
-    creator_alloc_bps: 500,
-    virtual_near: (5n * YOCTO).toString(),
-    loud_window_ns: (120n * 10n ** 9n).toString(),
-    notice_ns: (60n * 10n ** 9n).toString(),
-    exit_window_ns: (600n * 10n ** 9n).toString(),
-    cap_bps: 50,
-    cap_window_ns: (600n * 10n ** 9n).toString(),
-    name: 'LOUD',
-    symbol: 'LOUD',
-    icon: null,
+    status: tx && zeroKeys && codeHashMatch && paramsMatch ? 'ok' : 'failed',
+    network: 'testnet',
+    preset: 'live',
+    token_account: token,
+    root_account: root,
+    creator_account: root,
+    params,
+    onchain_params: onchain ?? null,
+    tx: tx ?? null,
+    explorer: { token: accountLink(token), root: accountLink(root), tx: tx ? txLink(tx) : null },
+    zero_keys: zeroKeys,
+    access_keys: Array.isArray(keys) ? keys : null,
+    wasm: wasm ?? null,
+    code_hash: codeHash ?? null,
+    expected_code_hash: expectedCodeHash ?? null,
+    code_hash_match: codeHashMatch,
+    params_match: paramsMatch,
+    param_mismatches: mismatches ?? null,
+    deployed_at: iso(deployTsNs),
+    loud_until: iso(onchain?.loud_until),
+    run: run ?? null,
+    generated_at: now,
   };
 }
 
