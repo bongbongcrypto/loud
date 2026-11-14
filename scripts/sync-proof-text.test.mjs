@@ -272,7 +272,7 @@ test('README: every linked transaction and the run totals are in the recorded ru
   const linked = [...readme.matchAll(/nearblocks\.io\/txns\/([1-9A-HJ-NP-Za-km-z]+)/g)].map((m) => m[1]);
   assert.ok(linked.length >= 7);
   for (const hash of linked) assert.ok(known.has(hash), `README links a transaction the run did not record: ${hash}`);
-  const whole = (units) => Math.round(Number(BigInt(units) / 10n ** 15n) / 1000).toLocaleString('en-US');
+  const whole = (units) => Number(BigInt(units) / 10n ** 18n).toLocaleString('en-US');
   const sp = receipts.split;
   assert.ok(readme.includes(`${sp.attempts} calls`));
   assert.ok(readme.includes(`${sp.fills} sales, ${sp.cap_hits} \`E_CAP\` rejections`));

@@ -468,7 +468,7 @@ const HINTS = {
   E_EXPIRED: 'Press Hush to take the tokens back. They are still loud. Then shout again.',
   E_SELF: 'You cannot catch your own exit. Switch wallet and catch it from there.',
   E_DEPOSIT: 'A catch costs the higher of the pool\'s price now and its price when the exit was shouted.',
-  E_NOTICE_BINDING: 'A shout cannot be cancelled. Leave when the notice is over, or skip past the exit window and hush then.',
+  E_NOTICE_BINDING: 'The owner cannot cancel a shout. Leave when the notice is over, or skip past the exit window and hush then.',
   E_NO_LOUD: 'Shout takes loud tokens only. Quiet tokens can simply be sold.',
   E_DUST: 'A shout must be at least one millionth of supply, which is 1,000 LOUD here. A smaller shout must be your whole loud balance, with no other exit of yours open.',
   E_TOO_MANY: 'Finish an exit, or let one expire and hush it.',

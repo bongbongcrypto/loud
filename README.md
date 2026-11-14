@@ -22,10 +22,10 @@ A script put the token on NEAR testnet and attacked it with 20 split wallets. Ea
 | The wallet shouts, then calls `leave` 57 s before its notice ends | Rejected: `E_NOTICE` | [4UHzj6…](https://testnet.nearblocks.io/txns/4UHzj6QkWLU1vznfX2LTAGUC46Gn54t94XQbzrftmn9K) |
 | The same wallet tries to take the shout back with `hush` | Rejected: `E_NOTICE_BINDING` | [Fe6zF2…](https://testnet.nearblocks.io/txns/Fe6zF2igoF1HVuPu9dbRBAzxtsSH6ufHid3cnU395T4a) |
 | Another wallet tries to catch its own exit | Rejected: `E_SELF` | [5xHRU1…](https://testnet.nearblocks.io/txns/5xHRU16n6ZRqz8CuGM5BYcsxNxVshk9GwHZsP6pM7j7t) |
-| A late buyer catches a quarter of that exit while the notice is still up | Paid 0.0212 NEAR and got 2,604,167 LOUD, still loud. The pool sold nothing, kept the 1% fee, and the cap was not used | [DVdwSM…](https://testnet.nearblocks.io/txns/DVdwSMPa55767UfJeC2QkewndXFVSWAN5JHCYjHLvBgX) |
+| A late buyer catches a quarter of that exit while the notice is still up | Paid 0.0211 NEAR and got 2,604,166 LOUD, still loud. The pool sold nothing, kept the 1% fee, and the cap was not used | [DVdwSM…](https://testnet.nearblocks.io/txns/DVdwSMPa55767UfJeC2QkewndXFVSWAN5JHCYjHLvBgX) |
 | After the notice, a wallet calls `leave` while the cap has room | Sold 1,637,413 LOUD | [83o4MK…](https://testnet.nearblocks.io/txns/83o4MKSNxZkr53crq6htWt36GrfkNWnsNKkDXDERpFu4) |
 | Another wallet calls `leave` when the cap is empty | Rejected: `E_CAP` | [9YRMyL…](https://testnet.nearblocks.io/txns/9YRMyLWMQd9LjQVc4nT7ayKKgL9V2t6MA6876h4yZyPu) |
-| All 20 wallets keep calling `leave` for 605 s, one cap window and the calls still in flight, 620 calls | 37 sales, 563 `E_CAP` rejections, 20 `E_EXPIRED` once the exit window had closed. 6,498,659 LOUD got out; the cap allowed at most 6,649,928 in that time | [receipts.json](web/receipts.json) |
+| All 20 wallets keep calling `leave` for 605 s, one cap window and the calls still in flight, 620 calls | 37 sales, 563 `E_CAP` rejections, 20 `E_EXPIRED` once the exit window had closed. 6,498,658 LOUD got out; the cap allowed at most 6,649,928 in that time | [receipts.json](web/receipts.json) |
 
 The run shows 20 wallets staying inside one cap on chain. That 1 wallet and 100 wallets sell the same amount on the standard preset is shown by the contract and engine tests, not by this run. Ten checks, every transaction: [Testnet proof](https://bongbongcrypto.github.io/loud/#proof).
 

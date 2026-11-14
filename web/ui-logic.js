@@ -658,7 +658,7 @@ export class Sandbox {
       (x) => this.token.shout(this.account, x, this.now),
       (id, x) => {
         const p = this.token.getParams();
-        return `Exit ${id} is on the board: ${fmtTokens(x)} LOUD locked. Leave opens at ${fmtSinceLaunch(this.now + p.notice_ns)} and closes at ${fmtSinceLaunch(this.now + p.notice_ns + p.exit_window_ns)}. The shout cannot be taken back before then.`;
+        return `Exit ${id} is on the board: ${fmtTokens(x)} LOUD locked. Leave opens at ${fmtSinceLaunch(this.now + p.notice_ns)} and closes at ${fmtSinceLaunch(this.now + p.notice_ns + p.exit_window_ns)}. You cannot take the shout back before then.`;
       });
   }
 
