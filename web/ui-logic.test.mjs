@@ -70,7 +70,7 @@ test('index.html states the SPEC claim and the standard preset values', () => {
   // A shout stays locked for the notice plus the exit window.
   const lockMin = Number((PRESETS.standard.notice_ns + PRESETS.standard.exit_window_ns) / MIN);
   assert.ok(html.includes(`the exit expires ${lockMin} min after the shout, and they stay locked until someone calls <code>hush</code>.`));
-  assert.ok(html.includes(`There is no penalty beyond gas and the lock, ${lockMin} min in the standard preset.`));
+  assert.ok(html.includes(`The cost is gas and the lock, ${lockMin} min in the standard preset, or the 1% fee to take them back sooner through a second account.`));
   // The hero is the kicker, the headline and one line on why, nothing else.
   const lede = html.slice(html.indexOf('<section class="lede"'), html.indexOf('</section>', html.indexOf('<section class="lede"')));
   assert.equal((lede.match(/<p[ >]/g) || []).length, 2);
@@ -1131,7 +1131,7 @@ test('sandbox: the second wallet catches an exit, the tokens stay loud and the p
   r = sb.catch('1', 'half');
   assert.ok(r.ok, r.message);
   assert.equal(r.call, 'catch half of exit 1');
-  assert.match(r.message, /^Caught 43,181,818 LOUD from exit 1\. you-2\.testnet paid [\d.]+ NEAR, the pool's own price for that amount: [\d.]+ NEAR went to you\.testnet and [\d.]+ NEAR, the 1% fee, stays in the pool\. The tokens are loud in you-2\.testnet's balance\. The pool sold nothing and the cap was not used\. 43,181,818 LOUD stay in the exit\.$/);
+  assert.match(r.message, /^Caught 43,181,818 LOUD from exit 1\. you-2\.testnet paid [\d.]+ NEAR, the higher of the pool's price now and its price when the exit was shouted: [\d.]+ NEAR went to you\.testnet and [\d.]+ NEAR, the 1% fee, stays in the pool\. The tokens are loud in you-2\.testnet's balance\. The pool sold nothing and the cap was not used\. 43,181,818 LOUD stay in the exit\.$/);
   v = sb.view();
   assert.equal(v.loud, lot / 2n);
   assert.equal(v.quiet, 0n);
@@ -1155,7 +1155,7 @@ test('sandbox: the second wallet catches an exit, the tokens stay loud and the p
   assert.equal(v.loud, lot);
   row = v.rows[0];
   assert.equal(row.status, 'CAUGHT');
-  assert.equal(row.detail, 'taken by another holder, still loud');
+  assert.equal(row.detail, 'taken by another account, still loud');
   assert.deepEqual([row.canLeave, row.canHush, row.canCatch], [false, false, false]);
   assert.equal(v.totalLeft, 0n);
   assert.ok(v.price >= pool.price);
@@ -1199,6 +1199,29 @@ test('index.html: the catch rule is on the page', () => {
   assert.ok(html.includes('<b>The room can answer.</b>'));
   assert.ok(html.includes('<dt>A catch is a cash-out the cap does not slow</dt>'));
   assert.ok(html.includes('<tr><th scope="row">Catch fee</th><td>1%</td>'));
-  assert.ok(html.includes('<b>CAUGHT</b> taken by another holder, still loud.'));
+  assert.ok(html.includes('<b>CAUGHT</b> taken by another account, still loud.'));
   assert.equal((html.split('<ol class="path" id="sb-path">')[1].split('</ol>')[0].match(/<li>/g) || []).length, 7);
+});
+
+test('proof: the recorded catch becomes one sentence, and nothing is shown without a passing one', () => {
+  const step = (c) => ({ n: 8, catch: c });
+  const ok = {
+    pass: true, outcome: 'success', before_ready: true, hash: '6m74N6Mp5f8UdBVbCkcnupcjidirh7GbmDLxFmzKwDoq',
+    amount: '2604166666666666666666666', near_in: '21180362658857052310184', fee: '211803626588570523101',
+  };
+  const v = L.catchView(step(ok));
+  assert.equal(v.have, true);
+  assert.equal(v.sentence, 'A late buyer caught 2,604,166 LOUD from an announced exit for 0.0211 NEAR, before its notice ended. '
+    + 'The tokens arrived loud, 0.000211 NEAR of the price stayed in the pool as the 1% fee, the pool sold nothing and the cap was not used.');
+  assert.equal(v.href, `${L.EXPLORER}/txns/${ok.hash}`);
+  assert.equal(L.catchView(step({ ...ok, before_ready: false })).sentence.includes('before its notice ended'), false);
+  for (const bad of [null, undefined, {}, step(null), step({ ...ok, pass: false }), step({ ...ok, outcome: 'failure' }), step({ ...ok, amount: 'x' })]) {
+    assert.deepEqual(L.catchView(bad), { have: false, sentence: '', href: null, linkText: '' });
+  }
+  // receiptsView carries it, and the static page says the same as the recorded run.
+  const r = L.receiptsView(JSON.parse(read('receipts.json')));
+  const html = read('index.html');
+  if (r.caught.have) assert.ok(html.includes(`<p class="fine" id="proof-catch">${r.caught.sentence.replace(/'/g, '&#39;')} <a href="${r.caught.href}"`));
+  else assert.ok(html.includes('<p class="fine" id="proof-catch" hidden></p>'));
+  assert.equal(L.receiptsView({}).caught.have, false);
 });

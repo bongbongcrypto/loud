@@ -467,6 +467,7 @@ const HINTS = {
   E_NOTICE: 'Skip time with the clock buttons, then press Leave again.',
   E_EXPIRED: 'Press Hush to take the tokens back. They are still loud. Then shout again.',
   E_SELF: 'You cannot catch your own exit. Switch wallet and catch it from there.',
+  E_DEPOSIT: 'A catch costs the higher of the pool\'s price now and its price when the exit was shouted.',
   E_NOTICE_BINDING: 'A shout cannot be cancelled. Leave when the notice is over, or skip past the exit window and hush then.',
   E_NO_LOUD: 'Shout takes loud tokens only. Quiet tokens can simply be sold.',
   E_DUST: 'A shout must be at least one millionth of supply, which is 1,000 LOUD here. A smaller shout must be your whole loud balance, with no other exit of yours open.',
@@ -514,7 +515,8 @@ function renderSandbox() {
     if (e.code === 'E_CAP') hint = `${v.nextRoomText || 'Room is back'}. Skip a few minutes and leave again.`;
     if (!e.ok && e.call.startsWith('catch')) {
       hint = e.code === 'E_EXPIRED' ? 'An expired exit can no longer be caught. Hush returns its tokens to the owner.'
-        : e.code === 'E_AMOUNT' ? 'There is nothing left in this exit to catch.' : hint;
+        : e.code === 'E_AMOUNT' ? 'There is nothing left in this exit to catch.'
+          : e.code === 'E_DUST' ? 'A catch cannot leave less than one millionth of supply, 1,000 LOUD here, in the exit. Catch all of it.' : hint;
     }
     if (!e.ok && /units/.test(e.message)) hint += ' The engine counts in units: 1 LOUD is 10^18 units.';
     put(box,
@@ -652,6 +654,10 @@ export function renderProof(dep, rec, loadError = '') {
   const scope = $('#proof-scope');
   scope.hidden = !r.scopeNote;
   setText(scope, r.scopeNote);
+  const caught = $('#proof-catch');
+  caught.hidden = !r.caught.have;
+  if (r.caught.have) put(caught, `${r.caught.sentence} `, r.caught.href ? h('a', { href: r.caught.href, rel: 'noopener', text: r.caught.linkText }) : null);
+  else caught.replaceChildren();
   $('#near-record').hidden = r.tokenNear.length === 0;
   facts($('#near-facts'), r.tokenNear);
 

@@ -449,6 +449,9 @@ export class LoudToken extends Pool {
         shouted_at: t,
         ready_at: readyAt,
         expires_at: min(readyAt + this.exit_window_ns, U64_MAX),
+        // The pool's sell quote for the whole shout at this moment. A catch
+        // never pays the owner less than this, pro rata.
+        shout_quote: this.quoteSell(x),
       };
       this._set(this.loud, account, held - x);
       this.escrowed += x;
@@ -524,13 +527,24 @@ export class LoudToken extends Pool {
     });
   }
 
-  // What a catch of `amount` units of an exit costs now: the pool's own sell
-  // quote for that amount, whether or not the pool could pay it, and the part
-  // of it that stays in the pool. `amount` null or undefined means all of it.
+  // What a catch of `amount` units of an exit costs now: the higher of the
+  // pool's own sell quote for that amount at this moment (whether or not the
+  // pool could pay it) and the same share of the quote stored at the shout,
+  // rounded up. The floor keeps a catcher from pushing the pool price down
+  // first and taking the exit cheaply. Also returns the part of the price that
+  // stays in the pool. `amount` null or undefined means all of it. A catch may
+  // not leave a remainder too small to shout (E_DUST): take the whole exit.
   _catchQuote(ex, amount) {
     const x = amount === null || amount === undefined ? ex.remaining : big(amount, 'amount');
     if (x === 0n || x > ex.remaining) fail('E_AMOUNT', `this exit has ${ex.remaining} units left to catch`);
-    const quote = this.quoteSell(x);
+    const rest = ex.remaining - x;
+    if (rest > 0n && rest < this.dust_units) {
+      fail('E_DUST', `this catch would leave ${rest} units in the exit, below the floor of ${this.dust_units}; ` +
+        `catch all ${ex.remaining} units instead`);
+    }
+    const live = this.quoteSell(x);
+    const floor = (ex.shout_quote * x + ex.amount - 1n) / ex.amount;
+    const quote = live > floor ? live : floor;
     if (quote === 0n) fail('E_AMOUNT', 'this catch is too small to pay anything');
     return { x, quote, fee: (quote * CATCH_FEE_BPS) / 10000n };
   }
@@ -541,7 +555,8 @@ export class LoudToken extends Pool {
   }
 
   // Anyone but the owner takes tokens out of an open exit by paying the owner
-  // the pool's sell quote for them. The tokens stay loud, the pool inventory
+  // for them: the pool's sell quote now, or its quote when the exit was
+  // shouted if that is higher. The tokens stay loud, the pool inventory
   // and the cap are not touched, and 1% of the price stays in the pool.
   // `nearYocto` is the attached deposit; what is above the quote goes back.
   // The payment of the last catch is in last_catch.

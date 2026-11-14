@@ -224,7 +224,7 @@ test('a check with an unknown number is shown with the text of the file', () => 
 test('a missing hook stops the script and changes no file', (t) => {
   const html = readFileSync(path.join(REPO, 'web', 'index.html'), 'utf8');
   const md = readFileSync(path.join(REPO, 'README.md'), 'utf8');
-  for (const id of ['sum-token', 'sum-proof', 'proof-facts', 'proof-scope', 'rec-state', 'steps-key', 'steps-rest', 'steps-table', 'dep-state', 'split-proof-state', 'proof-stamp']) {
+  for (const id of ['sum-token', 'sum-proof', 'proof-facts', 'proof-scope', 'proof-catch', 'rec-state', 'steps-key', 'steps-rest', 'steps-table', 'dep-state', 'split-proof-state', 'proof-stamp']) {
     assert.throws(() => syncHtml(html.replace(`id="${id}"`, 'id="gone"'), deploymentFile(), receiptsFile()), new RegExp(`index\\.html: .*id="${id}"`));
   }
   for (const name of ['token', 'commit', 'scope']) {

@@ -10,7 +10,7 @@
 // string comes from the functions the page uses (web/ui-logic.js). No dependency.
 //
 // Hooks. In index.html, the elements with these ids: sum-token, sum-proof, proof-facts,
-// proof-scope, rec-state, steps-key, steps-rest, steps-table, dep-state, split-proof-state,
+// proof-scope, proof-catch, rec-state, steps-key, steps-rest, steps-table, dep-state, split-proof-state,
 // proof-stamp. In README.md, the text between <!-- proof:NAME --> and <!-- /proof:NAME -->
 // for token, commit and scope. A missing hook stops the script with exit code 1.
 
@@ -108,6 +108,8 @@ export function syncHtml(html, deployment, receipts) {
   out = setElement(out, 'proof-facts', lines(out, locate(out, 'proof-facts').openStart, facts));
 
   out = setElement(out, 'proof-scope', esc(r.scopeNote), `<p class="fine" id="proof-scope"${r.scopeNote ? '' : ' hidden'}>`);
+  out = setElement(out, 'proof-catch', r.caught.have ? `${esc(r.caught.sentence)} ${anchor(r.caught.href, r.caught.linkText)}` : '',
+    `<p class="fine" id="proof-catch"${r.caught.have ? '' : ' hidden'}>`);
 
   // Shown only when it adds something to the large line: a run that did not pass, a
   // transaction with no confirmed outcome, or no run at all.

@@ -243,7 +243,7 @@ function statusDetail(ex, status, now) {
   }
   if (status === 'CAUGHT') {
     const sold = ex.amount - ex.caught;
-    return sold > 0n ? `${fmtCompact(sold)} sold, ${fmtCompact(ex.caught)} caught, still loud` : 'taken by another holder, still loud';
+    return sold > 0n ? `${fmtCompact(sold)} sold, ${fmtCompact(ex.caught)} caught, still loud` : 'taken by another account, still loud';
   }
   if (status === 'LEFT' && ex.caught !== null && ex.caught > 0n) return `${fmtCompact(ex.caught)} of it caught`;
   if (status === 'EXPIRED') {
@@ -684,7 +684,10 @@ export class Sandbox {
       () => {
         const id = BigInt(exitId);
         const open = this.token.getExits(0, 100).find((e) => e.id === id);
-        return { id, amount: part === 'half' && open ? open.remaining / 2n : null };
+        // Half, unless the other half would be too small to stay in the exit (E_DUST): then all of it.
+        const half = part === 'half' && open ? open.remaining / 2n : null;
+        const fits = half !== null && half > 0n && open.remaining - half >= this.token.dust_units;
+        return { id, amount: fits ? half : null };
       },
       ({ id, amount }) => {
         const owner = this.token.getExits(0, 100).find((e) => e.id === id)?.owner;
@@ -697,7 +700,8 @@ export class Sandbox {
         return { x, owner, pay, remaining: still ? still.remaining : 0n };
       },
       (r, { id }) => `Caught ${fmtTokens(r.x)} LOUD from exit ${id}. ${this.account} paid ${fmtNear(r.pay.near_paid)} NEAR, ` +
-        `the pool's own price for that amount: ${fmtNear(r.pay.to_owner)} NEAR went to ${r.owner} and ${fmtNear(r.pay.fee)} NEAR, the 1% fee, stays in the pool. ` +
+        'the higher of the pool\'s price now and its price when the exit was shouted: ' +
+        `${fmtNear(r.pay.to_owner)} NEAR went to ${r.owner} and ${fmtNear(r.pay.fee)} NEAR, the 1% fee, stays in the pool. ` +
         `The tokens are loud in ${this.account}'s balance. The pool sold nothing and the cap was not used. ` +
         (r.remaining === 0n ? 'The exit is closed.' : `${fmtTokens(r.remaining)} LOUD stay in the exit.`));
   }
@@ -1136,6 +1140,24 @@ function tokenNearRows(reading, when) {
 
 const isCount = (v) => Number.isInteger(v) && v >= 0;
 
+// The catch recorded in step 8 of a proof run, as one sentence for the page. `have` is
+// false for a run without one, for a catch that did not pass its checks, and for a
+// record whose amounts are not readable; then nothing is shown.
+export function catchView(step) {
+  const c = step && typeof step === 'object' && step.catch && typeof step.catch === 'object' ? step.catch : null;
+  const none = { have: false, sentence: '', href: null, linkText: '' };
+  if (!c || c.pass !== true || c.outcome !== 'success') return none;
+  if (!DECIMAL.test(text(c.amount)) || !DECIMAL.test(text(c.near_in)) || !DECIMAL.test(text(c.fee))) return none;
+  const when = c.before_ready === true ? ', before its notice ended' : '';
+  return {
+    have: true,
+    sentence: `A late buyer caught ${fmtTokens(BigInt(c.amount))} LOUD from an announced exit for ${fmtNear(BigInt(c.near_in))} NEAR${when}. `
+      + `The tokens arrived loud, ${fmtNear(BigInt(c.fee), 6)} NEAR of the price stayed in the pool as the 1% fee, the pool sold nothing and the cap was not used.`,
+    href: explorerTx(text(c.hash)),
+    linkText: 'The catch in the explorer',
+  };
+}
+
 export function receiptsView(rec) {
   const r = rec && typeof rec === 'object' ? rec : {};
   const state = stateOf(r);
@@ -1217,6 +1239,7 @@ export function receiptsView(rec) {
   const reasons = (Array.isArray(sp.fail_reasons) ? sp.fail_reasons : []).map((x) => text(x).slice(0, 200)).filter(Boolean);
   if (haveSplit && sp.pass !== true && reasons.length) split.rows.push(['Why the check did not pass', reasons.join('; ')]);
   const passed = steps.filter((s) => s.result === 'PASS').length;
+  const caught = catchView(Array.isArray(r.steps) ? r.steps.find((s) => s && typeof s === 'object' && text(s.n) === '8') : null);
   // The proof script that checks storage registration and binding shouts writes
   // `token_near` into the file before its first step. A file without the key was
   // recorded by an earlier script, against a contract that had neither rule.
@@ -1242,6 +1265,7 @@ export function receiptsView(rec) {
     unresolved,
     unresolvedHashes: Array.isArray(r.unresolved_hashes) ? r.unresolved_hashes.map(text).filter(Boolean) : [],
     split,
+    caught,
     scopeNote: state === 'pending' || hasNearKey ? ''
       : 'This run was recorded before two later rules: each account pays for its storage, and a shout cannot be cancelled. It checks neither. Unit tests cover both until the run is repeated.',
     tokenNear: [...tokenNearRows(near.at_deploy, 'right after the deploy'), ...tokenNearRows(near.at_end, 'at the end of the run')],

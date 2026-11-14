@@ -162,12 +162,15 @@ test('shout: escrow, timestamps, E_NO_LOUD, E_DUST, E_TOO_MANY', () => {
   assert.throws(() => t.shout(CREATOR, held + 1n, 11n * MIN), code('E_NO_LOUD'));
   assert.throws(() => t.shout('holder-0', DUST, 11n * MIN), code('E_NO_LOUD'));
   assert.throws(() => t.shout(CREATOR, DUST - 1n, 11n * MIN), code('E_DUST'));
+  const quoteAtShout = t.quoteSell(DUST);
   const id = t.shout(CREATOR, DUST, 11n * MIN);
   assert.equal(id, 1n);
   const ex = t.getAccount(CREATOR).exits[0];
   assert.deepEqual(ex, {
     id: 1n, owner: CREATOR, amount: DUST, remaining: DUST,
     shouted_at: 11n * MIN, ready_at: 41n * MIN, expires_at: 101n * MIN,
+    // The pool's sell quote for the whole shout, the floor of every catch price.
+    shout_quote: quoteAtShout,
   });
   assert.equal(t.escrowed, DUST);
   assert.equal(t.getAccount(CREATOR).loud, held - DUST);
@@ -963,10 +966,14 @@ test('catch: the owner, a short deposit, a bad amount and an unknown exit are re
   assert.throws(() => t.catch('holder-0', id, lot + 1n, quote * 2n, now), code('E_AMOUNT'));
   assert.throws(() => t.quoteCatch(id, lot + 1n), code('E_AMOUNT'));
   assert.throws(() => t.catch('holder-0', id + 5n, null, quote, now), code('E_NO_EXIT'));
-  // One unit of a token this cheap is worth less than one yoctoNEAR.
-  assert.equal(t.quoteSell(1n), 0n);
-  assert.throws(() => t.catch('holder-0', id, 1n, NEAR, now), code('E_AMOUNT'));
+  // A catch may not leave less than the shout floor in the exit.
+  assert.throws(() => t.catch('holder-0', id, lot - 1n, quote, now), (e) => code('E_DUST')(e) && e.message.includes(String(lot)));
+  assert.throws(() => t.quoteCatch(id, lot - DUST + 1n), code('E_DUST'));
   assert.equal(snapshot(), before);
+  // One unit of a token this cheap is worth less than one yoctoNEAR at the pool,
+  // but its share of the shout quote rounds up, so it costs one yoctoNEAR.
+  assert.equal(t.quoteSell(1n), 0n);
+  assert.deepEqual(t.quoteCatch(id, 1n), { near_in: 1n, fee: 0n });
   checkInvariants(t);
 });
 
@@ -1007,4 +1014,73 @@ test('catch: the fee makes taking back a shout through a second wallet cost 1% o
   assert.equal(t.getAccount('early-2').loud, lot);
   assert.equal(quote - t.last_catch.to_owner, quote / 100n);
   assert.equal(CATCH_FEE_BPS, 100n);
+});
+
+test('catch: the price never falls below the pool quote at the shout, so pushing the pool down first gains nothing', () => {
+  const t = fresh();
+  t.buy('early', 5n * NEAR, 0n, 1n * MIN);
+  // After the launch window a large holder and a small one buy quiet tokens.
+  t.buy('whale', 200n * NEAR, 0n, 11n * MIN);
+  t.buy('fan', 50n * NEAR, 0n, 11n * MIN);
+  const lot = t.getAccount(CREATOR).loud / 4n;
+  const fair = t.quoteSell(lot);
+  const id = t.shout(CREATOR, lot, 12n * MIN);
+  assert.equal(t.getExits()[0].shout_quote, fair);
+  // The whale sells everything, which pushes the pool price far down, then catches.
+  const bag = t.getAccount('whale').quiet;
+  t.sell('whale', bag, 0n, 13n * MIN);
+  const cheap = t.quoteSell(lot);
+  assert.ok(cheap * 2n < fair, 'the live quote is far below the quote at the shout');
+  assert.deepEqual(t.quoteCatch(id), { near_in: fair, fee: fair / 100n });
+  assert.throws(() => t.catch('whale', id, null, cheap, 13n * MIN), (e) => code('E_DEPOSIT')(e) && e.message.includes(String(fair)));
+  t.catch('whale', id, null, fair, 13n * MIN);
+  assert.equal(t.last_catch.near_paid, fair);
+  assert.equal(t.last_catch.to_owner, fair - fair / 100n);
+  checkInvariants(t);
+});
+
+test('catch: when the pool price has risen since the shout, the catcher pays the price now', () => {
+  const { t, lot, id } = withExit();
+  const atShout = t.getExits()[0].shout_quote;
+  t.buy('late', 100n * NEAR, 0n, 13n * MIN);
+  const live = t.quoteSell(lot);
+  assert.ok(live > atShout);
+  assert.deepEqual(t.quoteCatch(id), { near_in: live, fee: live / 100n });
+  t.catch('holder-0', id, null, live, 13n * MIN);
+  assert.equal(t.last_catch.near_paid, live);
+  checkInvariants(t);
+});
+
+test('catch: a part of an exit is held to its share of the shout quote, rounded up', () => {
+  const t = fresh();
+  t.buy('early', 5n * NEAR, 0n, 1n * MIN);
+  t.buy('whale', 200n * NEAR, 0n, 11n * MIN);
+  const lot = t.getAccount('early').loud;
+  const id = t.shout('early', lot, 12n * MIN);
+  const atShout = t.getExits()[0].shout_quote;
+  t.sell('whale', t.getAccount('whale').quiet, 0n, 13n * MIN);
+  const third = lot / 3n;
+  const floor = (atShout * third + lot - 1n) / lot;
+  assert.ok(t.quoteSell(third) < floor);
+  assert.equal(t.quoteCatch(id, third).near_in, floor);
+  t.catch('whale', id, third, floor, 13n * MIN);
+  // The rest is priced against the amount first shouted, not against what is left.
+  const rest = lot - third;
+  assert.equal(t.quoteCatch(id).near_in, (atShout * rest + lot - 1n) / lot);
+  // Catching in parts never pays the owner less than the whole shout quote.
+  t.catch('whale', id, null, t.quoteCatch(id).near_in, 13n * MIN);
+  assert.ok(floor + t.last_catch.near_paid >= atShout);
+  checkInvariants(t);
+});
+
+test('catch: a remainder below the shout floor is refused; taking the whole exit works', () => {
+  const { t, lot, id } = withExit();
+  assert.throws(() => t.catch('holder-0', id, lot - DUST + 1n, 100n * NEAR, 13n * MIN), code('E_DUST'));
+  // Leaving exactly the floor is fine.
+  assert.equal(t.catch('holder-0', id, lot - DUST, 100n * NEAR, 13n * MIN), lot - DUST);
+  assert.equal(t.getExits()[0].remaining, DUST);
+  assert.throws(() => t.catch('holder-1', id, 1n, NEAR, 13n * MIN), code('E_DUST'));
+  assert.equal(t.catch('holder-1', id, null, NEAR, 13n * MIN), DUST);
+  assert.equal(t.getState(13n * MIN).open_exits, 0);
+  checkInvariants(t);
 });

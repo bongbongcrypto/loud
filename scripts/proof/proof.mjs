@@ -861,7 +861,7 @@ async function main() {
     pass: hushOk,
   } : null;
   // The catch (SPEC section 7): while the notices run, the late buyer takes a quarter of one
-  // other exit by paying its owner what the pool would have paid. The tokens stay loud, the
+  // other exit by paying its owner the price quote_catch names (the pool's sell quote now, or its quote at the shout if higher). The tokens stay loud, the
   // pool keeps its tokens and gains the 1% fee only, and the cap is not used. First the
   // refusal: the owner of that exit cannot catch it itself.
   let selfCatch = null;
