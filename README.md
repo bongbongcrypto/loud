@@ -5,7 +5,7 @@
 LOUD makes launch supply announce its exit. The creator allocation and the tokens bought in the launch window are *loud*. They sell into the token's own pool only after a public notice their owner cannot cancel, and every wallet draws on one shared cap, so splitting a bag across 100 wallets adds no room. While a notice is up, anyone else can *catch* the exit: buy the tokens from the seller at the pool's price and take them, still loud, so that sale never hits the pool. Tokens bought later are *quiet* and sell at once. That includes tokens a holder sells through the cap and then buys back: the cap sets how fast early supply can be sold or converted, and it does not stop a price from falling ([Limits](#limits)).
 
 - Live page: https://bongbongcrypto.github.io/loud/
-- Testnet token: <!-- proof:token -->[t.loud-mwfuyjcqc400b5.testnet](https://testnet.nearblocks.io/address/t.loud-mwfuyjcqc400b5.testnet), no access keys, demo preset, recorded 2026-11-14<!-- /proof:token -->. Every transaction: [Testnet proof](https://bongbongcrypto.github.io/loud/#proof).
+- Testnet token: <!-- proof:token -->[t.loud-mwfw1nxp3572b6.testnet](https://testnet.nearblocks.io/address/t.loud-mwfw1nxp3572b6.testnet), no access keys, demo preset, recorded 2026-11-14<!-- /proof:token -->. Every transaction: [Testnet proof](https://bongbongcrypto.github.io/loud/#proof).
 - Contract: [contracts/loud/src/lib.rs](contracts/loud/src/lib.rs). Exact rules and numbers: [SPEC.md](SPEC.md).
 
 Built at NEAR HACKATHON, memecoins track. Testnet only. Unaudited.
@@ -71,7 +71,7 @@ Run from the repository root. The Node rows need Node 22 or newer and nothing in
 | `node sim/run.mjs` (about 2 min) | Writes `sim/results.json` and `sim/RESULTS.md` again, byte for byte the same. |
 | `python3 -m http.server -d web 8000` | The same page at http://localhost:8000, served from static files with no build step. |
 
-The testnet token runs a faster demo preset (launch window 2 min, notice 1 min, exit window 10 min, cap 0.5% per 10 min)<!-- proof:commit --> and was built from commit `4e94032`, named in `deployment.json` as `run.commit`<!-- /proof:commit -->.<!-- proof:scope --><!-- /proof:scope --> The testnet run shows 20 wallets staying inside the cap. The unit and engine tests show that 1 wallet and 100 wallets sell the same amount.
+The testnet token runs a faster demo preset (launch window 2 min, notice 1 min, exit window 10 min, cap 0.5% per 10 min)<!-- proof:commit --> and was built from commit `a727bf2`, named in `deployment.json` as `run.commit`<!-- /proof:commit -->.<!-- proof:scope --><!-- /proof:scope --> The testnet run shows 20 wallets staying inside the cap. The unit and engine tests show that 1 wallet and 100 wallets sell the same amount.
 
 ## The track prompt, item by item
 

@@ -2,12 +2,12 @@
   "status": "ok",
   "network": "testnet",
   "preset": "demo",
-  "token_account": "t.loud-mwfuyjcqc400b5.testnet",
-  "root_account": "loud-mwfuyjcqc400b5.testnet",
-  "creator_account": "insider.loud-mwfuyjcqc400b5.testnet",
+  "token_account": "t.loud-mwfw1nxp3572b6.testnet",
+  "root_account": "loud-mwfw1nxp3572b6.testnet",
+  "creator_account": "insider.loud-mwfw1nxp3572b6.testnet",
   "params": {
     "total_supply": "1000000000000000000000000000",
-    "creator": "insider.loud-mwfuyjcqc400b5.testnet",
+    "creator": "insider.loud-mwfw1nxp3572b6.testnet",
     "creator_alloc_bps": 500,
     "virtual_near": "5000000000000000000000000",
     "loud_window_ns": "120000000000",
@@ -21,7 +21,7 @@
   },
   "onchain_params": {
     "total_supply": "1000000000000000000000000000",
-    "creator": "insider.loud-mwfuyjcqc400b5.testnet",
+    "creator": "insider.loud-mwfw1nxp3572b6.testnet",
     "creator_alloc_bps": 500,
     "virtual_near": "5000000000000000000000000",
     "loud_window_ns": "120000000000",
@@ -29,34 +29,34 @@
     "exit_window_ns": "600000000000",
     "cap_bps": 50,
     "cap_window_ns": "600000000000",
-    "launch_ts": "1794627729700678938",
-    "loud_until": "1794627849700678938",
+    "launch_ts": "1794629554270874905",
+    "loud_until": "1794629674270874905",
     "cap_units": "5000000000000000000000000",
     "creator_alloc": "50000000000000000000000000"
   },
-  "deployed_at": "2026-11-14T03:42:09.700Z",
-  "deployed_at_ns": "1794627729700678938",
-  "tx": "5twoy5SbaEq8JqtGDm6q6KrZ4wBFaFDXzZjJ5Fe95AY8",
+  "deployed_at": "2026-11-14T04:12:34.270Z",
+  "deployed_at_ns": "1794629554270874905",
+  "tx": "3rNaaZtEQBE95vxmqExXGEeUrssebfXSzLbkKWePHpDn",
   "zero_keys": true,
   "access_keys": [],
   "wasm": {
-    "bytes": 237222,
-    "sha256": "f9b2713a753008114403fff96f643039a33ad3d824f00b0855b7ade282c9b829"
+    "bytes": 238218,
+    "sha256": "7880a86ad98370217b7290048cc12c6d8e1f6a5bff60c8a733df9f94a9738f8a"
   },
-  "code_hash": "HoiLFuFTUq4Cf5tAVwcrskaXkfvuuagtwiSFL7NbZ6UQ",
-  "expected_code_hash": "HoiLFuFTUq4Cf5tAVwcrskaXkfvuuagtwiSFL7NbZ6UQ",
+  "code_hash": "97Pi9TzF2uy1NY3cXDH3uKdz3FLJKV6NbiBAzLyFXcDP",
+  "expected_code_hash": "97Pi9TzF2uy1NY3cXDH3uKdz3FLJKV6NbiBAzLyFXcDP",
   "code_hash_match": true,
   "params_match": true,
   "param_mismatches": [],
   "explorer": {
-    "token": "https://testnet.nearblocks.io/address/t.loud-mwfuyjcqc400b5.testnet",
-    "root": "https://testnet.nearblocks.io/address/loud-mwfuyjcqc400b5.testnet",
-    "tx": "https://testnet.nearblocks.io/txns/5twoy5SbaEq8JqtGDm6q6KrZ4wBFaFDXzZjJ5Fe95AY8"
+    "token": "https://testnet.nearblocks.io/address/t.loud-mwfw1nxp3572b6.testnet",
+    "root": "https://testnet.nearblocks.io/address/loud-mwfw1nxp3572b6.testnet",
+    "tx": "https://testnet.nearblocks.io/txns/3rNaaZtEQBE95vxmqExXGEeUrssebfXSzLbkKWePHpDn"
   },
   "run": {
     "repository": "bongbongcrypto/loud",
-    "run_id": "43552627303",
-    "commit": "4e9403247f96b75c1b9a2543372794b816227d0b"
+    "run_id": "43555151283",
+    "commit": "a727bf2c4d0105871c935ae74b2f556b103fe60f"
   },
-  "generated_at": "2026-11-14T03:56:08.289Z"
+  "generated_at": "2026-11-14T04:25:54.700Z"
 }
