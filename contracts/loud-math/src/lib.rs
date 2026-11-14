@@ -115,6 +115,16 @@ pub const fn max_sell(pool_tokens: u128, virtual_near: u128, pool_near: u128) ->
     }
 }
 
+/// The part of `amount` taken by `bps` basis points:
+/// `floor(amount * bps / 10_000)`.
+///
+/// `bps` above 10_000 counts as 10_000, so the result is never more than
+/// `amount` and `amount - bps_part(amount, bps)` cannot underflow.
+pub const fn bps_part(amount: u128, bps: u128) -> u128 {
+    // bps <= 10_000 here, so the quotient is <= amount and fits.
+    mul_div(amount, min_u128(bps, 10_000), 10_000)
+}
+
 /// Units the bucket gains over `elapsed_ns`, never more than `cap_units`.
 /// `cap_window_ns` must be greater than zero.
 pub const fn bucket_gain(cap_units: u128, cap_window_ns: u64, elapsed_ns: u64) -> u128 {
@@ -603,6 +613,45 @@ mod tests {
             }
         }
         assert!(clamped > 0);
+    }
+
+    // Basis points
+
+    #[test]
+    fn bps_part_rounds_down() {
+        assert_eq!(bps_part(0, 100), 0);
+        assert_eq!(bps_part(NEAR, 0), 0);
+        // 1%: the first whole unit appears at 100.
+        assert_eq!(bps_part(99, 100), 0);
+        assert_eq!(bps_part(100, 100), 1);
+        assert_eq!(bps_part(199, 100), 1);
+        assert_eq!(bps_part(200, 100), 2);
+        assert_eq!(bps_part(25 * NEAR, 100), NEAR / 4);
+        // One basis point.
+        assert_eq!(bps_part(9_999, 1), 0);
+        assert_eq!(bps_part(10_000, 1), 1);
+        // The whole amount, and nothing more above 10_000.
+        assert_eq!(bps_part(MAX, 10_000), MAX);
+        assert_eq!(bps_part(MAX, 10_001), MAX);
+        assert_eq!(bps_part(MAX, MAX), MAX);
+        // The 256-bit intermediate keeps large amounts exact.
+        assert_eq!(bps_part(MAX, 100), MAX / 100);
+        assert_eq!(bps_part(MAX, 5_000), MAX / 2);
+    }
+
+    #[test]
+    fn bps_part_never_exceeds_the_amount() {
+        let mut rng = Rng(0xB125_0F00_CA7C_4FEE);
+        for _ in 0..20_000 {
+            let amount = rng.sized();
+            let bps = rng.next_u64() as u128 % 12_000;
+            let part = bps_part(amount, bps);
+            assert!(part <= amount);
+            let capped = if bps > 10_000 { 10_000 } else { bps };
+            assert_eq!(Some(part), ref_mul_div(amount, capped, 10_000));
+            // More basis points never take less.
+            assert!(bps_part(amount, bps + 1) >= part);
+        }
     }
 
     // Bucket
