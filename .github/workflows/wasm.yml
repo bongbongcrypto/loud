@@ -1,0 +1,100 @@
+name: wasm
+
+# Publishes the contract wasm for the launch page (web/launch.html): builds it with the
+# same job as CI and commits web/loud.wasm and web/loud.wasm.json to main. The page sends
+# these bytes in the launch transaction and shows their code hash.
+#
+# The build reuses ci.yml with a read-only token. The record job writes to the repository
+# and runs no npm code. Commits made with the workflow token do not start push workflows,
+# so the record job starts the pages workflow itself.
+
+on:
+  push:
+    branches: [main]
+    paths: ["contracts/**", ".github/workflows/wasm.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: wasm
+  cancel-in-progress: false
+
+jobs:
+  build:
+    # Same tests and the same wasm build as CI; uploads the artifact loud-wasm.
+    uses: ./.github/workflows/ci.yml
+    permissions:
+      contents: read
+
+  record:
+    name: Commit web/loud.wasm
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+      actions: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: loud-wasm
+          path: build
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      # No install: node:crypto and a base58 encoder written out here.
+      - name: Write web/loud.wasm and web/loud.wasm.json
+        env:
+          SOURCE_COMMIT: ${{ github.sha }}
+        run: |
+          cp build/loud.wasm web/loud.wasm
+          node --input-type=module -e '
+            import { readFileSync, writeFileSync } from "node:fs";
+            import { createHash } from "node:crypto";
+            const wasm = readFileSync("web/loud.wasm");
+            const digest = createHash("sha256").update(wasm).digest();
+            const A = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+            let n = BigInt("0x" + digest.toString("hex"));
+            let s = "";
+            while (n > 0n) { s = A[Number(n % 58n)] + s; n /= 58n; }
+            for (const b of digest) { if (b !== 0) break; s = "1" + s; }
+            const doc = {
+              sha256_hex: digest.toString("hex"),
+              code_hash_base58: s,
+              bytes: wasm.length,
+              commit: process.env.SOURCE_COMMIT,
+              run_id: process.env.GITHUB_RUN_ID,
+            };
+            writeFileSync("web/loud.wasm.json", JSON.stringify(doc, null, 2) + "\n");
+            console.log(JSON.stringify(doc));
+          '
+
+      - name: Commit
+        id: commit
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add web/loud.wasm web/loud.wasm.json
+          if git diff --cached --quiet; then
+            echo "web/loud.wasm unchanged"
+            echo "pushed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          git commit -m "chore(wasm): publish the contract wasm for the launch page ${GITHUB_RUN_ID}"
+          git pull --rebase origin main
+          git push origin HEAD:main
+          echo "pushed=true" >> "$GITHUB_OUTPUT"
+
+      - name: Publish the page
+        if: ${{ steps.commit.outputs.pushed == 'true' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run pages.yml --ref main --repo "$GITHUB_REPOSITORY"
