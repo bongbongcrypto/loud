@@ -1,0 +1,275 @@
+{
+ "final_execution_status": "FINAL",
+ "receipts_outcome": [
+  {
+   "block_hash": "6CmBnVnaU3Km1PQRRYFWSXRshftCAMtmb6moyU7fWVzU",
+   "id": "4JakYaPBRGHgctox1icLkrwihtrNd3xn5SJVgaXjAQMm",
+   "outcome": {
+    "executor_id": "t.loud-live-mwg2oscvef9c57.testnet",
+    "gas_burnt": 1477521133870,
+    "logs": [],
+    "metadata": {
+     "contracts": [
+      {
+       "local": "97Pi9TzF2uy1NY3cXDH3uKdz3FLJKV6NbiBAzLyFXcDP"
+      }
+     ],
+     "gas_profile": [
+      {
+       "cost": "BASE",
+       "cost_category": "WASM_HOST_COST",
+       "gas_used": "4236289776"
+      },
+      {
+       "cost": "CONTRACT_LOADING_BASE",
+       "cost_category": "WASM_HOST_COST",
+       "gas_used": "35445963"
+      },
+      {
+       "cost": "CONTRACT_LOADING_BYTES",
+       "cost_category": "WASM_HOST_COST",
+       "gas_used": "259489676310"
+      },
+      {
+       "cost": "READ_MEMORY_BASE",
+       "cost_category": "WASM_HOST_COST",
+       "gas_used": "10439452800"
+      },
+      {
+       "cost": "READ_MEMORY_BYTE",
+       "cost_category": "WASM_HOST_COST",
+       "gas_used": "1007353245"
+      },
+      {
+       "cost": "READ_REGISTER_BASE",
+       "cost_category": "WASM_HOST_COST",
+       "gas_used": "10068660744"
+      },
+      {
+       "cost": "READ_REGISTER_BYTE",
+       "cost_category": "WASM_HOST_COST",
+       "gas_used": "49379562"
+      },
+      {
+       "cost": "STORAGE_READ_BASE",
+       "cost_category": "WASM_HOST_COST",
+       "gas_used": "169070537247"
+      },
+      {
+       "cost": "STORAGE_READ_KEY_BYTE",
+       "cost_category": "WASM_HOST_COST",
+       "gas_used": "2507155173"
+      },
+      {
+       "cost": "STORAGE_READ_VALUE_BYTE",
+       "cost_category": "WASM_HOST_COST",
+       "gas_used": "2300511640"
+      },
+      {
+       "cost": "UTF8_DECODING_BASE",
+       "cost_category": "WASM_HOST_COST",
+       "gas_used": "3111779061"
+      },
+      {
+       "cost": "UTF8_DECODING_BYTE",
+       "cost_category": "WASM_HOST_COST",
+       "gas_used": "53650808136"
+      },
+      {
+       "cost": "WASM_INSTRUCTION",
+       "cost_category": "WASM_HOST_COST",
+       "gas_used": "44782609080"
+      },
+      {
+       "cost": "WRITE_MEMORY_BASE",
+       "cost_category": "WASM_HOST_COST",
+       "gas_used": "14018974305"
+      },
+      {
+       "cost": "WRITE_MEMORY_BYTE",
+       "cost_category": "WASM_HOST_COST",
+       "gas_used": "1408190124"
+      },
+      {
+       "cost": "WRITE_REGISTER_BASE",
+       "cost_category": "WASM_HOST_COST",
+       "gas_used": "11462089944"
+      },
+      {
+       "cost": "WRITE_REGISTER_BYTE",
+       "cost_category": "WASM_HOST_COST",
+       "gas_used": "1684092852"
+      }
+     ],
+     "version": 4
+    },
+    "receipt_ids": [
+     "EQwqbykKWhTd5v7y6dpu2bpPvRW8Pu5VE47aQAEVAkXN",
+     "9pRP3Awbpd7x771uEkPBoo2tpuFCjjrdafFCNuyyXdTa"
+    ],
+    "status": {
+     "Failure": {
+      "ActionError": {
+       "index": 0,
+       "kind": {
+        "FunctionCallError": {
+         "ExecutionError": "Smart contract panicked: E_NO_QUIET: sell uses quiet tokens only; you hold 15428394475426409583767517 loud and 0 quiet units and asked to sell 15428394475426409583767517; loud tokens must use shout, then leave"
+        }
+       }
+      }
+     }
+    },
+    "tokens_burnt": "147752113387000000000"
+   },
+   "proof": [
+    {
+     "direction": "Left",
+     "hash": "5kP7E2SQT4zqLLNdZnptqCEkcYfctTXytxma4fi4LUBo"
+    },
+    {
+     "direction": "Right",
+     "hash": "HFbf2Tih6X2VnWMyw3hnUnuK6oo7cHmEAxYtVAh9sUhu"
+    },
+    {
+     "direction": "Left",
+     "hash": "GsuyjgYA393gaz9nbBDFxPbSvp7FQVqKk7rmTyFF3TrR"
+    },
+    {
+     "direction": "Right",
+     "hash": "3a18nfKL5HpijKSmSojt5XTZe4UxN8tXJo9GGWXB6wZc"
+    }
+   ]
+  },
+  {
+   "block_hash": "67La2xd4CyppdpRgntQWUB7Potc4QrQVPFVTZwJwK5NE",
+   "id": "EQwqbykKWhTd5v7y6dpu2bpPvRW8Pu5VE47aQAEVAkXN",
+   "outcome": {
+    "executor_id": "loud-e2e-a-mwg5cwnva2766b.testnet",
+    "gas_burnt": 223182562500,
+    "logs": [],
+    "metadata": {
+     "contracts": [
+      null
+     ],
+     "gas_profile": [],
+     "version": 4
+    },
+    "receipt_ids": [],
+    "status": {
+     "SuccessValue": ""
+    },
+    "tokens_burnt": "0"
+   },
+   "proof": [
+    {
+     "direction": "Right",
+     "hash": "ExrnLFJuUqKE6xzXDRyrLi43gnmnx2tR6Bqpf8U5vybD"
+    },
+    {
+     "direction": "Left",
+     "hash": "7GocExSzPAcHxYfPX2uUF3Xz4FJmHtv9txGtLZ1P9wH1"
+    },
+    {
+     "direction": "Left",
+     "hash": "ChrGBKxJNDKMVSHas5gNhEVQed8H8iqgfRHk2WyjcuC9"
+    }
+   ]
+  },
+  {
+   "block_hash": "67La2xd4CyppdpRgntQWUB7Potc4QrQVPFVTZwJwK5NE",
+   "id": "9pRP3Awbpd7x771uEkPBoo2tpuFCjjrdafFCNuyyXdTa",
+   "outcome": {
+    "executor_id": "loud-e2e-a-mwg5cwnva2766b.testnet",
+    "gas_burnt": 223182562500,
+    "logs": [],
+    "metadata": {
+     "contracts": [
+      null
+     ],
+     "gas_profile": [],
+     "version": 4
+    },
+    "receipt_ids": [],
+    "status": {
+     "SuccessValue": ""
+    },
+    "tokens_burnt": "0"
+   },
+   "proof": [
+    {
+     "direction": "Left",
+     "hash": "9dWathJXQswiuCmtcopBXQkhbFyizhjreYo7tsPcyJLy"
+    },
+    {
+     "direction": "Left",
+     "hash": "7GocExSzPAcHxYfPX2uUF3Xz4FJmHtv9txGtLZ1P9wH1"
+    },
+    {
+     "direction": "Left",
+     "hash": "ChrGBKxJNDKMVSHas5gNhEVQed8H8iqgfRHk2WyjcuC9"
+    }
+   ]
+  }
+ ],
+ "status": {
+  "Failure": {
+   "ActionError": {
+    "index": 0,
+    "kind": {
+     "FunctionCallError": {
+      "ExecutionError": "Smart contract panicked: E_NO_QUIET: sell uses quiet tokens only; you hold 15428394475426409583767517 loud and 0 quiet units and asked to sell 15428394475426409583767517; loud tokens must use shout, then leave"
+     }
+    }
+   }
+  }
+ },
+ "transaction": {
+  "actions": [
+   {
+    "FunctionCall": {
+     "args": "eyJhbW91bnQiOiIxNTQyODM5NDQ3NTQyNjQwOTU4Mzc2NzUxNyIsIm1pbl9uZWFyX291dCI6IjAifQ==",
+     "deposit": "1",
+     "gas": 80000000000000,
+     "method_name": "sell"
+    }
+   }
+  ],
+  "hash": "93zLabvHmxaRQckgFpbxkPG1WAsJt6EAeuk9VapwPhzS",
+  "nonce": 277632740000003,
+  "priority_fee": 0,
+  "public_key": "ed25519:B5j3QwUP7gpqKB4phTPsLFHQ7hsZhL2Ft7zJ9sePVxme",
+  "receiver_id": "t.loud-live-mwg2oscvef9c57.testnet",
+  "signature": "ed25519:2UqWLBYfvPNZSpoazGxe43JFdY2qENEk5d6KWF5zhh6B2sGb4Gh5BVsDcTArA3QPwBSVApgYzeFUh9qFzf8nEvFm",
+  "signer_id": "loud-e2e-a-mwg5cwnva2766b.testnet"
+ },
+ "transaction_outcome": {
+  "block_hash": "PDFEhHbNjjE5AWArHD4tSStCUsLH66kKYRPwMT4tCXx",
+  "id": "93zLabvHmxaRQckgFpbxkPG1WAsJt6EAeuk9VapwPhzS",
+  "outcome": {
+   "executor_id": "loud-e2e-a-mwg5cwnva2766b.testnet",
+   "gas_burnt": 311015890330,
+   "logs": [],
+   "metadata": {
+    "gas_profile": null,
+    "version": 1
+   },
+   "receipt_ids": [
+    "4JakYaPBRGHgctox1icLkrwihtrNd3xn5SJVgaXjAQMm"
+   ],
+   "status": {
+    "SuccessReceiptId": "4JakYaPBRGHgctox1icLkrwihtrNd3xn5SJVgaXjAQMm"
+   },
+   "tokens_burnt": "31101589033000000000"
+  },
+  "proof": [
+   {
+    "direction": "Right",
+    "hash": "J3xQRA51YrobH4yaJzaupseUdCjbKkA4LEmfkW4i3a8"
+   },
+   {
+    "direction": "Right",
+    "hash": "4xyNFSbgMJjvRSAF4nj2sNnTMgxFkXVJ3oowShyD5cjd"
+   }
+  ]
+ }
+}

@@ -111,6 +111,13 @@
             <button type="submit">Check and import</button>
           </form>
         </details>
+        <div class="try-wallet-buttons try-connect">
+          <button type="button" id="try-connect">Connect a NEAR wallet (testnet, beta)</button>
+          <button type="button" id="try-use-conn" hidden>Use the connected wallet</button>
+          <button type="button" id="try-use-test" hidden>Use test wallet A</button>
+          <button type="button" class="link" id="try-disconnect" hidden>Disconnect the wallet</button>
+        </div>
+        <p class="fine" id="try-connect-note">Beta, checked by hand and not by the automated walk: a NEAR wallet app that supports testnet (Meteor, Intear and others) can sign instead of a test wallet. It asks you to approve every transaction, and its key never reaches this page. Pressing the button loads the NEAR wallet connector from a URL pinned to one version, checked against its SHA-384 before it runs; the connector then fetches its list of wallets and each wallet's own script.</p>
       </div>
 
       <dl class="sb-account try-account" id="try-account" hidden>
@@ -144,6 +151,7 @@
       </div>
 
       <p class="state" id="try-pending" data-state="pending" role="status" hidden>Waiting for NEAR testnet…</p>
+      <button type="button" class="link" id="try-stop-wait" hidden>Stop waiting for the wallet</button>
       <div class="sb-result" id="try-result" role="status">
         <p class="call">No transaction yet.</p>
       </div>
@@ -626,7 +634,7 @@
 <footer class="foot">
   <p><b>Built at NEAR HACKATHON. Testnet only. Unaudited.</b></p>
   <p>By Bongbong (@bongbongcrypto). <a id="repo-link" href="https://github.com/bongbongcrypto/loud">Source, specification and tests</a></p>
-  <p>No cookies, no tracking. The page reads its own three data files (deployment, receipts, live token) and public data on NEAR testnet; it contacts the testnet faucet only when you ask for a test wallet.</p>
+  <p>No cookies, no tracking. The page reads its own three data files (deployment, receipts, live token) and public data on NEAR testnet; it contacts the testnet faucet only when you ask for a test wallet, and loads the NEAR wallet connector only when you choose to connect a wallet.</p>
 </footer>
 
 <noscript><p class="noscript">The live token, the board, the split run and the simulator need JavaScript. The rule, the recorded proof summary, the limits and the parameters are complete without it.</p></noscript>

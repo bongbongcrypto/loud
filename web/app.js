@@ -599,6 +599,12 @@ const tr = {
   last: null, log: [], busy: false, storageOk: true, lastRead: 0, readError: '',
 };
 
+// A connected wallet app (beta). Kept apart from the test wallets and their storage: its
+// key never reaches this page, and a failure here leaves the test wallets untouched.
+const wc = { mod: null, lib: null, connector: null, conn: null, use: false, stop: null, stopNow: null };
+// Same value as CONNECTED_KEY in wallet-connect.js, which is loaded only on demand.
+const WC_KEY = 'loud.live.connected.v1';
+
 function trLoadStore() {
   try {
     tr.store = TL.parseWallets(window.localStorage.getItem(TL.WALLET_KEY));
@@ -615,7 +621,9 @@ function trSaveStore() {
   }
 }
 
-const trWallet = () => tr.store.wallets[tr.store.active] || null;
+const trWallet = () => (wc.use && wc.conn ? wc.conn : tr.store.wallets[tr.store.active] || null);
+// Every account the page shows balances for: the test wallets and the connected one.
+const trIds = () => [...new Set([...tr.store.wallets.map((x) => x.accountId), ...(wc.conn ? [wc.conn.accountId] : [])])];
 const trAccount = (id) => (tr.live ? tr.live.accounts.find((a) => a.accountId === id) : null) || null;
 
 function trBusy(on, text = 'Waiting for NEAR testnet…') {
@@ -630,7 +638,7 @@ function trRenderBoard() {
   if (!tr.live) return;
   const now = TL.chainNow(tr.live);
   const w = trWallet();
-  const rows = TL.liveRows(tr.live.exits, now, w ? w.accountId : '', tr.store.wallets.map((x) => x.accountId));
+  const rows = TL.liveRows(tr.live.exits, now, w ? w.accountId : '', trIds());
   tr.board.update(rows, 'No open exits on the token right now. Shout to list one.');
   const cap = TL.capView(tr.live, now);
   setCap($('#try-cap-bar'), $('#try-cap-text'), cap.fraction, cap.text);
@@ -643,8 +651,14 @@ function trRender() {
   $('#try-new').hidden = count > 0;
   $('#try-new-2').hidden = count !== 1;
   $('#try-new-2-note').hidden = count !== 1;
-  $('#try-switch').hidden = count < 2;
-  $('#try-forget').hidden = count === 0;
+  $('#try-switch').hidden = count < 2 || (wc.use && Boolean(wc.conn));
+  $('#try-forget').hidden = count === 0 || (wc.use && Boolean(wc.conn));
+  $('#try-connect').hidden = Boolean(wc.conn);
+  $('#try-use-conn').hidden = !wc.conn || wc.use;
+  $('#try-use-test').hidden = !wc.conn || !wc.use || count === 0;
+  $('#try-disconnect').hidden = !wc.conn;
+  if (wc.conn) setText($('#try-use-conn'), `Use wallet: ${L.shortAccount(wc.conn.accountId, 30)} via ${wc.conn.walletName}`);
+  if (count > 0) setText($('#try-use-test'), `Use test ${TL.walletLabel(tr.store.active).replace('Wallet', 'wallet')}`);
   $('#try-import').hidden = count >= 2;
   $('#try-account').hidden = !w;
   $('#try-actions').hidden = !w;
@@ -660,8 +674,10 @@ function trRender() {
   }
   if (w) {
     const a = trAccount(w.accountId);
-    setText($('#try-wallet-label'), TL.walletLabel(tr.store.active));
-    put($('#try-acct'), link(tr.chain.accountUrl(w.accountId), w.accountId));
+    setText($('#try-wallet-label'), w.kind === 'connected' ? 'Wallet' : TL.walletLabel(tr.store.active));
+    const acctHref = tr.chain.accountUrl(w.accountId);
+    put($('#try-acct'), acctHref ? link(acctHref, w.accountId) : document.createTextNode(w.accountId),
+      w.kind === 'connected' ? document.createTextNode(` via ${w.walletName} (beta)`) : null);
     setText($('#try-near'), a ? (a.exists ? L.fmtNear(a.near) : 'being created…') : '…');
     setText($('#try-loud'), a ? L.fmtTokens(a.loud) : '…');
     setText($('#try-quiet'), a ? L.fmtTokens(a.quiet) : '…');
@@ -670,12 +686,13 @@ function trRender() {
     const claim = $('#try-claim');
     claim.hidden = !a || a.owed <= 0n;
     if (a && a.owed > 0n) setText(claim, `Claim ${L.fmtNear(a.owed, 6)} NEAR owed to this wallet`);
-    const other = tr.store.wallets[1 - tr.store.active];
-    const o = other ? trAccount(other.accountId) : null;
-    $('#try-other').hidden = !other;
-    if (other) {
-      setText($('#try-other'), `${TL.walletLabel(1 - tr.store.active)} (${L.shortAccount(other.accountId, 30)}) holds ${o ? L.fmtNear(o.near) : '…'} NEAR, ${o ? L.fmtTokens(o.loud) : '…'} loud, ${o ? L.fmtTokens(o.quiet) : '…'} quiet.`);
-    }
+    const others = [...tr.store.wallets, ...(wc.conn ? [wc.conn] : [])].filter((x) => x !== w);
+    $('#try-other').hidden = others.length === 0;
+    setText($('#try-other'), others.map((x) => {
+      const o = trAccount(x.accountId);
+      const name = x.kind === 'connected' ? `The connected wallet (${L.shortAccount(x.accountId, 30)})` : `${TL.walletLabel(tr.store.wallets.indexOf(x))} (${L.shortAccount(x.accountId, 30)})`;
+      return `${name} holds ${o ? L.fmtNear(o.near) : '…'} NEAR, ${o ? L.fmtTokens(o.loud) : '…'} loud, ${o ? L.fmtTokens(o.quiet) : '…'} quiet.`;
+    }).join(' '));
   } else {
     $('#try-other').hidden = true;
     $('#try-claim').hidden = true;
@@ -709,7 +726,7 @@ function trRender() {
 
 async function trRefresh() {
   try {
-    tr.live = await TL.readLive(tr.chain, tr.cfg.token, tr.store.wallets.map((w) => w.accountId));
+    tr.live = await TL.readLive(tr.chain, tr.cfg.token, trIds());
     tr.readError = '';
   } catch (e) {
     tr.readError = e && e.message ? e.message : String(e);
@@ -729,16 +746,21 @@ async function trSend(build) {
   if (tr.busy) return;
   const w = trWallet();
   if (!w) return;
-  trBusy(true);
+  const viaWallet = w.kind === 'connected';
+  trBusy(true, viaWallet ? `Approve the transaction in ${w.walletName}…` : undefined);
   let ctx = { accountId: w.accountId, call: '' };
   let plan = null;
   let res = null;
   try {
     plan = await build(w, trAccount(w.accountId));
     ctx = { accountId: w.accountId, ...plan.ctx };
+    const opts = { gasTgas: plan.gasTgas ?? TL.GAS_DEFAULT, depositYocto: plan.depositYocto };
     // chain.call throws only before it has broadcast anything. A send it could not
-    // confirm comes back as outcome "unknown", with its hash.
-    res = await tr.chain.call(w, tr.cfg.token, plan.method, plan.args, { gasTgas: plan.gasTgas ?? TL.GAS_DEFAULT, depositYocto: plan.depositYocto });
+    // confirm comes back as outcome "unknown", with its hash. The wallet adapter never
+    // throws once the wallet was asked.
+    res = viaWallet
+      ? await wc.mod.callWith(tr.chain, w, tr.cfg.token, plan.method, plan.args, opts, { stop: trStopWaiting() })
+      : await tr.chain.call(w, tr.cfg.token, plan.method, plan.args, opts);
   } catch (e) {
     trNote(false, `${ctx.accountId}  ${ctx.call || 'not sent'}`, e && e.message ? e.message : String(e), 'Nothing was sent to the chain.');
   }
@@ -760,6 +782,7 @@ async function trSend(build) {
     }
     tr.log.push(tr.last);
   }
+  trStopDone();
   const bought = Boolean(tr.last && tr.last.ok && ctx.call.startsWith('buy '));
   try {
     await trRefresh();
@@ -887,7 +910,9 @@ async function trHasEd25519() {
 function trKeep(w) {
   tr.store.wallets.push({ accountId: w.accountId, publicKey: w.publicKey, secretKey: w.secretKey });
   tr.store.active = tr.store.wallets.length - 1;
+  wc.use = false;
   trSaveStore();
+  trSaveConnected();
 }
 
 async function trCanSign() {
@@ -974,6 +999,137 @@ async function trImport(ev) {
   await trAfterWallet();
 }
 
+// "Stop waiting" for a wallet that never answers: the action ends as "unknown".
+function trStopWaiting() {
+  const b = $('#try-stop-wait');
+  wc.stop = new Promise((r) => {
+    wc.stopNow = r;
+  });
+  b.hidden = false;
+  b.disabled = false;
+  return wc.stop;
+}
+
+function trStopDone() {
+  $('#try-stop-wait').hidden = true;
+  wc.stop = null;
+  wc.stopNow = null;
+}
+
+function trSaveConnected() {
+  if (tr.chain.isMock) return;
+  try {
+    if (wc.conn) window.localStorage.setItem(WC_KEY, JSON.stringify({ use: wc.use }));
+    else window.localStorage.removeItem(WC_KEY);
+  } catch {
+    // storage blocked: the connection lasts until the tab is closed
+  }
+}
+
+// The connector is loaded on the first press of the button (and on a later visit only
+// when a wallet was connected here), never for every visitor.
+async function trConnector() {
+  if (!wc.mod) wc.mod = await import('./wallet-connect.js');
+  if (!wc.connector) {
+    wc.lib = tr.chain.isMock ? wc.mod.createFakeConnectorModule(tr.chain) : await wc.mod.loadConnector();
+    if (tr.chain.isMock) window.loudWallet = wc.lib.control;
+    wc.connector = new wc.lib.NearConnector({ ...wc.mod.CONNECTOR_OPTIONS });
+  }
+  return wc.connector;
+}
+
+async function trConnect() {
+  if (tr.busy || wc.conn) return;
+  trBusy(true, 'Loading the wallet connector…');
+  let wallet = null;
+  try {
+    const connector = await trConnector();
+    setText($('#try-pending'), 'Choose a wallet and approve the connection there…');
+    const got = await wc.mod.settleOrStop(() => connector.connect(), { stop: trStopWaiting() });
+    if (got.kind === 'error') throw got.error;
+    if (got.kind !== 'value') throw new Error('the page stopped waiting for the wallet');
+    wallet = got.value;
+    wc.conn = await wc.mod.connectedAccount(wallet, tr.chain);
+    wc.use = true;
+    trSaveConnected();
+    trNote(true, `${wc.conn.accountId}  connected`, `Connected ${wc.conn.accountId} via ${wc.conn.walletName}. Every action now asks ${wc.conn.walletName} to approve a transaction; the page never sees its key.`, 'Beta: checked by hand, not by the automated walk.');
+  } catch (e) {
+    if (wallet && wc.connector) wc.connector.disconnect(wallet).catch(() => {});
+    trNote(false, 'wallet  not connected', wc.mod ? wc.mod.connectFailure(e) : `No wallet was connected: the connector did not load (${e && e.message ? e.message : e}). Test wallets work as before.`);
+  }
+  trStopDone();
+  await trAfterWallet();
+}
+
+async function trDisconnect() {
+  if (tr.busy || !wc.conn) return;
+  const id = wc.conn.accountId;
+  try {
+    await wc.connector.disconnect();
+  } catch {
+    // the page forgets the connection either way
+  } finally {
+    wc.conn = null;
+    wc.use = false;
+    trSaveConnected();
+  }
+  trNote(true, `${id}  disconnected`, 'The page no longer uses this wallet. The account and its tokens stay on testnet.');
+  trShoutDefault();
+  trRefresh().catch(() => trRender());
+}
+
+// A later visit after a wallet was connected here: restore it quietly. A wallet that sent
+// the visitor away to sign and back adds `transactionHashes` to the address; those are
+// read from the chain.
+async function trRestoreConnected() {
+  let saved = null;
+  try {
+    saved = JSON.parse(window.localStorage.getItem(WC_KEY) || 'null');
+  } catch {
+    saved = null;
+  }
+  if (!saved) return;
+  try {
+    const connector = await trConnector();
+    const wallet = await connector.wallet();
+    wc.conn = await wc.mod.connectedAccount(wallet, tr.chain);
+    wc.use = saved.use === true;
+  } catch (e) {
+    wc.conn = null;
+    wc.use = false;
+    trSaveConnected();
+    trNote(false, 'wallet  not restored', `The wallet connected earlier could not be restored (${e && e.message ? e.message : e}). Connect it again.`);
+    trRender();
+    return;
+  }
+  const params = new URLSearchParams(location.search);
+  const hashes = (params.get('transactionHashes') || '').split(',').filter(Boolean).slice(0, 5);
+  for (const hash of hashes) {
+    let r = null;
+    try {
+      r = await tr.chain.txStatus(hash, wc.conn.accountId);
+    } catch {
+      r = null;
+    }
+    tr.last = {
+      ok: Boolean(r && r.ok), unknown: !r, call: `${wc.conn.accountId}  transaction returned by ${wc.conn.walletName}`,
+      message: !r ? 'NEAR testnet has not returned the outcome of this transaction yet. It may still execute.'
+        : r.ok ? 'It executed. The balances below are read again from the chain.' : `It ran and failed: ${r.errorMessage}`,
+      hint: '', explorerUrl: tr.chain.txUrl(hash), hash,
+    };
+    tr.log.push(tr.last);
+  }
+  if (hashes.length || params.has('errorCode')) {
+    params.delete('transactionHashes');
+    params.delete('errorCode');
+    params.delete('errorMessage');
+    const q = params.toString();
+    history.replaceState(null, '', `${location.pathname}${q ? `?${q}` : ''}${location.hash}`);
+  }
+  trShoutDefault();
+  trRefresh().catch(() => trRender());
+}
+
 async function trStart() {
   const state = $('#try-state');
   const retry = $('#try-retry');
@@ -1031,6 +1187,25 @@ async function initTry() {
   $('#try-new').addEventListener('click', trNewWallet);
   $('#try-new-2').addEventListener('click', trNewWallet);
   $('#try-import-form').addEventListener('submit', trImport);
+  $('#try-connect').addEventListener('click', trConnect);
+  $('#try-disconnect').addEventListener('click', trDisconnect);
+  $('#try-stop-wait').addEventListener('click', () => {
+    if (wc.stopNow) wc.stopNow();
+  });
+  $('#try-use-conn').addEventListener('click', () => {
+    if (tr.busy || !wc.conn) return;
+    wc.use = true;
+    trSaveConnected();
+    trShoutDefault();
+    trRender();
+  });
+  $('#try-use-test').addEventListener('click', () => {
+    if (tr.busy || tr.store.wallets.length === 0) return;
+    wc.use = false;
+    trSaveConnected();
+    trShoutDefault();
+    trRender();
+  });
   $('#try-claim').addEventListener('click', () => trSend(async (w, a) => {
     trNeed(a);
     return { kind: 'claim', method: 'claim', args: {}, depositYocto: '1', ctx: { call: 'claim' } };
@@ -1044,7 +1219,7 @@ async function initTry() {
   });
   $('#try-forget').addEventListener('click', () => {
     const w = trWallet();
-    if (tr.busy || !w) return;
+    if (tr.busy || !w || w.kind === 'connected') return;
     if (!window.confirm(`Forget ${w.accountId}? Its key is deleted from this browser and cannot be recovered.`)) return;
     tr.store.wallets.splice(tr.store.active, 1);
     tr.store.active = 0;
@@ -1083,6 +1258,7 @@ async function initTry() {
     else trLeaveOrHush(kind, id);
   });
   await trStart();
+  if (!mock) trRestoreConnected().catch(() => trRender());
   // Countdowns move every second; the chain is read again every 10 s while the tab is visible.
   setInterval(() => {
     if (!tr.live || tr.busy || document.visibilityState !== 'visible') return;

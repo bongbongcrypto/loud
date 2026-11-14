@@ -383,7 +383,22 @@ function settlementText(res, who) {
 export function describeResult(kind, ctx, res) {
   const who = ctx.accountId;
   const link = { explorerUrl: res.explorerUrl || null, hash: res.hash || null };
+  if (res.via === 'wallet' && res.rejected) {
+    return { ok: false, call: `${who}  ${ctx.call}  rejected in the wallet`, message: res.errorMessage || 'The request was rejected in the wallet. Nothing was signed or sent.', hint: '', ...link };
+  }
   if (res.outcome === 'unknown') {
+    if (res.via === 'wallet') {
+      return {
+        ok: false,
+        unknown: true,
+        call: `${who}  ${ctx.call}  ${res.hash ? 'sent, not confirmed' : 'no answer from the wallet'}`,
+        message: res.errorMessage || 'The wallet did not return a final outcome.',
+        hint: res.hash
+          ? 'Open it in the explorer before you press the button again: pressing again sends a second transaction.'
+          : `Look at the account's recent transactions in ${res.walletName || 'the wallet'} or the explorer before you press the button again: pressing again may send a second transaction.`,
+        ...link,
+      };
+    }
     return {
       ok: false,
       unknown: true,
@@ -522,6 +537,7 @@ export function createMockChain({ startMs = 1_800_000_000_000, nowMs = () => Dat
   const near = new Map(); // account -> yoctoNEAR
   const owed = new Map(); // account -> yoctoNEAR of failed payouts
   const registered = new Set([MOCK_PARAMS.creator]);
+  const results = new Map(); // hash -> call result, for txStatus
   let seq = 0;
   const B58 = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
   const fakeHash = () => {
@@ -683,6 +699,7 @@ export function createMockChain({ startMs = 1_800_000_000_000, nowMs = () => Dat
         out.errorMessage = e && e.message ? e.message : String(e);
       }
     }
+    if (out.hash) results.set(out.hash, out);
     return out;
   }
 
@@ -703,6 +720,14 @@ export function createMockChain({ startMs = 1_800_000_000_000, nowMs = () => Dat
     view,
     accountState,
     call,
+    async txStatus(hash) {
+      const r = results.get(hash);
+      return r ? { ...r, refusedHash: null, signedHashes: [hash] } : null;
+    },
+    // Mock only: an account a connected stand-in wallet signs for.
+    fundAccount(accountId, yocto) {
+      near.set(accountId, (near.get(accountId) ?? 0n) + BigInt(yocto));
+    },
     // Invented hashes and accounts: no explorer links.
     txUrl: () => null,
     accountUrl: () => null,

@@ -718,6 +718,11 @@ table.steps details b { color: var(--ink); }
 .try-wallet-buttons { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
 .try-wallet-buttons button:not(.link):first-of-type { background: var(--ink); color: var(--paper); }
 .try-wallet-buttons button:not(.link):first-of-type:hover:not(:disabled) { background: var(--accent); border-color: var(--accent); }
+/* The test wallet stays the main path: the wallet-app row is secondary. */
+.try-wallet-buttons.try-connect { margin-top: 10px; }
+.try-wallet-buttons.try-connect button:not(.link):first-of-type { background: transparent; color: var(--ink); }
+.try-wallet-buttons.try-connect button:not(.link):first-of-type:hover:not(:disabled) { background: transparent; color: var(--accent); border-color: var(--accent); }
+#try-stop-wait { margin: 0 0 8px; }
 .try-wallets .fine { margin-top: 10px; max-width: 44em; }
 .try-account dd a { overflow-wrap: anywhere; }
 .sb-actions .try-first { grid-column: 1 / -1; margin: 0; }

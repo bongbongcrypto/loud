@@ -592,6 +592,18 @@ const emptyResult = {
   ok: false, value: null, errorCode: null, logs: [], events: [], settled: false, settlement: null, payoutsFailed: [],
 };
 
+// Final outcome of a transaction someone else signed and sent (a wallet app), read by
+// hash: the `call` result shape, or null when no node returned it within `waitMs`.
+export async function txStatus(hash, senderId, { waitMs = config.confirmMs } = {}) {
+  const deadline = Date.now() + waitMs;
+  for (;;) {
+    const found = await lookupByHash(hash, senderId, deadline);
+    if (found.result) return { ...summarizeResult(found.result, hash), refusedHash: null, signedHashes: [hash] };
+    if (Date.now() + 2000 >= deadline) return null;
+    await sleep(2000);
+  }
+}
+
 // Sign and send one transaction with the given actions and wait until it is final.
 // The result has the shape `call` documents.
 export async function sendActions(wallet, receiverId, actions) {
