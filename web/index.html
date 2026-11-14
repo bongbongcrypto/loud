@@ -83,8 +83,8 @@
   <dl>
     <div><dt>What it is</dt><dd>An NEP-141 memecoin. The creator allocation and tokens bought in the launch window can be sold into the token's own pool only after a public notice, and all such sales share one cap.</dd></div>
     <div><dt>Network</dt><dd>NEAR testnet</dd></div>
-    <div><dt>Token account</dt><dd id="sum-token"><a href="https://testnet.nearblocks.io/address/t.loud-mwf8y9vabcbf40.testnet" rel="noopener">t.loud-mwf8y9vabcbf40.testnet</a></dd></div>
-    <div><dt>Proof</dt><dd id="sum-proof">10 of 10 checks passed. 20 wallets tried to dump. The cap held. <a href="https://testnet.nearblocks.io/txns/2pWUqQEjShNo2S8d2g7yiRXroPvYgDmvzyW62hzK5HJf" rel="noopener">The deploy transaction in the explorer</a></dd></div>
+    <div><dt>Token account</dt><dd id="sum-token"><a href="https://testnet.nearblocks.io/address/t.loud-mwfuyjcqc400b5.testnet" rel="noopener">t.loud-mwfuyjcqc400b5.testnet</a></dd></div>
+    <div><dt>Proof</dt><dd id="sum-proof">10 of 10 checks passed. 20 wallets tried to dump. The cap held. <a href="https://testnet.nearblocks.io/txns/5twoy5SbaEq8JqtGDm6q6KrZ4wBFaFDXzZjJ5Fe95AY8" rel="noopener">The deploy transaction in the explorer</a></dd></div>
     <div><dt>Claim</dt><dd>LOUD limits how fast early supply can be sold on its defined path, no matter how many wallets it is split across. It does not prevent fraud. The path is the token's own pool. Tokens sold there and bought back after the launch window are off it. <a href="#limits">Read the limits</a></dd></div>
     <div><dt>Source</dt><dd><a id="sum-source" href="https://github.com/bongbongcrypto/loud">Contract, specification and tests on GitHub</a></dd></div>
   </dl>
@@ -341,14 +341,14 @@
   <div class="row-body">
     <p class="say">An automated script put the token on NEAR testnet and tried to dump it from 20 wallets.</p>
     <ul class="proof-facts" id="proof-facts">
-      <li data-state="ok"><b>10 of 10 checks passed</b><span>on NEAR testnet, 2026-11-13.</span><a href="https://testnet.nearblocks.io/txns/2pWUqQEjShNo2S8d2g7yiRXroPvYgDmvzyW62hzK5HJf" rel="noopener">The deploy transaction in the explorer</a></li>
-      <li data-state="ok"><b>0 access keys</b><span>on the token account, so nobody can sign for it.</span><a href="https://testnet.nearblocks.io/address/t.loud-mwf8y9vabcbf40.testnet" rel="noopener">t.loud-mwf8y9vabcbf40.testnet in the explorer</a></li>
-      <li data-state="ok"><b>20 wallets tried to dump. The cap held.</b><span>A group of 20 wallets sold 6,450,604 LOUD in 10 min 23 s. The cap allowed at most 6,806,536 LOUD in that time.</span><a href="receipts.json" rel="noopener">Every transaction, in receipts.json</a></li>
+      <li data-state="ok"><b>10 of 10 checks passed</b><span>on NEAR testnet, 2026-11-14. 1 transaction was sent with no confirmed outcome.</span><a href="https://testnet.nearblocks.io/txns/5twoy5SbaEq8JqtGDm6q6KrZ4wBFaFDXzZjJ5Fe95AY8" rel="noopener">The deploy transaction in the explorer</a></li>
+      <li data-state="ok"><b>0 access keys</b><span>on the token account, so nobody can sign for it.</span><a href="https://testnet.nearblocks.io/address/t.loud-mwfuyjcqc400b5.testnet" rel="noopener">t.loud-mwfuyjcqc400b5.testnet in the explorer</a></li>
+      <li data-state="ok"><b>20 wallets tried to dump. The cap held.</b><span>A group of 20 wallets sold 6,540,795 LOUD in 10 min 38 s. The cap allowed at most 6,964,776 LOUD in that time.</span><a href="receipts.json" rel="noopener">Every transaction, in receipts.json</a></li>
     </ul>
     <p class="fine" id="proof-scope" hidden></p>
 
     <h3>The checks</h3>
-    <p class="state" id="rec-state" data-state="pending" hidden></p>
+    <p class="state" id="rec-state" data-state="ok">All 10 steps passed on NEAR testnet. 1 transaction that the run sent has no confirmed outcome: no final result was obtained, neither while polling nor from the later lookup by hash, which stops at the time limit of the run. It is listed with the outcome &quot;unknown&quot; or under earlier_attempts. It is not known whether it never executed or executed and failed. The cap check of step 10 rests on the contract counter, not on these statuses.</p>
     <div class="table-scroll">
       <table class="data steps" id="steps-key">
         <thead>
@@ -359,7 +359,7 @@
         </thead>
         <tbody>
           <tr><td>6. One wallet tries a plain sell <span class="expect">Expected: refused, because loud tokens cannot be sold directly (E_NO_QUIET)</span></td><td class="res" data-result="PASS">PASS</td></tr>
-          <tr><td>8. All 20 wallets shout; one tries to leave at once <span class="expect">Expected: 20 open exits; the early leave is refused (E_NOTICE)</span></td><td class="res" data-result="PASS">PASS</td></tr>
+          <tr><td>8. All 20 wallets shout; one tries to leave at once; a late buyer catches part of another exit <span class="expect">Expected: 20 open exits; the early leave is refused (E_NOTICE); the caught tokens arrive loud, and the pool and the cap are not used</span></td><td class="res" data-result="PASS">PASS</td></tr>
           <tr><td>10. What left, against the cap <span class="expect">Expected: no more than the cap allows</span></td><td class="res" data-result="PASS">PASS</td></tr>
         </tbody>
       </table>
@@ -395,7 +395,7 @@
     </details>
     <details class="fine-print">
       <summary>Dump measurement</summary>
-      <p class="state" id="split-proof-state" data-state="ok">PASS. A group of 20 wallets sold 6,450,604 LOUD in 10 min 23 s. The cap allowed at most 6,806,536 LOUD in that time.</p>
+      <p class="state" id="split-proof-state" data-state="ok">PASS. A group of 20 wallets sold 6,540,795 LOUD in 10 min 38 s. The cap allowed at most 6,964,776 LOUD in that time.</p>
       <dl class="facts" id="split-proof-facts"></dl>
     </details>
     <details class="fine-print" id="near-record" hidden>
@@ -409,7 +409,7 @@
       <p><button type="button" id="live-refresh">Read again</button></p>
       <dl class="facts" id="live-facts"></dl>
     </details>
-    <p class="fine" id="proof-meta"><span id="proof-stamp">Recorded 2026-11-13T17:39:41.968Z.</span> The testnet run uses a faster demo preset: launch window 2 min, notice 1 min, exit window 10 min, cap 0.5% per 10 min.</p>
+    <p class="fine" id="proof-meta"><span id="proof-stamp">Recorded 2026-11-14T03:56:08.289Z.</span> The testnet run uses a faster demo preset: launch window 2 min, notice 1 min, exit window 10 min, cap 0.5% per 10 min.</p>
   </div>
 </section>
 
