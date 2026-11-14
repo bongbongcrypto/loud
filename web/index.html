@@ -8,39 +8,195 @@
 <meta property="og:type" content="website">
 <meta property="og:title" content="LOUD: launch tokens can't hit the pool without warning">
 <meta property="og:description" content="A NEAR memecoin whose launch tokens can't hit the pool without warning. A hundred wallets get no more room than one.">
-<meta name="color-scheme" content="light">
-<meta name="theme-color" content="#ebe1cd">
+<meta name="color-scheme" content="dark">
+<meta name="theme-color" content="#0e0e10">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%230b0b0c'/%3E%3Crect x='3' y='4' width='3' height='8' fill='%23ffd400'/%3E%3Crect x='3' y='10' width='10' height='2' fill='%23ffd400'/%3E%3C/svg%3E">
 <link rel="stylesheet" href="styles.css?v=4">
 <link rel="stylesheet" href="sections.css?v=4">
-<link rel="stylesheet" href="house.css?v=1">
+<link rel="stylesheet" href="house.css?v=3">
 <script type="module" src="app.js?v=4"></script>
 </head>
 <body>
 <a class="skip" href="#main">Skip to content</a>
 
 <header class="masthead">
-  <p class="wordmark">LOUD</p>
+  <p class="wordmark">LOUD <span class="tagline">memecoin launchpad · NEAR testnet</span></p>
   <nav aria-label="Sections">
     <a href="#try">Use it on testnet</a>
+    <a href="#how">How it works</a>
     <a href="#rule">Rule</a>
     <a href="#split">Split attack</a>
     <a href="#sandbox">Simulator</a>
     <a href="#proof">Testnet proof</a>
     <a href="#limits">Limits</a>
-    <a href="launch.html">Launch your own</a>
+    <a class="create" href="launch.html">Create token</a>
   </nav>
 </header>
 
 <main id="main">
 
-<section class="lede" aria-labelledby="title">
-  <p class="kicker">Memecoin on NEAR testnet</p>
-  <h1 id="title">Launch tokens can't hit the pool without warning. A hundred wallets get no more room than one.</h1>
-  <p class="claim">A per-wallet sell limit breaks when an insider splits the bag across 100 wallets. Here the creator allocation and tokens bought in the launch window sell into the token's own pool only after a public notice, and all of those sales share one cap.</p>
-  <div class="hero-cta"><a class="btn primary" href="#try">Use it on testnet</a><a class="btn" href="launch.html">Launch your own token</a></div>
+<section class="row" id="try" aria-labelledby="try-h">
+  <div class="row-head">
+    <h2 id="try-h">Use it on testnet</h2>
+  </div>
+  <div class="row-body" id="try-body">
+    <div class="lp-token">
+      <span class="lp-avatar" aria-hidden="true">L</span>
+      <div class="lp-name"><b>LOUD</b> <span class="lp-ticker">$LOUD</span><span class="lp-net">NEAR testnet</span></div>
+      <a class="create" href="launch.html">Create token</a>
+    </div>
+    <p class="mock-banner" id="try-mock" role="note" hidden></p>
+    <p class="lp-tag">The memecoin where you shout before you sell.</p>
+    <p class="fine try-token-line" id="try-token-line" hidden></p>
+    <p class="state" id="try-state" data-state="pending" role="status">Reading the live token from NEAR testnet…</p>
+    <button type="button" id="try-retry" hidden>Read the token again</button>
+
+    <div id="try-app" hidden>
+      <div class="lp-side">
+      <div class="try-wallets">
+        <div class="try-entry">
+          <div class="try-entry-col">
+            <button type="button" id="try-new">Get a test wallet</button>
+          </div>
+          <div class="try-entry-col">
+            <button type="button" id="try-connect">Connect a NEAR wallet</button>
+          </div>
+        </div>
+        <div class="try-wallet-buttons">
+          <button type="button" id="try-new-2" hidden>Get a second wallet</button>
+          <button type="button" id="try-switch" hidden>Switch wallet</button>
+          <button type="button" id="try-use-conn" hidden>Use the connected wallet</button>
+          <button type="button" id="try-use-test" hidden>Use test wallet A</button>
+          <button type="button" class="link" id="try-forget" hidden>Forget this wallet</button>
+          <button type="button" class="link" id="try-disconnect" hidden>Disconnect the wallet</button>
+        </div>
+        <p class="fine" id="try-new-2-note" hidden>Wallet B is made from wallet A with 3 of its test NEAR, in one transaction. No faucet needed.</p>
+        <details class="fine-print lp-help">
+          <summary>What is a test wallet?</summary>
+            <p class="fine" id="try-wallet-note">Test wallet: one click, no install. A throwaway NEAR testnet account with free test NEAR, its key kept in this browser. A second wallet lets you catch your own exit.</p>
+            <p class="fine" id="try-connect-note"><b>Your own wallet:</b> Meteor, Intear and other NEAR wallets that support testnet. Switch the wallet's network to Testnet first. The wallet asks you to approve each transaction.</p>
+        <p class="fine" id="try-launch-own">Want your own coin? <a href="launch.html">Launch a LOUD token</a> with your own numbers.</p>
+    <p class="say">A real token on NEAR testnet. Get a wallet, buy, try to sell, shout, catch, leave. Each of those is a real transaction you can open in the explorer.</p>
+        <p class="fine">After a buy the shout field holds the wallet's whole loud balance. A shout must be at least one millionth of supply, unless it is the whole loud balance of a wallet with no other open exit.</p>
+        </details>
+        <details class="fine-print try-import" id="try-import">
+          <summary>Import a test wallet</summary>
+          <p class="fine">For a throwaway NEAR testnet account only. Never paste a key that controls real funds: this page keeps the key in this browser's storage. The page checks that the key is a full-access key of the account on NEAR testnet before it saves it.</p>
+          <form id="try-import-form" autocomplete="off">
+            <label for="try-import-id">Testnet account id</label>
+            <input id="try-import-id" autocomplete="off" spellcheck="false" placeholder="name.testnet">
+            <label for="try-import-key">Private key, as near-cli prints it</label>
+            <input id="try-import-key" type="password" autocomplete="off" spellcheck="false" placeholder="ed25519:...">
+            <button type="submit">Check and import</button>
+          </form>
+        </details>
+      </div>
+
+      <dl class="sb-account try-account" id="try-account" hidden>
+        <div><dt id="try-wallet-label">Wallet A</dt><dd id="try-acct"></dd></div>
+        <div><dt>NEAR</dt><dd id="try-near">0</dd></div>
+        <div><dt>Loud</dt><dd id="try-loud">0</dd></div>
+        <div><dt>Quiet</dt><dd id="try-quiet">0</dd></div>
+        <div><dt>In open exits</dt><dd id="try-escrow">0</dd></div>
+      </dl>
+      <p class="fine" id="try-other" hidden></p>
+
+      <div class="sb-actions" id="try-actions" hidden>
+        <form data-try="buy">
+          <label for="try-buy-in">Buy with NEAR</label>
+          <input id="try-buy-in" inputmode="decimal" autocomplete="off" value="2">
+          <button type="submit">Buy</button>
+        </form>
+        <form data-try="sell">
+          <label for="try-sell-in">Sell LOUD <button type="button" class="link" data-try-fill="all">whole balance</button></label>
+          <input id="try-sell-in" inputmode="decimal" autocomplete="off" value="1000000">
+          <button type="submit">Sell</button>
+        </form>
+        <form data-try="shout">
+          <label for="try-shout-in">Shout LOUD <button type="button" class="link" data-try-fill="loud">all loud</button></label>
+          <input id="try-shout-in" inputmode="decimal" autocomplete="off" value="1000000">
+          <button type="submit">Shout</button>
+        </form>
+        <p class="fine try-first" id="try-first" hidden>The first buy of a wallet pays 0.03 NEAR to the token for storage. The rest buys tokens.</p>
+        <button type="button" id="try-claim" hidden>Claim NEAR owed to this wallet</button>
+      </div>
+
+      <p class="state" id="try-pending" data-state="pending" role="status" hidden>Waiting for NEAR testnet…</p>
+      <button type="button" class="link" id="try-stop-wait" hidden>Stop waiting for the wallet</button>
+      <div class="sb-result" id="try-result" role="status">
+        <p class="call">No transaction yet.</p>
+      </div>
+
+      </div>
+      <div class="lp-main">
+      <h3 class="lp-title">Exits board</h3>
+      <p class="fine lp-sub">Every early sale is announced here first.</p>
+      <div class="board board-inline" role="group" aria-label="Open exits on the live token">
+        <div class="board-scroll">
+          <table class="board-table with-actions" id="try-table">
+            <thead>
+              <tr>
+                <th scope="col" class="c-id">Exit</th>
+                <th scope="col" class="c-acct">Account</th>
+                <th scope="col" class="c-amt">Left</th>
+                <th scope="col" class="c-shout">Shouted</th>
+                <th scope="col" class="c-ready">Ready</th>
+                <th scope="col" class="c-status">Status</th>
+                <th scope="col" class="c-act">Action</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr class="board-empty"><td colspan="7">No open exits on the token right now. Shout to list one.</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <button type="button" class="link try-stale" id="try-stale" hidden></button>
+        <div class="board-foot">
+          <div class="cap">
+            <span class="cap-label">Cap room</span>
+            <span class="cap-bar" id="try-cap-bar" role="meter" aria-label="Cap room available now on the live token" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><span></span></span>
+            <span class="cap-text" id="try-cap-text"></span>
+          </div>
+          <p class="board-note" id="try-board-note">Open exits on the token, from every visitor, read page by page from NEAR testnet. The list may lag the chain by a few seconds. Times are UTC. The board reads again every 10 s.</p>
+        </div>
+      </div>
+
+      <details class="sb-log" id="try-log-box">
+        <summary>Your transactions</summary>
+        <ol id="try-log"></ol>
+      </details>
+      <details class="fine-print lp-facts">
+        <summary>Token facts</summary>
+      <dl class="facts" id="try-facts"></dl>
+      <p class="fine" id="try-note">This token runs a demo setting. The facts above, read from the chain, say whether its launch window is still open. The notice is 1 min here, against 30 min in the standard preset.</p>
+      </details>
+      <details class="fine-print">
+        <summary>What happens when you press a button</summary>
+        <ul class="plain">
+          <li>The page builds a NEAR transaction, signs it with the test wallet's key in this browser and sends it to a public testnet RPC node. Nothing passes through a server of ours. There is none.</li>
+          <li>Most calls finish in 2 to 10 s. When NEAR testnet is slow, the page keeps looking the transaction up for up to about 2 minutes; if it still has no final result, it says the transaction was sent and may still execute, and links it. It signs an action again only when a node refused it before it ran. The result line shows what the contract answered, with its error code when it refused, and a link to the transaction.</li>
+          <li>Loud tokens here behave as on any LOUD token: <code>sell</code> refuses them, <code>shout</code> locks them for the notice, <code>leave</code> sells what the shared cap has room for, and another account can <code>catch</code> an open exit.</li>
+          <li>Other visitors use the same token. Their exits are on the board, and you can catch them or hush the expired ones.</li>
+          <li>Test NEAR has no value. The public faucet limits how many accounts one network address can create, so the page asks it only for the first wallet; the second is made from the first. Forgetting a wallet deletes its key from this browser, and the account stays on testnet.</li>
+        </ul>
+      </details>
+
+
+      </div>
+    </div>
+  </div>
 </section>
 
+<section class="lede" aria-labelledby="title">
+  <p class="kicker" id="how">How LOUD works</p>
+  <h1 id="title">Launch tokens can't hit the pool without warning. A hundred wallets get no more room than one.</h1>
+  <details class="fine-print lp-why">
+    <summary>Why</summary>
+  <p class="claim">A per-wallet sell limit breaks when an insider splits the bag across 100 wallets. Here the creator allocation and tokens bought in the launch window sell into the token's own pool only after a public notice, and all of those sales share one cap.</p>
+  </details>
+</section>
+
+<details class="lp-fold" data-fold="board"><summary>Simulation board</summary>
 <section class="board" id="board" aria-labelledby="board-title">
   <div class="board-head">
     <h2 id="board-title">Exits: <span id="board-mode">simulation</span></h2>
@@ -84,147 +240,11 @@
   </div>
   <p class="board-legend"><b>NOTICE</b> waiting. <b>BOARDING</b> may sell now, if the cap has room. <b>LEFT</b> sold. <b>CAUGHT</b> taken by another account, still loud. <b>EXPIRED</b> window ran out, tokens still loud.</p>
 </section>
+</details>
 
-<section class="row" id="try" aria-labelledby="try-h">
-  <div class="row-head">
-    <h2 id="try-h">Use it on testnet</h2>
-  </div>
-  <div class="row-body" id="try-body">
-    <p class="mock-banner" id="try-mock" role="note" hidden></p>
-    <p class="say">A real token on NEAR testnet. Get a wallet, buy, try to sell, shout, catch, leave. Each of those is a real transaction you can open in the explorer.</p>
-    <ol class="try-steps" aria-label="The path through the demo">
-      <li><b>1</b> Wallet</li>
-      <li><b>2</b> Buy</li>
-      <li><b>3</b> Shout</li>
-      <li><b>4</b> Catch or leave</li>
-    </ol>
-    <p class="fine try-token-line" id="try-token-line" hidden></p>
-    <p class="state" id="try-state" data-state="pending" role="status">Reading the live token from NEAR testnet…</p>
-    <button type="button" id="try-retry" hidden>Read the token again</button>
 
-    <div id="try-app" hidden>
-      <div class="try-wallets">
-        <div class="try-entry">
-          <div class="try-entry-col">
-            <button type="button" id="try-new">Get a test wallet</button>
-            <p class="fine" id="try-wallet-note">Test wallet: one click, no install. A throwaway NEAR testnet account with free test NEAR, its key kept in this browser. A second wallet lets you catch your own exit.</p>
-          </div>
-          <div class="try-entry-col">
-            <button type="button" id="try-connect">Connect a NEAR wallet</button>
-            <p class="fine" id="try-connect-note"><b>Your own wallet:</b> Meteor, Intear and other NEAR wallets that support testnet. Switch the wallet's network to Testnet first. The wallet asks you to approve each transaction.</p>
-          </div>
-        </div>
-        <div class="try-wallet-buttons">
-          <button type="button" id="try-new-2" hidden>Get a second wallet</button>
-          <button type="button" id="try-switch" hidden>Switch wallet</button>
-          <button type="button" id="try-use-conn" hidden>Use the connected wallet</button>
-          <button type="button" id="try-use-test" hidden>Use test wallet A</button>
-          <button type="button" class="link" id="try-forget" hidden>Forget this wallet</button>
-          <button type="button" class="link" id="try-disconnect" hidden>Disconnect the wallet</button>
-        </div>
-        <p class="fine" id="try-new-2-note" hidden>Wallet B is made from wallet A with 3 of its test NEAR, in one transaction. No faucet needed.</p>
-        <p class="fine" id="try-launch-own">Want your own coin? <a href="launch.html">Launch a LOUD token</a> with your own numbers.</p>
-        <details class="fine-print try-import" id="try-import">
-          <summary>Import a test wallet</summary>
-          <p class="fine">For a throwaway NEAR testnet account only. Never paste a key that controls real funds: this page keeps the key in this browser's storage. The page checks that the key is a full-access key of the account on NEAR testnet before it saves it.</p>
-          <form id="try-import-form" autocomplete="off">
-            <label for="try-import-id">Testnet account id</label>
-            <input id="try-import-id" autocomplete="off" spellcheck="false" placeholder="name.testnet">
-            <label for="try-import-key">Private key, as near-cli prints it</label>
-            <input id="try-import-key" type="password" autocomplete="off" spellcheck="false" placeholder="ed25519:...">
-            <button type="submit">Check and import</button>
-          </form>
-        </details>
-      </div>
 
-      <dl class="sb-account try-account" id="try-account" hidden>
-        <div><dt id="try-wallet-label">Wallet A</dt><dd id="try-acct"></dd></div>
-        <div><dt>NEAR</dt><dd id="try-near">0</dd></div>
-        <div><dt>Loud</dt><dd id="try-loud">0</dd></div>
-        <div><dt>Quiet</dt><dd id="try-quiet">0</dd></div>
-        <div><dt>In open exits</dt><dd id="try-escrow">0</dd></div>
-      </dl>
-      <p class="fine" id="try-other" hidden></p>
-
-      <div class="sb-actions" id="try-actions" hidden>
-        <form data-try="buy">
-          <label for="try-buy-in">Buy with NEAR</label>
-          <input id="try-buy-in" inputmode="decimal" autocomplete="off" value="2">
-          <button type="submit">Buy</button>
-        </form>
-        <form data-try="sell">
-          <label for="try-sell-in">Sell LOUD <button type="button" class="link" data-try-fill="all">whole balance</button></label>
-          <input id="try-sell-in" inputmode="decimal" autocomplete="off" value="1000000">
-          <button type="submit">Sell</button>
-        </form>
-        <form data-try="shout">
-          <label for="try-shout-in">Shout LOUD <button type="button" class="link" data-try-fill="loud">all loud</button></label>
-          <input id="try-shout-in" inputmode="decimal" autocomplete="off" value="1000000">
-          <button type="submit">Shout</button>
-        </form>
-        <p class="fine try-first" id="try-first" hidden>The first buy of a wallet pays 0.03 NEAR to the token for storage. The rest buys tokens.</p>
-        <p class="fine">After a buy the shout field holds the wallet's whole loud balance. A shout must be at least one millionth of supply, unless it is the whole loud balance of a wallet with no other open exit.</p>
-        <button type="button" id="try-claim" hidden>Claim NEAR owed to this wallet</button>
-      </div>
-
-      <p class="state" id="try-pending" data-state="pending" role="status" hidden>Waiting for NEAR testnet…</p>
-      <button type="button" class="link" id="try-stop-wait" hidden>Stop waiting for the wallet</button>
-      <div class="sb-result" id="try-result" role="status">
-        <p class="call">No transaction yet.</p>
-      </div>
-
-      <div class="board board-inline" role="group" aria-label="Open exits on the live token">
-        <div class="board-scroll">
-          <table class="board-table with-actions" id="try-table">
-            <thead>
-              <tr>
-                <th scope="col" class="c-id">Exit</th>
-                <th scope="col" class="c-acct">Account</th>
-                <th scope="col" class="c-amt">Left</th>
-                <th scope="col" class="c-shout">Shouted</th>
-                <th scope="col" class="c-ready">Ready</th>
-                <th scope="col" class="c-status">Status</th>
-                <th scope="col" class="c-act">Action</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr class="board-empty"><td colspan="7">No open exits on the token right now. Shout to list one.</td></tr>
-            </tbody>
-          </table>
-        </div>
-        <button type="button" class="link try-stale" id="try-stale" hidden></button>
-        <div class="board-foot">
-          <div class="cap">
-            <span class="cap-label">Cap room</span>
-            <span class="cap-bar" id="try-cap-bar" role="meter" aria-label="Cap room available now on the live token" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><span></span></span>
-            <span class="cap-text" id="try-cap-text"></span>
-          </div>
-          <p class="board-note" id="try-board-note">Open exits on the token, from every visitor, read page by page from NEAR testnet. The list may lag the chain by a few seconds. Times are UTC. The board reads again every 10 s.</p>
-        </div>
-      </div>
-
-      <details class="sb-log" id="try-log-box">
-        <summary>Your transactions</summary>
-        <ol id="try-log"></ol>
-      </details>
-
-      <dl class="facts" id="try-facts"></dl>
-      <p class="fine" id="try-note">This token runs a demo setting. The facts above, read from the chain, say whether its launch window is still open. The notice is 1 min here, against 30 min in the standard preset.</p>
-
-      <details class="fine-print">
-        <summary>What happens when you press a button</summary>
-        <ul class="plain">
-          <li>The page builds a NEAR transaction, signs it with the test wallet's key in this browser and sends it to a public testnet RPC node. Nothing passes through a server of ours. There is none.</li>
-          <li>Most calls finish in 2 to 10 s. When NEAR testnet is slow, the page keeps looking the transaction up for up to about 2 minutes; if it still has no final result, it says the transaction was sent and may still execute, and links it. It signs an action again only when a node refused it before it ran. The result line shows what the contract answered, with its error code when it refused, and a link to the transaction.</li>
-          <li>Loud tokens here behave as on any LOUD token: <code>sell</code> refuses them, <code>shout</code> locks them for the notice, <code>leave</code> sells what the shared cap has room for, and another account can <code>catch</code> an open exit.</li>
-          <li>Other visitors use the same token. Their exits are on the board, and you can catch them or hush the expired ones.</li>
-          <li>Test NEAR has no value. The public faucet limits how many accounts one network address can create, so the page asks it only for the first wallet; the second is made from the first. Forgetting a wallet deletes its key from this browser, and the account stays on testnet.</li>
-        </ul>
-      </details>
-    </div>
-  </div>
-</section>
-
+<details class="lp-fold" data-fold="summary"><summary>At a glance</summary>
 <section class="summary" aria-label="Summary">
   <dl>
     <div><dt>What it is</dt><dd>An NEP-141 memecoin. The creator allocation and tokens bought in the launch window can be sold into the token's own pool only after a public notice, and all such sales share one cap.</dd></div>
@@ -235,12 +255,16 @@
     <div><dt>Source</dt><dd><a id="sum-source" href="https://github.com/bongbongcrypto/loud">Contract, specification and tests on GitHub</a></dd></div>
   </dl>
 </section>
+</details>
 
 <section class="row" id="rule" aria-labelledby="rule-h">
   <div class="row-head">
     <h2 id="rule-h">The rule</h2>
   </div>
   <div class="row-body">
+    <p class="lp-flow"><b>Shout</b> <span aria-hidden="true">→</span> <b>Wait</b> <span aria-hidden="true">→</span> <b>Leave</b></p>
+    <p class="lp-flow-sub">Anyone can catch an exit while its notice is up.</p>
+    <details class="fine-print lp-fold-in"><summary>The full rule</summary>
     <p class="say">Buy at launch and your tokens are loud. Loud tokens sell into the pool in three steps, and the room can answer. Tokens bought later are quiet and sell at once. The times and cap figures in this section are the standard preset.</p>
     <ol class="door">
       <li class="door-shout">
@@ -275,9 +299,11 @@
         <li>Nobody can pause, upgrade or re-tune the token. It has no owner method, and its account has zero access keys.</li>
       </ul>
     </details>
+  </details>
   </div>
 </section>
 
+<details class="lp-fold" data-fold="split"><summary>Split attack</summary>
 <section class="row" id="split" aria-labelledby="split-h">
   <div class="row-head">
     <h2 id="split-h">Run the split attack</h2>
@@ -372,7 +398,9 @@
     <p class="fine real-src">The first two lines are measured on chain. The LOUD line replays the same sales through the rule engine with the standard notice and cap, a model in which nobody else sells. The replay assumes the bundle sells through the notice and the cap and does not buy back. Source: <a href="https://bitquery.io/investigations/pump-fun-snipers-bundles" rel="noopener">the Bitquery report on pump.fun bundles</a>, which names the wallets. Mint <code>7oE8o8kS6iyn5GyGhaBoi2HNz9M9m6n7VEdUWaxpump</code>. <a href="https://github.com/bongbongcrypto/loud/blob/main/sim/REPLAY.md">The full replay tables and a second launch</a></p>
   </div>
 </section>
+</details>
 
+<details class="lp-fold" data-fold="sandbox"><summary>Simulator</summary>
 <section class="row" id="sandbox" aria-labelledby="sandbox-h">
   <div class="row-head">
     <h2 id="sandbox-h">Simulator: play the rule by hand, no chain</h2>
@@ -479,7 +507,9 @@
     </details>
   </div>
 </section>
+</details>
 
+<details class="lp-fold" data-fold="proof"><summary>Testnet proof</summary>
 <section class="row" id="proof" aria-labelledby="proof-h">
   <div class="row-head">
     <h2 id="proof-h">Testnet proof</h2>
@@ -559,7 +589,9 @@
     <p class="fine" id="proof-meta"><span id="proof-stamp">Recorded 2026-11-14T04:25:54.700Z.</span> The testnet run uses a faster demo preset: launch window 2 min, notice 1 min, exit window 10 min, cap 0.5% per 10 min.</p>
   </div>
 </section>
+</details>
 
+<details class="lp-fold" data-fold="limits"><summary>Limits</summary>
 <section class="row" id="limits" aria-labelledby="limits-h">
   <div class="row-head">
     <h2 id="limits-h">Limits</h2>
@@ -615,7 +647,9 @@
     </details>
   </div>
 </section>
+</details>
 
+<details class="lp-fold" data-fold="parameters"><summary>Parameters</summary>
 <section class="row" id="parameters" aria-labelledby="parameters-h">
   <div class="row-head">
     <h2 id="parameters-h">Parameters</h2>
@@ -646,6 +680,7 @@
     <p class="fine"><a href="https://github.com/bongbongcrypto/loud/blob/main/sim/RESULTS.md">The 60-day simulation results</a> try other values and show where LOUD does worse than no rule.</p>
   </div>
 </section>
+</details>
 
 </main>
 

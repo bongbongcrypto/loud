@@ -393,7 +393,7 @@ test('page: the live section is wired to ids the script uses, and says what it i
   const html = read('./index.html');
   const app = read('./app.js');
   const at = html.indexOf('<section class="row" id="try"');
-  assert.ok(at > html.indexOf('id="board"') && at < html.indexOf('<section class="summary"'));
+  assert.ok(at > 0 && at < html.indexOf('id="board"') && at < html.indexOf('<section class="summary"'));
   const body = html.slice(at, html.indexOf('</section>', at));
   for (const m of app.matchAll(/\$\('#(try-[\w-]+)'/g)) assert.ok(body.includes(`id="${m[1]}"`), `missing #${m[1]}`);
   assert.match(body, /<h2 id="try-h">Use it on testnet<\/h2>/);

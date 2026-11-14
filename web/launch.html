@@ -3,84 +3,40 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Launch your own LOUD token on NEAR testnet</title>
+<title>Create a LOUD token on NEAR testnet</title>
 <meta name="description" content="Launch your own LOUD memecoin on NEAR testnet from this page: one transaction creates the token account, deploys the contract and initialises it, and adds no access key.">
 <meta property="og:type" content="website">
 <meta property="og:title" content="Launch your own LOUD token on NEAR testnet">
 <meta property="og:description" content="Pick the launch window, notice and shared cap, and launch a LOUD token on NEAR testnet in one transaction. Nobody holds a key to it.">
-<meta name="color-scheme" content="light">
+<meta name="color-scheme" content="dark">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%231e1d1b'/%3E%3Crect x='3' y='4' width='3' height='8' fill='%23f2b23e'/%3E%3Crect x='3' y='10' width='10' height='2' fill='%23f2b23e'/%3E%3C/svg%3E">
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700;800&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
 <link rel="stylesheet" href="styles.css?v=4">
-<link rel="stylesheet" href="launch.css?v=2">
+<link rel="stylesheet" href="launch.css?v=5">
 <link rel="stylesheet" href="house.css?v=1">
 <script type="module" src="launch.js"></script>
 </head>
 <body class="launch-page">
 <a class="skip" href="#main">Skip to content</a>
 
-<header class="masthead">
-  <p class="wordmark"><a href="index.html">LOUD</a></p>
+<header class="l-top">
+  <p class="l-brand"><a href="index.html">LOUD</a><span>launchpad · NEAR testnet</span></p>
   <nav aria-label="Pages">
-    <a href="index.html">Back to LOUD</a>
-    <a href="index.html#try">Use it on testnet</a>
-    <a href="index.html#rule">Rule</a>
-    <a href="launch.html" aria-current="page">Launch your own</a>
-    <a href="#how">What the launch does</a>
+    <a href="index.html">Trade LOUD</a>
+    <a href="launch.html" class="l-nav-create" aria-current="page">Create token</a>
   </nav>
 </header>
 
-<main id="main">
+<main id="main" class="l-main">
 
-<section class="lede" aria-labelledby="title">
-  <p class="kicker">Launch on NEAR testnet</p>
-  <h1 id="title">Launch your own LOUD token. One transaction, and nobody holds its key.</h1>
-  <p class="claim">Choose how long buys stay loud, how long a notice runs and how fast the shared cap refills. A test wallet in this browser creates the token account, deploys the LOUD contract and starts it in one transaction that adds no access key. After that, nobody, you included, can change the rules.</p>
-</section>
+<div class="l-head">
+  <h1 id="title">Create a LOUD token</h1>
+  <p class="claim">One transaction. No access key. Nobody can change it after.</p>
+</div>
+<p class="mock-banner" id="l-mock" role="note" hidden></p>
 
-<section class="row" id="launch" aria-labelledby="launch-h">
-  <div class="row-head">
-    <h2 id="launch-h">Launch</h2>
-  </div>
-  <div class="row-body">
-    <p class="mock-banner" id="l-mock" role="note" hidden></p>
-
-    <div class="try-wallets l-wallet" aria-labelledby="l-wallet-h">
-      <h3 id="l-wallet-h" class="l-step"><span class="l-idx">01</span> Wallet</h3>
-      <div id="l-wallet-none">
-        <div class="try-wallet-buttons">
-          <button type="button" id="l-new">Get a test wallet</button>
-        </div>
-        <p class="fine">A test wallet is a new NEAR testnet account that the public faucet funds with 10 test NEAR. Testnet only, no real funds. Its key is made in this browser and kept in this browser's storage. The main page uses the same wallets, so a wallet made there works here.</p>
-      </div>
-      <div id="l-wallet-have" hidden>
-        <dl class="facts l-wallet-facts">
-          <div><dt id="l-wallet-label">Wallet A</dt><dd><a id="l-wallet-id" href="#"></a></dd></div>
-          <div><dt>Balance</dt><dd id="l-wallet-near">reading…</dd></div>
-        </dl>
-        <div class="try-wallet-buttons l-wallet-more">
-          <button type="button" class="link" id="l-switch" hidden>Switch to the other wallet</button>
-        </div>
-        <p class="fine">This wallet launches the token and is its creator: the creator allocation, if any, is paid to it as loud tokens.</p>
-      </div>
-      <details class="fine-print try-import l-import" id="l-import">
-        <summary>Import a test wallet</summary>
-        <p class="fine">For a throwaway NEAR testnet account only. Never paste a key that controls real funds: this page keeps the key in this browser's storage. The page checks that the key is a full-access key of the account on NEAR testnet before it saves it.</p>
-        <form id="l-import-form" autocomplete="off">
-          <label for="l-import-id">Testnet account id</label>
-          <input id="l-import-id" autocomplete="off" spellcheck="false" placeholder="name.testnet">
-          <label for="l-import-key">Private key, as near-cli prints it</label>
-          <input id="l-import-key" type="password" autocomplete="off" spellcheck="false" placeholder="ed25519:...">
-          <button type="submit">Check and import</button>
-        </form>
-      </details>
-      <p class="fine" id="l-no-app">Launching from a connected NEAR wallet app is not built: the launch sends the contract code in a <code>DeployContract</code> action, and the page's wallet-app path signs function calls only. Use a test wallet or import one.</p>
-    </div>
-
-    <form id="launch-form" class="l-form" novalidate autocomplete="off">
-      <h3 class="l-step"><span class="l-idx">02</span> Your token's rules</h3>
+<div class="l-app" id="launch">
+  <form id="launch-form" class="l-form l-panel" novalidate autocomplete="off" aria-labelledby="rules-h">
+    <h2 id="rules-h" class="l-panel-h">Token and rules</h2>
       <div class="l-presets" role="group" aria-label="Presets">
         <button type="button" data-preset="quick" aria-pressed="false">Try in 5 minutes</button>
         <button type="button" data-preset="standard" aria-pressed="false">Standard</button>
@@ -90,7 +46,7 @@
 
       <div class="l-fields">
         <div class="l-group l-g-id">
-          <p class="l-group-h">Identity</p>
+          <p class="l-group-h">Token</p>
           <div class="l-grid">
         <div class="l-field">
           <label for="f-name">Name</label>
@@ -106,7 +62,7 @@
           </div>
         </div>
         <div class="l-group l-g-supply">
-          <p class="l-group-h">Supply and reserve</p>
+          <p class="l-group-h">Supply</p>
           <div class="l-grid">
         <div class="l-field">
           <label for="f-creator">Creator allocation</label>
@@ -115,7 +71,7 @@
           <p class="l-err" id="f-creator-err" hidden></p>
         </div>
         <div class="l-field">
-          <label for="f-virtual">Virtual NEAR reserve</label>
+          <label for="f-virtual">Virtual reserve</label>
           <div class="l-in"><input id="f-virtual" inputmode="decimal" aria-describedby="f-virtual-err f-virtual-hint"><span class="l-unit">NEAR</span></div>
           <p class="l-hint" id="f-virtual-hint">Sets the starting price. 0.1 to 1,000,000 NEAR.</p>
           <p class="l-err" id="f-virtual-err" hidden></p>
@@ -123,7 +79,7 @@
           </div>
         </div>
         <div class="l-group l-g-door">
-          <p class="l-group-h">The door</p>
+          <p class="l-group-h">Rules</p>
           <div class="l-grid">
         <div class="l-field">
           <label for="f-loud">Launch window</label>
@@ -159,41 +115,83 @@
         </div>
       </div>
       <p class="l-err" id="l-form-err" hidden></p>
-      <p class="fine">Supply is fixed at 1,000,000,000 tokens with 18 decimals. Out-of-range values show the error the contract itself would return.</p>
+      <p class="l-err" id="l-form-err" hidden></p>
+      <details class="fine-print l-meanings" id="l-meanings">
+        <summary>What do these mean?</summary>
+        <ul class="plain">
+          <li><b>Creator allocation</b>: 0 to 20% of supply, paid to your wallet as loud tokens.</li>
+          <li><b>Virtual reserve</b>: sets the starting price. 0.1 to 1,000,000 NEAR.</li>
+          <li><b>Launch window</b>: buys in this time after launch are loud. 1 min to 7 days.</li>
+          <li><b>Notice</b>: wait between a shout and the first sale. 30 s to 7 days.</li>
+          <li><b>Exit window</b>: how long a shout stays usable after its notice. 1 min to 7 days.</li>
+          <li><b>Cap</b>: loud tokens all accounts together may sell per cap window. 0.01 to 10%.</li>
+          <li><b>Cap window</b>: time the cap takes to refill. 1 min to 7 days.</li>
+          <li>Supply is fixed at 1,000,000,000 tokens with 18 decimals. Out-of-range values show the error the contract itself would return.</li>
+        </ul>
+      </details>
+  </form>
 
-      <h3 class="l-step"><span class="l-idx">03</span> Launch</h3>
+  <aside class="l-side" aria-label="Wallet and launch">
+    <div class="l-panel">
+    <div class="try-wallets l-wallet" aria-labelledby="l-wallet-h">
+      <h2 id="l-wallet-h" class="l-panel-h">Wallet</h2>
+      <div id="l-wallet-none">
+        <div class="try-wallet-buttons">
+          <button type="button" id="l-new">Get a test wallet</button>
+        </div>
+        <p class="fine" title="A new NEAR testnet account funded by the public faucet with 10 test NEAR. Its key is made and kept in this browser. The main page uses the same wallets.">Free testnet account, kept in this browser.</p>
+      </div>
+      <div id="l-wallet-have" hidden>
+        <dl class="facts l-wallet-facts">
+          <div><dt id="l-wallet-label">Wallet A</dt><dd><a id="l-wallet-id" href="#"></a></dd></div>
+          <div><dt>Balance</dt><dd id="l-wallet-near">reading…</dd></div>
+        </dl>
+        <div class="try-wallet-buttons l-wallet-more">
+          <button type="button" class="link" id="l-switch" hidden>Switch to the other wallet</button>
+        </div>
+        <p class="fine">This wallet is the token's creator.</p>
+      </div>
+      <details class="fine-print try-import l-import" id="l-import">
+        <summary>Import a test wallet</summary>
+        <p class="fine">For a throwaway NEAR testnet account only. Never paste a key that controls real funds: this page keeps the key in this browser's storage. The page checks that the key is a full-access key of the account on NEAR testnet before it saves it.</p>
+        <form id="l-import-form" autocomplete="off">
+          <label for="l-import-id">Testnet account id</label>
+          <input id="l-import-id" autocomplete="off" spellcheck="false" placeholder="name.testnet">
+          <label for="l-import-key">Private key, as near-cli prints it</label>
+          <input id="l-import-key" type="password" autocomplete="off" spellcheck="false" placeholder="ed25519:...">
+          <button type="submit">Check and import</button>
+        </form>
+      </details>
+    </div>
+    </div>
+
+    <div class="l-panel l-launch-panel">
+      <h2 class="l-panel-h">Launch</h2>
       <dl class="facts l-cost-facts">
         <div><dt>Token account</dt><dd id="l-token-id">get a wallet first</dd></div>
       </dl>
       <dl class="facts" id="l-cost"></dl>
-      <p class="fine" id="l-wasm" role="status">Loading the contract file…</p>
       <p class="state l-short" id="l-short" data-state="failed" hidden></p>
       <div class="l-go-row">
-        <button type="submit" class="primary" id="l-launch" disabled>Launch token</button>
+        <button type="submit" form="launch-form" class="primary" id="l-launch" disabled>Create token</button>
         <p class="fine" id="l-why" role="status"></p>
       </div>
-    </form>
+      <p class="fine l-wasm" id="l-wasm" role="status">Loading the contract file…</p>
+    </div>
 
     <p class="state" id="l-pending" data-state="pending" role="status" hidden>Waiting for NEAR testnet…</p>
-    <div class="sb-result l-result" id="l-result" role="status" hidden></div>
-  </div>
+    <div class="sb-result l-result l-panel" id="l-result" role="status" hidden></div>
+  </aside>
+</div>
+
+<section class="l-panel l-mine" id="mine" aria-labelledby="mine-h">
+  <h2 id="mine-h" class="l-panel-h">Your tokens</h2>
+  <p class="fine" id="l-list-empty">Tokens launched from this browser appear here. The list is kept in this browser only.</p>
+  <ul class="l-list" id="l-list"></ul>
 </section>
 
-<section class="row" id="mine" aria-labelledby="mine-h">
-  <div class="row-head">
-    <h2 id="mine-h">Your tokens</h2>
-  </div>
-  <div class="row-body">
-    <p class="fine" id="l-list-empty">Tokens launched from this browser appear here. The list is kept in this browser only.</p>
-    <ul class="l-list" id="l-list"></ul>
-  </div>
-</section>
-
-<section class="row" id="how" aria-labelledby="how-h">
-  <div class="row-head">
-    <h2 id="how-h">What the launch does</h2>
-  </div>
-  <div class="row-body">
+<details class="l-panel l-how-panel" id="how">
+  <summary>What the launch does</summary>
     <p class="say">One transaction from your test wallet to a new sub-account of it, with four actions: <code>CreateAccount</code>, <code>Transfer</code>, <code>DeployContract</code> and <code>new</code>. There is no <code>AddKey</code>.</p>
     <ul class="plain l-how">
       <li>The deposit pays for the contract code at the protocol's storage price (0.00001 NEAR per byte) plus 0.5 NEAR for the token's own state. It stays on the token account.</li>
@@ -202,8 +200,8 @@
       <li>The wasm is built from the repository's source by its CI workflow and published next to this page with its hash.</li>
       <li>LOUD limits how fast early supply can be sold on its defined path (shout, notice, leave into the built-in pool), however many wallets hold it. It does not prevent fraud. Testnet only, unaudited.</li>
     </ul>
-  </div>
-</section>
+      <p class="fine" id="l-no-app">Launching from a connected NEAR wallet app is not built: the launch sends the contract code in a <code>DeployContract</code> action, and the page's wallet-app path signs function calls only. Use a test wallet or import one.</p>
+</details>
 
 </main>
 
