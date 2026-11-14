@@ -1,0 +1,48 @@
+name: launch-e2e
+
+# Walks the launch page's path on NEAR testnet with the page's own code: a faucet wallet
+# launches a token with the "Try in 5 minutes" preset from the committed web/loud.wasm,
+# the four checks are read from chain, and the wallet buys once. Manual trigger only.
+# No secrets, no install, read-only token: the key is generated inside the job.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: launch-e2e
+  cancel-in-progress: false
+
+jobs:
+  launch:
+    name: Launch a token from the page's code
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Unit tests of the launch logic
+        run: node --test web/launch.test.mjs
+
+      - name: Launch, check and buy on NEAR testnet
+        shell: bash # -eo pipefail: the exit code of the script survives the tee
+        run: node web/launch-e2e.mjs | tee launch-e2e.jsonl
+
+      - name: Upload the record
+        if: ${{ always() && hashFiles('launch-e2e.jsonl') != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: launch-e2e
+          path: launch-e2e.jsonl
+          if-no-files-found: error
+          retention-days: 14

@@ -1,0 +1,186 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Launch your own LOUD token on NEAR testnet</title>
+<meta name="description" content="Launch your own LOUD memecoin on NEAR testnet from this page: one transaction creates the token account, deploys the contract and initialises it, and adds no access key.">
+<meta property="og:type" content="website">
+<meta property="og:title" content="Launch your own LOUD token on NEAR testnet">
+<meta property="og:description" content="Pick the launch window, notice and shared cap, and launch a LOUD token on NEAR testnet in one transaction. Nobody holds a key to it.">
+<meta name="color-scheme" content="light">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%231e1d1b'/%3E%3Crect x='3' y='4' width='3' height='8' fill='%23f2b23e'/%3E%3Crect x='3' y='10' width='10' height='2' fill='%23f2b23e'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="styles.css">
+<link rel="stylesheet" href="launch.css">
+<script type="module" src="launch.js"></script>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+
+<header class="masthead">
+  <p class="wordmark"><a href="index.html">LOUD</a></p>
+  <nav aria-label="Pages">
+    <a href="index.html#try">Use it on testnet</a>
+    <a href="index.html#rule">Rule</a>
+    <a href="launch.html" aria-current="page">Launch your own</a>
+    <a href="#how">What the launch does</a>
+  </nav>
+</header>
+
+<main id="main">
+
+<section class="lede" aria-labelledby="title">
+  <p class="kicker">Launch on NEAR testnet</p>
+  <h1 id="title">Launch your own LOUD token. One transaction, and nobody holds its key.</h1>
+  <p class="claim">Choose how long buys stay loud, how long a notice runs and how fast the shared cap refills. A test wallet in this browser creates the token account, deploys the LOUD contract and starts it in one transaction that adds no access key. After that, nobody, you included, can change the rules.</p>
+</section>
+
+<section class="row" id="launch" aria-labelledby="launch-h">
+  <div class="row-head">
+    <h2 id="launch-h">Launch</h2>
+  </div>
+  <div class="row-body">
+    <p class="mock-banner" id="l-mock" role="note" hidden></p>
+
+    <div class="try-wallets l-wallet" aria-labelledby="l-wallet-h">
+      <h3 id="l-wallet-h">1. Wallet</h3>
+      <div id="l-wallet-none">
+        <div class="try-wallet-buttons">
+          <button type="button" id="l-new">Get a test wallet</button>
+        </div>
+        <p class="fine">A test wallet is a new NEAR testnet account that the public faucet funds with 10 test NEAR. Testnet only, no real funds. Its key is made in this browser and kept in this browser's storage. The main page uses the same wallets, so a wallet made there works here.</p>
+      </div>
+      <div id="l-wallet-have" hidden>
+        <dl class="facts l-wallet-facts">
+          <div><dt id="l-wallet-label">Wallet A</dt><dd><a id="l-wallet-id" href="#"></a></dd></div>
+          <div><dt>Balance</dt><dd id="l-wallet-near">reading…</dd></div>
+        </dl>
+        <div class="try-wallet-buttons l-wallet-more">
+          <button type="button" class="link" id="l-switch" hidden>Switch to the other wallet</button>
+        </div>
+        <p class="fine">This wallet launches the token and is its creator: the creator allocation, if any, is paid to it as loud tokens.</p>
+      </div>
+    </div>
+
+    <form id="launch-form" class="l-form" novalidate autocomplete="off">
+      <h3>2. Rules</h3>
+      <div class="l-presets" role="group" aria-label="Presets">
+        <button type="button" data-preset="quick" aria-pressed="false">Try in 5 minutes</button>
+        <button type="button" data-preset="standard" aria-pressed="false">Standard</button>
+        <button type="button" data-preset="long" aria-pressed="false">Long demo</button>
+      </div>
+      <p class="fine l-preset-note" id="l-preset-note"></p>
+
+      <div class="l-fields">
+        <div class="l-field">
+          <label for="f-name">Name</label>
+          <input id="f-name" maxlength="80" spellcheck="false" aria-describedby="f-name-err">
+          <p class="l-err" id="f-name-err" hidden></p>
+        </div>
+        <div class="l-field">
+          <label for="f-symbol">Symbol</label>
+          <input id="f-symbol" maxlength="24" spellcheck="false" aria-describedby="f-symbol-err f-symbol-hint">
+          <p class="l-hint" id="f-symbol-hint">At most 16 bytes. It also names the token account.</p>
+          <p class="l-err" id="f-symbol-err" hidden></p>
+        </div>
+        <div class="l-field">
+          <label for="f-creator">Creator allocation</label>
+          <div class="l-in"><input id="f-creator" inputmode="decimal" aria-describedby="f-creator-err f-creator-hint"><span class="l-unit">%</span></div>
+          <p class="l-hint" id="f-creator-hint">0 to 20% of supply, paid to your wallet as loud tokens.</p>
+          <p class="l-err" id="f-creator-err" hidden></p>
+        </div>
+        <div class="l-field">
+          <label for="f-virtual">Virtual NEAR reserve</label>
+          <div class="l-in"><input id="f-virtual" inputmode="decimal" aria-describedby="f-virtual-err f-virtual-hint"><span class="l-unit">NEAR</span></div>
+          <p class="l-hint" id="f-virtual-hint">Sets the starting price. 0.1 to 1,000,000 NEAR.</p>
+          <p class="l-err" id="f-virtual-err" hidden></p>
+        </div>
+        <div class="l-field">
+          <label for="f-loud">Launch window</label>
+          <div class="l-in"><input id="f-loud" inputmode="decimal" aria-describedby="f-loud-err f-loud-hint"><select id="f-loud-unit" aria-label="Launch window unit"><option value="s">seconds</option><option value="min">minutes</option><option value="h">hours</option><option value="d">days</option></select></div>
+          <p class="l-hint" id="f-loud-hint">Buys in this time after launch are loud. 1 min to 7 days.</p>
+          <p class="l-err" id="f-loud-err" hidden></p>
+        </div>
+        <div class="l-field">
+          <label for="f-notice">Notice</label>
+          <div class="l-in"><input id="f-notice" inputmode="decimal" aria-describedby="f-notice-err f-notice-hint"><select id="f-notice-unit" aria-label="Notice unit"><option value="s">seconds</option><option value="min">minutes</option><option value="h">hours</option><option value="d">days</option></select></div>
+          <p class="l-hint" id="f-notice-hint">Wait between a shout and the first sale. 30 s to 7 days.</p>
+          <p class="l-err" id="f-notice-err" hidden></p>
+        </div>
+        <div class="l-field">
+          <label for="f-exit">Exit window</label>
+          <div class="l-in"><input id="f-exit" inputmode="decimal" aria-describedby="f-exit-err f-exit-hint"><select id="f-exit-unit" aria-label="Exit window unit"><option value="s">seconds</option><option value="min">minutes</option><option value="h">hours</option><option value="d">days</option></select></div>
+          <p class="l-hint" id="f-exit-hint">How long a shout stays usable after its notice. 1 min to 7 days.</p>
+          <p class="l-err" id="f-exit-err" hidden></p>
+        </div>
+        <div class="l-field">
+          <label for="f-cap">Cap</label>
+          <div class="l-in"><input id="f-cap" inputmode="decimal" aria-describedby="f-cap-err f-cap-hint"><span class="l-unit">% of supply</span></div>
+          <p class="l-hint" id="f-cap-hint">Loud tokens all accounts together may sell per cap window. 0.01 to 10%.</p>
+          <p class="l-err" id="f-cap-err" hidden></p>
+        </div>
+        <div class="l-field">
+          <label for="f-capwin">Cap window</label>
+          <div class="l-in"><input id="f-capwin" inputmode="decimal" aria-describedby="f-capwin-err f-capwin-hint"><select id="f-capwin-unit" aria-label="Cap window unit"><option value="s">seconds</option><option value="min">minutes</option><option value="h">hours</option><option value="d">days</option></select></div>
+          <p class="l-hint" id="f-capwin-hint">Time the cap takes to refill. 1 min to 7 days.</p>
+          <p class="l-err" id="f-capwin-err" hidden></p>
+        </div>
+      </div>
+      <p class="l-err" id="l-form-err" hidden></p>
+      <p class="fine">Supply is fixed at 1,000,000,000 tokens with 18 decimals. Out-of-range values show the error the contract itself would return.</p>
+
+      <h3>3. Cost and launch</h3>
+      <dl class="facts l-cost-facts">
+        <div><dt>Token account</dt><dd id="l-token-id">get a wallet first</dd></div>
+      </dl>
+      <dl class="facts" id="l-cost"></dl>
+      <p class="fine" id="l-wasm" role="status">Loading the contract file…</p>
+      <p class="state l-short" id="l-short" data-state="failed" hidden></p>
+      <div class="l-go-row">
+        <button type="submit" class="primary" id="l-launch" disabled>Launch token</button>
+        <p class="fine" id="l-why" role="status"></p>
+      </div>
+    </form>
+
+    <p class="state" id="l-pending" data-state="pending" role="status" hidden>Waiting for NEAR testnet…</p>
+    <div class="sb-result l-result" id="l-result" role="status" hidden></div>
+  </div>
+</section>
+
+<section class="row" id="mine" aria-labelledby="mine-h">
+  <div class="row-head">
+    <h2 id="mine-h">Your tokens</h2>
+  </div>
+  <div class="row-body">
+    <p class="fine" id="l-list-empty">Tokens launched from this browser appear here. The list is kept in this browser only.</p>
+    <ul class="l-list" id="l-list"></ul>
+  </div>
+</section>
+
+<section class="row" id="how" aria-labelledby="how-h">
+  <div class="row-head">
+    <h2 id="how-h">What the launch does</h2>
+  </div>
+  <div class="row-body">
+    <p class="say">One transaction from your test wallet to a new sub-account of it, with four actions: <code>CreateAccount</code>, <code>Transfer</code>, <code>DeployContract</code> and <code>new</code>. There is no <code>AddKey</code>.</p>
+    <ul class="plain l-how">
+      <li>The deposit pays for the contract code at the protocol's storage price (0.00001 NEAR per byte) plus 0.5 NEAR for the token's own state. It stays on the token account.</li>
+      <li>If <code>new</code> refuses a value, the whole transaction is undone: no account is created and the deposit comes back, less gas.</li>
+      <li>After the launch the page reads NEAR testnet and checks four things: the account exists, <code>view_access_key_list</code> is empty, <code>get_params</code> and <code>ft_metadata</code> equal what you asked, and the account's code hash equals the hash of the published wasm.</li>
+      <li>The wasm is built from the repository's source by its CI workflow and published next to this page with its hash.</li>
+      <li>LOUD limits how fast early supply can be sold on its defined path (shout, notice, leave into the built-in pool), however many wallets hold it. It does not prevent fraud. Testnet only, unaudited.</li>
+    </ul>
+  </div>
+</section>
+
+</main>
+
+<footer class="foot">
+  <p><b>Built at NEAR HACKATHON. Testnet only. Unaudited.</b></p>
+  <p>By Bongbong (@bongbongcrypto). <a href="https://github.com/bongbongcrypto/loud">Source, specification and tests</a></p>
+  <p>No cookies, no tracking. This page loads the contract file from this site, reads public data on NEAR testnet, and contacts the testnet faucet only when you ask for a test wallet.</p>
+</footer>
+
+<noscript><p class="noscript">Launching a token needs JavaScript: the page signs the launch transaction in this browser.</p></noscript>
+</body>
+</html>
