@@ -97,28 +97,165 @@ test('board rows: who may press what', () => {
   assert.equal(row(anon, 1).amount, '100');
 });
 
+const ev = (event, data) => ({ standard: 'loud', event, data });
+
 test('results: plain words, the contract code and its hint', () => {
   const ctx = { accountId: 'a.testnet', call: 'sell 5 LOUD', amount: 5n * UNIT };
-  const no = TL.describeResult('sell', ctx, { ok: false, hash: 'H', errorCode: 'E_NO_QUIET', errorMessage: 'E_NO_QUIET: sell uses quiet tokens only', explorerUrl: 'https://testnet.nearblocks.io/txns/H' });
+  const no = TL.describeResult('sell', ctx, { ok: false, outcome: 'failure', hash: 'H', errorCode: 'E_NO_QUIET', errorMessage: 'E_NO_QUIET: sell uses quiet tokens only', explorerUrl: 'https://testnet.nearblocks.io/txns/H' });
   assert.equal(no.ok, false);
   assert.equal(no.call, 'a.testnet  sell 5 LOUD  rejected');
   assert.equal(no.message, 'E_NO_QUIET: sell uses quiet tokens only');
   assert.equal(no.hint, TL.LIVE_HINTS.E_NO_QUIET);
   assert.equal(no.explorerUrl, 'https://testnet.nearblocks.io/txns/H');
-  const lost = TL.describeResult('sell', ctx, { ok: false });
-  assert.match(lost.hint, /Nothing was recorded on chain/);
-  const part = TL.describeResult('leave', { accountId: 'a.testnet', call: 'leave exit 3', remaining: 20n * UNIT }, { ok: true, value: (5n * UNIT).toString() });
-  assert.match(part.message, /^Partial fill: 5 LOUD sold into the pool\. The shared cap had no more room; 15 LOUD stay in the exit\.$/);
-  const all = TL.describeResult('leave', { accountId: 'a.testnet', call: 'leave exit 3', remaining: 5n * UNIT }, { ok: true, value: (5n * UNIT).toString() });
-  assert.match(all.message, /The exit is closed\.$/);
-  const caught = TL.describeResult('catch', { accountId: 'b.testnet', call: 'catch', amount: 4n * UNIT, exitId: '3', price: NEAR, fee: NEAR / 100n }, { ok: true, settled: false });
-  assert.match(caught.message, /Caught 4 LOUD from exit 3 for about 1\.0000 NEAR\. 0\.010000 NEAR of it, the 1% fee, stays in the pool/);
-  assert.match(caught.message, /has not settled yet/);
+  const refused = TL.describeResult('sell', ctx, { ok: false, outcome: 'invalid', hash: null });
+  assert.match(refused.hint, /refused this transaction before it ran, so nothing changed on chain/);
+  assert.equal(refused.explorerUrl, null);
+  const ranAndFailed = TL.describeResult('sell', ctx, { ok: false, outcome: 'failure', hash: 'H', explorerUrl: 'x' });
+  assert.match(ranAndFailed.hint, /ran and failed/);
   const shout = TL.describeResult('shout', { accountId: 'a.testnet', call: 'shout', amount: 9n * UNIT, noticeSec: 60 }, { ok: true, value: '7' });
   assert.match(shout.message, /^Exit 7 is on the board: 9 LOUD locked\. Leave opens after the 1 min notice\./);
-  for (const code of ['E_NO_QUIET', 'E_NOTICE', 'E_NOTICE_BINDING', 'E_CAP', 'E_SELF', 'E_DEPOSIT', 'E_DUST', 'E_EXPIRED']) {
+  for (const code of ['E_NO_QUIET', 'E_NOTICE', 'E_NOTICE_BINDING', 'E_CAP', 'E_SELF', 'E_DEPOSIT', 'E_DUST', 'E_EXPIRED', 'E_NOTHING_OWED']) {
     assert.ok(TL.LIVE_HINTS[code].length > 20, code);
   }
+  // The shout minimum names the whole-balance exception the contract makes.
+  assert.match(TL.LIVE_HINTS.E_DUST, /unless it is the wallet's whole loud balance and the wallet has no other open exit/);
+  assert.doesNotMatch(TL.LIVE_HINTS.E_NO_EXIT, /up to date/);
+});
+
+test('results: a sent transaction without a final outcome is never "nothing was sent"', () => {
+  const r = TL.describeResult('leave', { accountId: 'a.testnet', call: 'leave exit 3' }, {
+    ok: false, outcome: 'unknown', hash: 'HASHX', explorerUrl: 'https://testnet.nearblocks.io/txns/HASHX', errorMessage: 'The transaction was sent, but no node returned its final outcome within 90 s',
+  });
+  assert.equal(r.ok, false);
+  assert.equal(r.unknown, true);
+  assert.equal(r.call, 'a.testnet  leave exit 3  sent, not confirmed');
+  assert.equal(r.message, 'The transaction was sent, but NEAR testnet did not confirm it in time. It may still execute.');
+  assert.match(r.hint, /explorer before you press the button again/);
+  assert.equal(r.explorerUrl, 'https://testnet.nearblocks.io/txns/HASHX');
+  assert.doesNotMatch(`${r.message} ${r.hint}`, /Nothing was/);
+});
+
+test('results: success lines take their numbers from the receipt events', () => {
+  // buy: tokens_out and loud from the event, never from the pre-send window flag.
+  const buy = TL.describeResult('buy', { accountId: 'a.testnet', call: 'buy with 2 NEAR', deposit: 2n * NEAR, storage: TL.STORAGE_FEE, loud: true }, {
+    ok: true, settlement: 'settled', events: [ev('buy', { account: 'a.testnet', near_in: '1970000000000000000000000', storage_paid: '30000000000000000000000', tokens_out: (19_319_407n * UNIT).toString(), loud: false })],
+  });
+  assert.equal(buy.message, 'Bought 19,319,407 LOUD with 2.0000 NEAR, of which 0.03 NEAR registered this wallet with the token. The tokens are quiet: the launch window has closed, so they sell at once with Sell.');
+  const buyNoEvent = TL.describeResult('buy', { accountId: 'a.testnet', call: 'buy', deposit: 2n * NEAR, loud: true }, { ok: true, settlement: 'settled', events: [] });
+  assert.equal(buyNoEvent.message, 'The buy with 2.0000 NEAR went through. The explorer shows how many tokens arrived and whether they are loud.');
+
+  // catch: amount, price, fee and what is left come from the event, not from the quote.
+  const quoteCtx = { accountId: 'b.testnet', call: 'catch', amount: 4n * UNIT, exitId: '3', price: 5n * NEAR, fee: NEAR };
+  const caught = TL.describeResult('catch', quoteCtx, {
+    ok: true, settlement: 'settled', events: [ev('catch', { id: '3', account: 'a.testnet', catcher: 'b.testnet', amount: (2n * UNIT).toString(), remaining: (6n * UNIT).toString(), near_paid: NEAR.toString(), fee: (NEAR / 100n).toString() })],
+  });
+  assert.equal(caught.message, 'Caught 2 LOUD from exit 3 for 1.0000 NEAR. 0.010000 NEAR of it, the 1% fee, stays in the pool, and 0.9900 NEAR went to the seller. 6 LOUD are left in the exit. The tokens are loud in this wallet. The pool sold nothing and the cap was not used.');
+  const caughtNoEvent = TL.describeResult('catch', quoteCtx, { ok: true, settlement: 'settled', events: [] });
+  assert.match(caughtNoEvent.message, /^Caught LOUD from exit 3\. The explorer shows the amount and the price\./);
+  assert.doesNotMatch(caughtNoEvent.message, /5\.0000|1\.0000/);
+
+  // leave: a full fill closes the exit.
+  const all = TL.describeResult('leave', { accountId: 'a.testnet', call: 'leave exit 3' }, {
+    ok: true, settlement: 'settled', events: [ev('leave', { id: '3', account: 'a.testnet', filled: (5n * UNIT).toString(), remaining: '0', near_out: (NEAR / 2n).toString() })],
+  });
+  assert.equal(all.message, 'Sold 5 LOUD into the pool for 0.5000 NEAR. The exit is closed.');
+  const leaveNoEvent = TL.describeResult('leave', { accountId: 'a.testnet', call: 'leave exit 3' }, { ok: true, value: '5', settlement: 'settled', events: [] });
+  assert.equal(leaveNoEvent.message, 'The leave went through. The explorer shows how much was sold.');
+});
+
+test('results: a partial leave says why only when the state after it shows why', () => {
+  const CAP = 5_000_000n * UNIT;
+  // 949,050 LOUD filled while about 2.38M of cap room was left: the pool was short.
+  assert.equal(TL.partialReason({ capAvailable: (1_435_232n * UNIT).toString(), capUnits: CAP.toString(), poolNear: '1000', quoteForRest: (NEAR / 10n).toString() }), 'pool');
+  // The cap had (almost) no room left: a few seconds of refill at most.
+  assert.equal(TL.partialReason({ capAvailable: (40_000n * UNIT).toString(), capUnits: CAP.toString(), poolNear: (50n * NEAR).toString(), quoteForRest: NEAR.toString() }), 'cap');
+  // Room in the cap and NEAR in the pool: the reason is not known.
+  assert.equal(TL.partialReason({ capAvailable: (1_000_000n * UNIT).toString(), capUnits: CAP.toString(), poolNear: (50n * NEAR).toString(), quoteForRest: NEAR.toString() }), null);
+  assert.equal(TL.partialReason(null), null);
+
+  const res = {
+    ok: true, settlement: 'settled',
+    events: [ev('leave', { id: '1', account: 'a.testnet', filled: (949_050n * UNIT).toString(), remaining: (13_000_000n * UNIT).toString(), near_out: (NEAR / 10n).toString() })],
+  };
+  const base = { accountId: 'a.testnet', call: 'leave exit 1' };
+  const pool = TL.describeResult('leave', { ...base, after: { capAvailable: (1_435_232n * UNIT).toString(), capUnits: CAP.toString(), poolNear: '1000', quoteForRest: (NEAR / 10n).toString() } }, res);
+  assert.equal(pool.message, 'Partial fill: 949,050 LOUD sold into the pool for 0.1000 NEAR; 13,000,000 LOUD stay in the exit. The pool held too little NEAR to pay for more.');
+  assert.doesNotMatch(pool.message, /cap/);
+  const cap = TL.describeResult('leave', { ...base, after: { capAvailable: '0', capUnits: CAP.toString(), poolNear: (50n * NEAR).toString(), quoteForRest: '0' } }, res);
+  assert.match(cap.message, /stay in the exit\. The shared cap had no more room; press Leave again when it has refilled\.$/);
+  const unknown = TL.describeResult('leave', base, res);
+  assert.equal(unknown.message, 'Partial fill: 949,050 LOUD sold into the pool for 0.1000 NEAR; 13,000,000 LOUD stay in the exit.');
+});
+
+test('results: a failed payout is "recorded for claim", an unconfirmed receipt is not "paid"', () => {
+  const catchEv = ev('catch', { id: '3', account: 'a.testnet', catcher: 'b.testnet', amount: (2n * UNIT).toString(), remaining: '0', near_paid: NEAR.toString(), fee: (NEAR / 100n).toString() });
+  const ctx = { accountId: 'b.testnet', call: 'catch', exitId: '3' };
+  const failed = TL.describeResult('catch', ctx, { ok: true, settled: false, settlement: 'payout_failed', payoutsFailed: [{ account: 'a.testnet', amount: (NEAR - NEAR / 100n).toString() }], events: [catchEv] });
+  assert.match(failed.message, /0\.9900 NEAR is due to the seller\./);
+  assert.match(failed.message, /A payout of 0\.990000 NEAR to a\.testnet came back\. The token recorded it as owed; that account can get it with claim\.$/);
+  assert.doesNotMatch(failed.message, /went to the seller/);
+  const own = TL.describeResult('leave', { accountId: 'a.testnet', call: 'leave exit 3' }, {
+    ok: true, settled: false, settlement: 'payout_failed', payoutsFailed: [{ account: 'a.testnet', amount: (NEAR / 2n).toString() }],
+    events: [ev('leave', { id: '3', account: 'a.testnet', filled: (5n * UNIT).toString(), remaining: '0', near_out: (NEAR / 2n).toString() })],
+  });
+  assert.match(own.message, /A payout of 0\.500000 NEAR to this wallet came back\. The token recorded it as owed; press Claim to get it\.$/);
+  const unconfirmed = TL.describeResult('catch', ctx, { ok: true, settled: false, settlement: 'unconfirmed', payoutsFailed: [], events: [catchEv] });
+  assert.match(unconfirmed.message, /is due to the seller/);
+  assert.match(unconfirmed.message, /Not every receipt of this transaction succeeded, so a payment in it may not have arrived\./);
+  assert.doesNotMatch(unconfirmed.message, /recorded it as owed/);
+  const claim = TL.describeResult('claim', { accountId: 'a.testnet', call: 'claim' }, { ok: true, settlement: 'settled', events: [ev('claim', { account: 'a.testnet', amount: (NEAR / 2n).toString() })] });
+  assert.equal(claim.message, 'Claimed 0.500000 NEAR that an earlier payout could not deliver. It is paid out again now.');
+});
+
+test('faucet refusal: its answer plus the address limit, and the second wallet comes from wallet A', () => {
+  const msg = TL.faucetFailure(new Error('the testnet faucet refused to create x.testnet: helper.nearprotocol.com: HTTP 429 retry in 12 hours'));
+  assert.match(msg, /HTTP 429 retry in 12 hours\. The public testnet faucet limits how many accounts one network address can create; try again later or from another network\. The simulator below works without it\.$/);
+  const a = { accountId: 'loud-try-mwg2pcwu712bd7.testnet' };
+  assert.equal(TL.secondWalletRoute(a, { exists: true, near: 10n * NEAR }), 'sub');
+  assert.equal(TL.secondWalletRoute(a, { exists: true, near: 3n * NEAR }), 'faucet');
+  assert.equal(TL.secondWalletRoute(a, null), 'faucet');
+  assert.equal(TL.secondWalletRoute({ accountId: `${'x'.repeat(50)}.testnet` }, { exists: true, near: 10n * NEAR }), 'faucet');
+});
+
+test('board note and demo note come from what was read', () => {
+  const live = {
+    exits: [{}, {}], state: { open_exits: 2, is_loud_window: true }, block: { pinned: true, height: 123 }, readAtMs: Date.parse('2026-11-14T10:20:30Z'),
+    params: { loud_until: 1_795_245_426_474_178_381n, notice_ns: 60_000_000_000n },
+  };
+  assert.equal(TL.boardNote(live), '2 open exits on the token, from every visitor, read page by page (100 a page) at block 123 from NEAR testnet at 10:20:30 UTC. The list may lag the chain by a few seconds. Times are UTC. The board reads again every 10 s.');
+  assert.match(TL.boardNote({ ...live, exits: new Array(100).fill({}), state: { open_exits: 120 }, block: { pinned: false } }), /^The board shows 100 of the 120 open exits on the token, read page by page \(100 a page\) from/);
+  const failed = TL.boardNote(live, 'HTTP 503');
+  assert.equal(failed, 'Could not read the token just now (HTTP 503). The board below is the read of 10:20:30 UTC and may be out of date. The page tries again in 10 s.');
+  assert.doesNotMatch(failed, /up to date/);
+  assert.match(TL.demoNote(live), /^This token runs a demo setting\. Its launch window is open until 2026-11-21 07:17(:06)? UTC, so every buy until then is loud/);
+  const closed = TL.demoNote({ ...live, state: { is_loud_window: false } });
+  assert.match(closed, /Its launch window closed at 2026-11-21 .* UTC\. Buys are quiet now and sell at once with Sell/);
+  assert.doesNotMatch(closed, /every buy until then is loud|Nobody holds quiet/);
+  assert.match(closed, /The notice is 1 min here, against 30 min in the standard preset\.$/);
+});
+
+test('readLive pins every view of the token to the block of get_state, and falls back when it cannot', async () => {
+  const exits = Array.from({ length: 2001 }, (_, i) => ({ id: String(i + 1), owner: `o${i}.testnet`, amount: '5', remaining: '5', shouted_at: '1', ready_at: '2', expires_at: '3' }));
+  const seen = [];
+  const chainAt = (failPinned) => ({
+    viewAt: async (token, method, args, blockId = null) => {
+      seen.push([method, blockId]);
+      if (failPinned && blockId !== null) throw new Error('UNKNOWN_BLOCK');
+      if (method === 'get_state') return { value: { open_exits: 2001, now: '1', is_loud_window: true }, blockHeight: 777 };
+      if (method === 'get_params') return { value: { cap_units: '5' }, blockHeight: blockId };
+      return { value: exits.slice(args.from_index, args.from_index + args.limit), blockHeight: blockId };
+    },
+    view: async (token, method, args) => (method === 'get_params' ? { cap_units: '5' } : exits.slice(args.from_index, args.from_index + args.limit)),
+    accountState: async () => ({ exists: false, amountYocto: '0' }),
+  });
+  const live = await TL.readLive(chainAt(false), 't.testnet', []);
+  assert.equal(live.exits.length, 2001, 'more than 20 pages are read');
+  assert.equal(live.capped, false);
+  assert.deepEqual(live.block, { pinned: true, height: 777 });
+  assert.ok(seen.filter(([m]) => m !== 'get_state').every(([, b]) => b === 777));
+  const loose = await TL.readLive(chainAt(true), 't.testnet', []);
+  assert.equal(loose.block.pinned, false);
+  assert.equal(loose.exits.length, 2001);
 });
 
 test('mock chain: the whole path a visitor takes, through the same functions as chain.js', async () => {
@@ -143,7 +280,14 @@ test('mock chain: the whole path a visitor takes, through the same functions as 
   const quote = await chain.view(T, 'quote_buy', { near: plan.intoPool.toString() });
   const buy = await chain.call(a, T, 'buy', TL.buyArgs(plan, quote), { gasTgas: TL.GAS_DEFAULT, depositYocto: plan.deposit.toString() });
   assert.equal(buy.ok, true);
-  assert.match(buy.explorerUrl, /^https:\/\/testnet\.nearblocks\.io\/txns\/[1-9A-HJ-NP-Za-km-z]{44}$/);
+  // Mock hashes are invented: no explorer link.
+  assert.equal(buy.explorerUrl, null);
+  assert.match(buy.hash, /^[1-9A-HJ-NP-Za-km-z]{44}$/);
+  assert.equal(chain.txUrl(buy.hash), null);
+  assert.equal(chain.accountUrl(a.accountId), null);
+  const bought = buy.events.find((e) => e.event === 'buy');
+  assert.equal(bought.data.loud, true);
+  assert.equal(bought.data.storage_paid, TL.STORAGE_FEE.toString());
   live = await TL.readLive(chain, T, [a.accountId, b.accountId]);
   const loud = live.accounts[0].loud;
   assert.ok(loud > 5_000_000n * UNIT, 'a 2 NEAR buy is more than one cap');
@@ -191,8 +335,10 @@ test('mock chain: the whole path a visitor takes, through the same functions as 
   assert.deepEqual([rowsA[0].status, rowsA[0].canLeave], ['BOARDING', true]);
   const leave = await chain.call(a, T, 'leave', { exit_id: id, min_near_out: '0' }, { depositYocto: '1' });
   assert.equal(leave.ok, true);
-  const told = TL.describeResult('leave', { accountId: a.accountId, call: `leave exit ${id}`, remaining: live.exits[0].remaining }, leave);
+  const told = TL.describeResult('leave', { accountId: a.accountId, call: `leave exit ${id}` }, leave);
   assert.match(told.message, /^Partial fill: /);
+  const leftEv = leave.events.find((e) => e.event === 'leave');
+  assert.equal(leftEv.data.filled, leave.value);
   assert.ok(BigInt(leave.value) < 5_000_000n * UNIT);
   // The cap bar grows between reads.
   const cap0 = TL.capView(live, live.state.now);
@@ -205,7 +351,42 @@ test('mock chain: the whole path a visitor takes, through the same functions as 
   assert.deepEqual([poor.ok, poor.hash], [false, null]);
   const failing = TL.createMockChain({ faucetFails: true });
   await assert.rejects(failing.createTestWallet({}), /429/);
-  assert.match(TL.faucetFailure(new Error('faucet answered HTTP 429')), /did not create a wallet: faucet answered HTTP 429\. Try again in a minute\.$/);
+});
+
+test('mock chain: the second wallet comes from wallet A, and a failed payout waits for claim', async () => {
+  let ms = 0;
+  const chain = TL.createMockChain({ nowMs: () => ms, payoutFails: true });
+  const T = TL.MOCK_TOKEN;
+  const a = await chain.createTestWallet({ prefix: 'loud-try' });
+  const b = await chain.createSubWallet(a, { amountYocto: TL.SUB_WALLET_NEAR.toString() });
+  assert.equal(b.outcome, 'success');
+  assert.ok(b.accountId.endsWith(`.${a.accountId}`));
+  assert.equal(b.explorerUrl, null);
+  let live = await TL.readLive(chain, T, [a.accountId, b.accountId]);
+  assert.equal(live.accounts[1].near, 3n * NEAR);
+  assert.ok(live.accounts[0].near < 7n * NEAR);
+  const plan = TL.buyPlan('2', live.accounts[0]);
+  await chain.call(a, T, 'buy', TL.buyArgs(plan, await chain.view(T, 'quote_buy', { near: plan.intoPool.toString() })), { depositYocto: plan.deposit.toString() });
+  live = await TL.readLive(chain, T, [a.accountId]);
+  const shout = await chain.call(a, T, 'shout', { amount: live.accounts[0].loud.toString() }, { depositYocto: '1' });
+  ms += 61_000;
+  const leave = await chain.call(a, T, 'leave', { exit_id: shout.value, min_near_out: '0' }, { depositYocto: '1' });
+  assert.equal(leave.ok, true);
+  assert.equal(leave.settlement, 'payout_failed');
+  assert.equal(leave.payoutsFailed[0].account, a.accountId);
+  live = await TL.readLive(chain, T, [a.accountId]);
+  const owed = live.accounts[0].owed;
+  assert.ok(owed > 0n);
+  assert.match(TL.describeResult('leave', { accountId: a.accountId, call: 'leave' }, leave).message, /press Claim to get it\.$/);
+  const claim = await chain.call(a, T, 'claim', {}, { depositYocto: '1' });
+  assert.equal(claim.ok, true);
+  assert.equal(claim.value, owed.toString());
+  assert.match(TL.describeResult('claim', { accountId: a.accountId, call: 'claim' }, claim).message, /^Claimed /);
+  live = await TL.readLive(chain, T, [a.accountId]);
+  assert.equal(live.accounts[0].owed, 0n);
+  assert.equal((await chain.call(a, T, 'claim', {}, { depositYocto: '1' })).errorCode, 'E_NOTHING_OWED');
+  // A wallet that cannot fund the second one is refused before anything moves.
+  await assert.rejects(chain.createSubWallet(b, { amountYocto: (50n * NEAR).toString() }), /not have enough NEAR/);
 });
 
 test('page: the live section is wired to ids the script uses, and says what it is', () => {
@@ -218,8 +399,14 @@ test('page: the live section is wired to ids the script uses, and says what it i
   assert.match(body, /<h2 id="try-h">Use it on testnet<\/h2>/);
   assert.match(body, /Testnet only, throwaway, no real funds\./);
   assert.match(body, /never sent anywhere/);
-  assert.match(body, /its launch window stays open for seven days, so every buy is loud/);
-  assert.match(body, /Nobody holds quiet tokens on it yet\./);
+  // The launch window is read from the chain; the static text does not claim it is open.
+  assert.doesNotMatch(body, /every buy is loud|Nobody holds quiet/);
+  assert.match(body, /<p class="mock-banner" id="try-mock" role="note" hidden><\/p>/);
+  assert.equal(TL.MOCK_BANNER, 'MOCK: no chain, invented transactions');
+  assert.match(body, /switching wallets and filling in amounts send nothing\./);
+  assert.doesNotMatch(body, /Every button sends a transaction|A call takes 2 to 10 s/);
+  assert.match(body, /up to about 2 minutes/);
+  assert.match(body, /For a throwaway NEAR testnet account only\./);
   // Controls are hidden until the token has been read.
   assert.match(body, /<div id="try-app" hidden>/);
   // The simulator no longer reads as the product.

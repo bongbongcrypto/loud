@@ -38,7 +38,7 @@
 
 <section class="board" id="board" aria-labelledby="board-title">
   <div class="board-head">
-    <h2 id="board-title">Exits</h2>
+    <h2 id="board-title">Exits: <span id="board-mode">simulation</span></h2>
     <p class="board-clock"><span id="board-clock-label">Sim clock</span> <b id="board-clock">T+0:00</b></p>
     <div class="board-source" role="group" aria-label="Board source">
       <button type="button" id="src-sim" aria-pressed="true">Simulation</button>
@@ -85,7 +85,8 @@
     <h2 id="try-h">Use it on testnet</h2>
   </div>
   <div class="row-body" id="try-body">
-    <p class="say">A real token on NEAR testnet. Get a test wallet, buy, try to sell, shout, leave, catch. Every button sends a transaction you can open in the explorer.</p>
+    <p class="mock-banner" id="try-mock" role="note" hidden></p>
+    <p class="say">A real token on NEAR testnet. Get a test wallet, buy, try to sell, shout, leave, catch. Buy, sell, shout, leave, hush, catch, claim and making the second wallet each send a transaction you can open in the explorer; switching wallets and filling in amounts send nothing.</p>
     <p class="state" id="try-state" data-state="pending" role="status">Reading the live token from NEAR testnet…</p>
     <button type="button" id="try-retry" hidden>Read the token again</button>
 
@@ -97,7 +98,19 @@
           <button type="button" id="try-switch" hidden>Switch wallet</button>
           <button type="button" class="link" id="try-forget" hidden>Forget this wallet</button>
         </div>
+        <p class="fine" id="try-new-2-note" hidden>Wallet B is made from wallet A with 3 of its test NEAR, in one transaction. No faucet needed.</p>
         <p class="fine" id="try-wallet-note">A test wallet is a new NEAR testnet account that the public faucet funds with test NEAR. Testnet only, throwaway, no real funds. Its key is made in this browser, kept in this browser's storage and never sent anywhere. A second wallet lets you catch your own exit from another account.</p>
+        <details class="fine-print try-import" id="try-import">
+          <summary>Import a test wallet</summary>
+          <p class="fine">For a throwaway NEAR testnet account only. Never paste a key that controls real funds: this page keeps the key in this browser's storage. The page checks that the key is a full-access key of the account on NEAR testnet before it saves it.</p>
+          <form id="try-import-form" autocomplete="off">
+            <label for="try-import-id">Testnet account id</label>
+            <input id="try-import-id" autocomplete="off" spellcheck="false" placeholder="name.testnet">
+            <label for="try-import-key">Private key, as near-cli prints it</label>
+            <input id="try-import-key" type="password" autocomplete="off" spellcheck="false" placeholder="ed25519:...">
+            <button type="submit">Check and import</button>
+          </form>
+        </details>
       </div>
 
       <dl class="sb-account try-account" id="try-account" hidden>
@@ -126,6 +139,8 @@
           <button type="submit">Shout</button>
         </form>
         <p class="fine try-first" id="try-first" hidden>The first buy of a wallet pays 0.03 NEAR to the token for storage. The rest buys tokens.</p>
+        <p class="fine">After a buy the shout field holds the wallet's whole loud balance. A shout must be at least one millionth of supply, unless it is the whole loud balance of a wallet with no other open exit.</p>
+        <button type="button" id="try-claim" hidden>Claim NEAR owed to this wallet</button>
       </div>
 
       <p class="state" id="try-pending" data-state="pending" role="status" hidden>Waiting for NEAR testnet…</p>
@@ -158,7 +173,7 @@
             <span class="cap-bar" id="try-cap-bar" role="meter" aria-label="Cap room available now on the live token" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><span></span></span>
             <span class="cap-text" id="try-cap-text"></span>
           </div>
-          <p class="board-note" id="try-board-note">Every open exit on the token, from every visitor, read from NEAR testnet. Times are UTC. The board reads again every 10 s.</p>
+          <p class="board-note" id="try-board-note">Open exits on the token, from every visitor, read page by page from NEAR testnet. The list may lag the chain by a few seconds. Times are UTC. The board reads again every 10 s.</p>
         </div>
       </div>
 
@@ -168,16 +183,16 @@
       </details>
 
       <dl class="facts" id="try-facts"></dl>
-      <p class="fine" id="try-note">This token runs a demo setting: its launch window stays open for seven days, so every buy is loud and every visitor can shout, leave and catch. Nobody holds quiet tokens on it yet. The notice is 1 min here, against 30 min in the standard preset.</p>
+      <p class="fine" id="try-note">This token runs a demo setting. The facts above, read from the chain, say whether its launch window is still open. The notice is 1 min here, against 30 min in the standard preset.</p>
 
       <details class="fine-print">
         <summary>What happens when you press a button</summary>
         <ul class="plain">
           <li>The page builds a NEAR transaction, signs it with the test wallet's key in this browser and sends it to a public testnet RPC node. Nothing passes through a server of ours. There is none.</li>
-          <li>A call takes 2 to 10 s. The result line shows what the contract answered, with its error code when it refused, and a link to the transaction.</li>
+          <li>Most calls finish in 2 to 10 s. When NEAR testnet is slow, the page keeps looking the transaction up for up to about 2 minutes; if it still has no final result, it says the transaction was sent and may still execute, and links it. It signs an action again only when a node refused it before it ran. The result line shows what the contract answered, with its error code when it refused, and a link to the transaction.</li>
           <li>Loud tokens here behave as on any LOUD token: <code>sell</code> refuses them, <code>shout</code> locks them for the notice, <code>leave</code> sells what the shared cap has room for, and another account can <code>catch</code> an open exit.</li>
           <li>Other visitors use the same token. Their exits are on the board, and you can catch them or hush the expired ones.</li>
-          <li>Test NEAR has no value. The faucet may refuse when it is busy. Forgetting a wallet deletes its key from this browser, and the account stays on testnet.</li>
+          <li>Test NEAR has no value. The public faucet limits how many accounts one network address can create, so the page asks it only for the first wallet; the second is made from the first. Forgetting a wallet deletes its key from this browser, and the account stays on testnet.</li>
         </ul>
       </details>
     </div>
@@ -611,7 +626,7 @@
 <footer class="foot">
   <p><b>Built at NEAR HACKATHON. Testnet only. Unaudited.</b></p>
   <p>By Bongbong (@bongbongcrypto). <a id="repo-link" href="https://github.com/bongbongcrypto/loud">Source, specification and tests</a></p>
-  <p>No cookies, no tracking. The page reads its own two data files and public data on NEAR testnet.</p>
+  <p>No cookies, no tracking. The page reads its own three data files (deployment, receipts, live token) and public data on NEAR testnet; it contacts the testnet faucet only when you ask for a test wallet.</p>
 </footer>
 
 <noscript><p class="noscript">The live token, the board, the split run and the simulator need JavaScript. The rule, the recorded proof summary, the limits and the parameters are complete without it.</p></noscript>

@@ -721,6 +721,26 @@ table.steps details b { color: var(--ink); }
 .try-wallets .fine { margin-top: 10px; max-width: 44em; }
 .try-account dd a { overflow-wrap: anywhere; }
 .sb-actions .try-first { grid-column: 1 / -1; margin: 0; }
+.sb-actions > .fine { grid-column: 1 / -1; margin: 0; max-width: 52em; }
+.sb-actions > #try-claim { grid-column: 1 / -1; justify-self: start; }
+.mock-banner {
+  margin: 0 0 14px;
+  padding: 10px 14px;
+  background: var(--fail);
+  color: #fff;
+  font-family: var(--mono);
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.sb-result[data-ok="unknown"] .msg { color: var(--accent); font-weight: 700; }
+.sb-log li[data-ok="unknown"] { color: var(--accent); }
+.try-import { margin-top: 10px; max-width: 44em; }
+.try-import form { display: grid; grid-template-columns: minmax(0, 1fr); gap: 4px; margin-top: 8px; }
+.try-import label { font-family: var(--mono); font-size: 12px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--ink-2); margin-top: 6px; }
+.try-import input { font-family: var(--mono); font-size: 14px; padding: 8px 10px; min-height: 38px; border: 1px solid var(--ink); border-radius: 0; background: #fbf9f3; min-width: 0; }
+.try-import button { justify-self: start; margin-top: 8px; }
 #try-pending { font-size: 16px; }
 #try-result .hint a { font-family: var(--mono); font-size: 13.5px; }
 #try-log a { margin-left: 4px; }

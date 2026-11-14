@@ -253,6 +253,7 @@ function heroSetSource(source) {
   $('#hero-pause').hidden = source !== 'sim';
   $('#hero-step').hidden = source !== 'sim';
   $('#hero-refresh').hidden = source !== 'live';
+  setText($('#board-mode'), source === 'sim' ? 'simulation' : 'testnet snapshot');
   if (source === 'sim') {
     setText($('#hero-note'), SIM_NOTE);
     heroRenderSim();
@@ -641,12 +642,21 @@ function trRender() {
   const count = tr.store.wallets.length;
   $('#try-new').hidden = count > 0;
   $('#try-new-2').hidden = count !== 1;
+  $('#try-new-2-note').hidden = count !== 1;
   $('#try-switch').hidden = count < 2;
   $('#try-forget').hidden = count === 0;
+  $('#try-import').hidden = count >= 2;
   $('#try-account').hidden = !w;
   $('#try-actions').hidden = !w;
   if (live) {
-    facts($('#try-facts'), TL.liveHeader(live, tr.cfg).map(([label, value], i) => ({ label, value, href: i === 0 ? tr.cfg.tokenHref : null })));
+    facts($('#try-facts'), TL.liveHeader(live, tr.cfg).map(([label, value], i) => ({ label, value, href: i === 0 && !tr.chain.isMock ? tr.cfg.tokenHref : null })));
+    setText($('#try-note'), TL.demoNote(live));
+  }
+  if (count === 1) {
+    const route = TL.secondWalletRoute(tr.store.wallets[0], trAccount(tr.store.wallets[0].accountId));
+    setText($('#try-new-2-note'), route === 'sub'
+      ? 'Wallet B is made from wallet A with 3 of its test NEAR, in one transaction. No faucet needed.'
+      : 'Wallet A holds too little test NEAR to fund wallet B, so the faucet is asked instead.');
   }
   if (w) {
     const a = trAccount(w.accountId);
@@ -657,6 +667,9 @@ function trRender() {
     setText($('#try-quiet'), a ? L.fmtTokens(a.quiet) : '…');
     setText($('#try-escrow'), a ? L.fmtTokens(a.escrowed) : '…');
     $('#try-first').hidden = !a || a.registered;
+    const claim = $('#try-claim');
+    claim.hidden = !a || a.owed <= 0n;
+    if (a && a.owed > 0n) setText(claim, `Claim ${L.fmtNear(a.owed, 6)} NEAR owed to this wallet`);
     const other = tr.store.wallets[1 - tr.store.active];
     const o = other ? trAccount(other.accountId) : null;
     $('#try-other').hidden = !other;
@@ -665,12 +678,11 @@ function trRender() {
     }
   } else {
     $('#try-other').hidden = true;
+    $('#try-claim').hidden = true;
   }
   setText($('#try-wallet-note'), `${tr.storageOk ? '' : 'This browser blocks storage, so a wallet lasts only until this tab is closed. '}A test wallet is a new NEAR testnet account that the public faucet funds with test NEAR. Testnet only, throwaway, no real funds. Its key is made in this browser, kept in this browser's storage and never sent anywhere. A second wallet lets you catch your own exit from another account.`);
   trRenderBoard();
-  setText($('#try-board-note'), tr.readError
-    ? `Could not read the token just now (${tr.readError}). The board shows the last read and tries again in 10 s.`
-    : 'Every open exit on the token, from every visitor, read from NEAR testnet. Times are UTC. The board reads again every 10 s.');
+  setText($('#try-board-note'), TL.boardNote(live, tr.readError, tr.chain.isMock ? 'the mock, not a chain,' : 'NEAR testnet'));
 
   const box = $('#try-result');
   const e = tr.last;
@@ -678,18 +690,20 @@ function trRender() {
     box.removeAttribute('data-ok');
     box.replaceChildren(h('p', { class: 'call', text: 'No transaction yet.' }));
   } else {
-    box.dataset.ok = String(e.ok);
+    box.dataset.ok = e.unknown ? 'unknown' : String(e.ok);
     put(box,
       h('p', { class: 'call', text: e.call }),
       h('p', { class: 'msg', text: e.message }),
       e.hint ? h('p', { class: 'hint', text: e.hint }) : null,
       e.explorerUrl ? h('p', { class: 'hint' }, link(e.explorerUrl, 'View transaction in the explorer')) : null,
+      !e.explorerUrl && e.hash && tr.chain.isMock ? h('p', { class: 'hint', text: `Mock transaction ${L.shortHash(e.hash)}: invented, not on any chain.` }) : null,
     );
   }
   const log = $('#try-log');
-  log.replaceChildren(...tr.log.slice().reverse().map((x) => h('li', { 'data-ok': String(x.ok) },
+  log.replaceChildren(...tr.log.slice().reverse().map((x) => h('li', { 'data-ok': x.unknown ? 'unknown' : String(x.ok) },
     document.createTextNode(`${x.call}: ${x.message} `),
-    x.explorerUrl ? link(x.explorerUrl, `transaction ${L.shortHash(x.hash)}`) : null)));
+    x.explorerUrl ? link(x.explorerUrl, `transaction ${L.shortHash(x.hash)}`)
+      : x.hash && tr.chain.isMock ? document.createTextNode(`(mock ${L.shortHash(x.hash)}, no explorer link)`) : null)));
   if (tr.log.length > 0) $('#try-log-box').open = true;
 }
 
@@ -720,18 +734,51 @@ async function trSend(build) {
   try {
     const plan = await build(w, trAccount(w.accountId));
     ctx = { accountId: w.accountId, ...plan.ctx };
+    // chain.call throws only before it has broadcast anything. A send it could not
+    // confirm comes back as outcome "unknown", with its hash.
     const res = await tr.chain.call(w, tr.cfg.token, plan.method, plan.args, { gasTgas: plan.gasTgas ?? TL.GAS_DEFAULT, depositYocto: plan.depositYocto });
+    if (plan.kind === 'leave' && res.ok) ctx.after = await trAfterLeave(res);
     tr.last = TL.describeResult(plan.kind, ctx, res);
     tr.log.push(tr.last);
   } catch (e) {
     trNote(false, `${ctx.accountId}  ${ctx.call || 'not sent'}`, e && e.message ? e.message : String(e), 'Nothing was sent to the chain.');
   }
+  const bought = Boolean(tr.last && tr.last.ok && ctx.call.startsWith('buy '));
   try {
     await trRefresh();
   } catch {
     trRender();
   }
+  // After a buy the shout field holds the whole loud balance: shouted, it is one exit
+  // larger than the cap, so the walkthrough ends in a partial leave.
+  if (bought) {
+    const a = trAccount(w.accountId);
+    if (a && a.loud > 0n) $('#try-shout-in').value = L.tokensForInput(a.loud);
+  }
   trBusy(false);
+}
+
+// Why a leave filled only part of the exit: get_state read until it includes the call
+// (leave_count has grown), and quote_sell of what is left, up to the cap room.
+async function trAfterLeave(res) {
+  const ev = (res.events || []).find((e) => e.standard === 'loud' && e.event === 'leave');
+  if (!ev || !tr.live || String(ev.data.remaining) === '0') return null;
+  const before = tr.live.state.leave_count;
+  for (let i = 0; i < 5; i++) {
+    try {
+      const st = await tr.chain.view(tr.cfg.token, 'get_state', {});
+      if (BigInt(st.leave_count) > before) {
+        const rest = BigInt(ev.data.remaining);
+        const room = BigInt(st.cap_available);
+        const quoteForRest = await tr.chain.view(tr.cfg.token, 'quote_sell', { amount: (rest < room ? rest : room).toString() });
+        return { capAvailable: st.cap_available, capUnits: st.cap_units, poolNear: st.pool_near, quoteForRest };
+      }
+    } catch {
+      return null;
+    }
+    await new Promise((r) => setTimeout(r, 1200));
+  }
+  return null;
 }
 
 const trNeed = (a) => {
@@ -820,29 +867,94 @@ async function trHasEd25519() {
   }
 }
 
-async function trNewWallet() {
-  if (tr.busy || tr.store.wallets.length >= 2) return;
-  if (!tr.chain.isMock && !(await trHasEd25519())) {
-    trNote(false, 'test wallet  not created', TL.NO_ED25519);
-    trRender();
-    return;
-  }
-  trBusy(true, 'Asking the testnet faucet for a funded account…');
-  try {
-    const w = await tr.chain.createTestWallet({ prefix: 'loud-try' });
-    tr.store.wallets.push({ accountId: w.accountId, publicKey: w.publicKey, secretKey: w.secretKey });
-    tr.store.active = tr.store.wallets.length - 1;
-    trSaveStore();
-    trNote(true, `${w.accountId}  created`, `${TL.walletLabel(tr.store.active)} is a new testnet account funded by the faucet. Buy with it.`);
-  } catch (e) {
-    trNote(false, 'test wallet  not created', TL.faucetFailure(e));
-  }
+function trKeep(w) {
+  tr.store.wallets.push({ accountId: w.accountId, publicKey: w.publicKey, secretKey: w.secretKey });
+  tr.store.active = tr.store.wallets.length - 1;
+  trSaveStore();
+}
+
+async function trCanSign() {
+  if (tr.chain.isMock || (await trHasEd25519())) return true;
+  trNote(false, 'test wallet  not created', TL.NO_ED25519);
+  trRender();
+  return false;
+}
+
+async function trAfterWallet() {
   try {
     await trRefresh();
   } catch {
     trRender();
   }
+  trShoutDefault();
   trBusy(false);
+}
+
+// The shout field follows the active wallet: its whole loud balance, or the default.
+function trShoutDefault() {
+  const w = trWallet();
+  const a = w ? trAccount(w.accountId) : null;
+  $('#try-shout-in').value = a && a.loud > 0n ? L.tokensForInput(a.loud) : '1000000';
+}
+
+// The first wallet comes from the faucet. The second is made from wallet A in one
+// transaction when A can fund it, so the faucet, which limits accounts per network
+// address, is asked once per visitor.
+async function trNewWallet() {
+  if (tr.busy || tr.store.wallets.length >= 2 || !(await trCanSign())) return;
+  const parent = tr.store.wallets.length === 1 ? tr.store.wallets[0] : null;
+  const route = parent ? TL.secondWalletRoute(parent, trAccount(parent.accountId)) : 'faucet';
+  if (route === 'sub') {
+    trBusy(true, 'Wallet A is creating wallet B on NEAR testnet…');
+    const call = `${parent.accountId}  create wallet B with 3 NEAR`;
+    try {
+      const w = await tr.chain.createSubWallet(parent, { amountYocto: TL.SUB_WALLET_NEAR.toString() });
+      trKeep(w);
+      tr.last = w.outcome === 'success'
+        ? { ok: true, call: `${call}  ok`, message: `Wallet B (${w.accountId}) was made from wallet A with 3 of its test NEAR, in one transaction. Use it to catch wallet A's exit.`, hint: '', explorerUrl: w.explorerUrl || null, hash: w.hash || null }
+        : { ok: false, unknown: true, call: `${call}  sent, not confirmed`, message: 'The transaction that creates wallet B was sent, but NEAR testnet did not confirm it in time. It may still execute. Wallet B is kept here and shows its balance once the account exists.', hint: 'Open it in the explorer before you try again.', explorerUrl: w.explorerUrl || null, hash: w.hash || null };
+      tr.log.push(tr.last);
+    } catch (e) {
+      const r = e && e.result ? e.result : null;
+      tr.last = {
+        ok: false, call: `${call}  rejected`, message: e && e.message ? e.message : String(e),
+        hint: r && r.hash ? 'The transaction ran and failed, so wallet B was not created.' : 'Wallet B was not created and no NEAR left wallet A.',
+        explorerUrl: r ? r.explorerUrl || null : null, hash: r ? r.hash || null : null,
+      };
+      if (r && r.hash) tr.log.push(tr.last);
+    }
+    await trAfterWallet();
+    return;
+  }
+  trBusy(true, 'Asking the testnet faucet for a funded account…');
+  try {
+    const w = await tr.chain.createTestWallet({ prefix: 'loud-try' });
+    trKeep(w);
+    trNote(true, `${w.accountId}  created`, `${TL.walletLabel(tr.store.active)} is a new testnet account funded by the faucet. Buy with it.`);
+  } catch (e) {
+    trNote(false, 'test wallet  not created', TL.faucetFailure(e));
+  }
+  await trAfterWallet();
+}
+
+// An existing testnet account: saved only after its key is found on it.
+async function trImport(ev) {
+  ev.preventDefault();
+  if (tr.busy || tr.store.wallets.length >= 2 || !(await trCanSign())) return;
+  const idIn = $('#try-import-id');
+  const keyIn = $('#try-import-key');
+  trBusy(true, 'Checking that this key is on the account…');
+  try {
+    const w = await tr.chain.importTestWallet(idIn.value, keyIn.value);
+    if (tr.store.wallets.some((x) => x.accountId === w.accountId)) throw new Error(`${w.accountId} is already one of the wallets here.`);
+    trKeep(w);
+    keyIn.value = '';
+    $('#try-import').open = false;
+    trNote(true, `${w.accountId}  imported`, `${TL.walletLabel(tr.store.active)} is ${w.accountId}. Its key is on the account and is now kept in this browser's storage.`);
+  } catch (e) {
+    trNote(false, 'test wallet  not imported', e && e.message ? e.message : String(e));
+  }
+  await trAfterWallet();
 }
 
 async function trStart() {
@@ -867,6 +979,9 @@ async function initTry() {
   const mock = new URLSearchParams(location.search).get('mock') === '1';
   let json = null;
   if (mock) {
+    const banner = $('#try-mock');
+    setText(banner, TL.MOCK_BANNER);
+    banner.hidden = false;
     tr.chain = TL.createMockChain();
     window.loudMock = tr.chain;
     json = TL.mockLiveJson();
@@ -898,10 +1013,16 @@ async function initTry() {
   $('#try-retry').addEventListener('click', trStart);
   $('#try-new').addEventListener('click', trNewWallet);
   $('#try-new-2').addEventListener('click', trNewWallet);
+  $('#try-import-form').addEventListener('submit', trImport);
+  $('#try-claim').addEventListener('click', () => trSend(async (w, a) => {
+    trNeed(a);
+    return { kind: 'claim', method: 'claim', args: {}, depositYocto: '1', ctx: { call: 'claim' } };
+  }));
   $('#try-switch').addEventListener('click', () => {
     if (tr.busy || tr.store.wallets.length < 2) return;
     tr.store.active = 1 - tr.store.active;
     trSaveStore();
+    trShoutDefault();
     trRender();
   });
   $('#try-forget').addEventListener('click', () => {
@@ -929,9 +1050,10 @@ async function initTry() {
       const w = trWallet();
       const a = w ? trAccount(w.accountId) : null;
       if (!a) return;
-      const whole = (units) => (units / 10n ** 18n) * 10n ** 18n;
-      if (b.dataset.tryFill === 'all') $('#try-sell-in').value = L.tokensForInput(whole(a.loud + a.quiet));
-      else $('#try-shout-in').value = L.tokensForInput(whole(a.loud));
+      // Exact balances: a shout of the whole loud balance is accepted even below the
+      // contract's minimum size.
+      if (b.dataset.tryFill === 'all') $('#try-sell-in').value = L.tokensForInput(a.loud + a.quiet);
+      else $('#try-shout-in').value = L.tokensForInput(a.loud);
     });
   }
   $('#try-table').addEventListener('click', (ev) => {
