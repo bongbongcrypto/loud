@@ -4,11 +4,26 @@
 
 LOUD makes launch supply announce its exit. The creator allocation and the tokens bought in the launch window are *loud*. They sell into the token's own pool only after a public notice, and every wallet draws on one shared cap, so splitting a bag across 100 wallets adds no room. While a notice is up, anyone else can *catch* the exit: buy the tokens from the seller, for no less than the pool's price when the exit was shouted, and take them, still loud, so that sale never hits the pool. Tokens bought later are *quiet* and sell at once. That includes tokens a holder sells through the cap and then buys back: the cap sets how fast early supply can be sold into the pool or converted, and it does not stop a price from falling ([Limits](#limits)).
 
+- **Use it now, no wallet needed:** https://bongbongcrypto.github.io/loud/#try. One click gives you a funded NEAR testnet account inside the page. Buy, get refused on `sell`, shout, catch from a second wallet, leave. Every click is a real transaction with an explorer link.
+- Live token to try: [t.loud-live-mwg2oscvef9c57.testnet](https://testnet.nearblocks.io/address/t.loud-live-mwg2oscvef9c57.testnet), no access keys, launch window open until 2026-11-21 so every visitor's buy is loud.
 - Live page: https://bongbongcrypto.github.io/loud/
 - Testnet token: <!-- proof:token -->[t.loud-mwfw1nxp3572b6.testnet](https://testnet.nearblocks.io/address/t.loud-mwfw1nxp3572b6.testnet), no access keys, demo preset, recorded 2026-11-14<!-- /proof:token -->. Every transaction: [Testnet proof](https://bongbongcrypto.github.io/loud/#proof).
 - Contract: [contracts/loud/src/lib.rs](contracts/loud/src/lib.rs). Exact rules and numbers: [SPEC.md](SPEC.md).
 
 Built at NEAR HACKATHON, memecoins track. Testnet only. Unaudited.
+
+## Use it on testnet
+
+The page's first section talks to the live token directly. There is no backend and no wallet extension.
+
+1. **Get a test wallet.** The page makes a key pair in your browser and asks the public NEAR testnet faucet for a funded account. The key stays in that browser's storage. It is a throwaway and holds no real funds.
+2. **Buy** with 2 NEAR. The launch window of this token is open for seven days, so the tokens arrive loud.
+3. **Sell.** The contract refuses: `E_NO_QUIET`.
+4. **Shout.** Your exit appears on the board that every visitor sees. Try **Hush**: refused, `E_NOTICE_BINDING`.
+5. **Get a second wallet** and **Catch quarter** of your own exit from it. The tokens arrive loud and the pool sells nothing.
+6. Switch back, wait out the 1 min notice and **Leave**. The shared cap fills part of it.
+
+The live token runs a demo setting: launch window 7 days (the longest the contract allows), notice 1 min, exit window 30 min, cap 0.5% of supply per 10 min, no creator allocation. So nobody holds quiet tokens on it yet. It was deployed by [a workflow](.github/workflows/live.yml) that then walked this same path on chain with the page's own client; the record is [web/live.json](web/live.json). Transactions are signed by [web/chain.js](web/chain.js), which has no dependency: Ed25519 from the browser's WebCrypto, its own transaction encoding, checked byte for byte against near-api-js in CI. It needs a current Chrome, Edge, Firefox or Safari. Connecting an existing wallet app is not built.
 
 ## What happened on testnet
 
@@ -65,7 +80,8 @@ Run from the repository root. The Node rows need Node 22 or newer and nothing in
 | `(cd contracts && cargo test --workspace)` | All tests pass. `split_test_one_wallet_vs_one_hundred` compares 1 wallet with 100. |
 | `(cd contracts/loud && cargo near build non-reproducible-wasm --locked --no-abi)` with cargo-near 0.23.0 | One wasm of about 0.2 MB. [CI](.github/workflows/ci.yml) runs both Rust steps on every push. |
 | Live page, "Run the split attack": run it with 1 wallet, then with 100 | The LOUD line stays the same. With more wallets the per-wallet rule sells the whole position sooner. |
-| Live page, "Play the token by hand" | The same error codes the contract returns, such as `E_NO_QUIET` for selling loud tokens directly and `E_NOTICE` for leaving early. |
+| Live page, "Use it on testnet" | Real transactions on the live token from a test wallet made in the page, each with an explorer link. |
+| Live page, the simulator ("play the rule by hand") | The same error codes the contract returns, such as `E_NO_QUIET` for selling loud tokens directly and `E_NOTICE` for leaving early. |
 | `node sim/replay.mjs` | Writes `sim/REPLAY.md` again from the two measured sell schedules in `sim/replay-data/`. |
 | Live page, "Testnet proof" | The token account, proof that nobody holds a key to it, and every recorded transaction on the explorer. The data is in [web/deployment.json](web/deployment.json) and [web/receipts.json](web/receipts.json); the steps are in [scripts/proof/README.md](scripts/proof/README.md). |
 | `node sim/run.mjs` (about 2 min) | Writes `sim/results.json` and `sim/RESULTS.md` again, byte for byte the same. |
@@ -156,6 +172,8 @@ Under LOUD, holders in both cases also get 30 minutes of public notice before th
 | `contracts/loud-math` | Pool and cap integer math, no dependency. |
 | `contracts/loud` | The token: NEP-141, the two balances, the built-in pool and the exits. |
 | `web/engine.js` | The same rules in JavaScript, used by the page and the simulator. It leaves out account registration, the 0.03 NEAR storage payment, asynchronous payouts and `ft_transfer_call` refunds. Its views differ in small ways: a quote that overflows throws instead of returning 0, the state has no `cap_full_ts`, and exits page in insertion order. |
+| `web/chain.js` | The page's NEAR client: test wallets from the faucet, signing, RPC. No dependency. |
+| `web/live-ui.js`, `web/live.json` | The "Use it on testnet" section and the record of the live token. |
 | `web/` | The static page, no build step. |
 | `sim/` | The 60-day simulation, and the replay of two real launches with its data. |
 | `scripts/proof` | The testnet run. |
