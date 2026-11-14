@@ -392,6 +392,9 @@ export function summarizeResult(result, hash) {
 // Sending
 // ---------------------------------------------------------------------------------------
 
+// Raised before anything is broadcast; `call` turns it into a result with hash null.
+class NotSent extends Error {}
+
 const nonces = new Map(); // `${accountId} ${publicKey}` -> BigInt, the last nonce used
 let recentBlock = { hash: null, at: 0 };
 
@@ -411,7 +414,7 @@ async function nextNonce(wallet) {
       key = await accessKey(wallet.accountId, wallet.publicKey);
       if (!key) await sleep(1500);
     }
-    if (!key) throw new Error(`the key of ${wallet.accountId} is not on chain`);
+    if (!key) throw new NotSent(`the key of ${wallet.accountId} is not on chain: the account does not exist or does not carry this key`);
     nonces.set(id, BigInt(key.nonce));
   }
   const n = nonces.get(id) + 1n;
@@ -445,7 +448,10 @@ async function sendAndWait(signedBase64, hash, senderId, maxWaitMs = 90_000) {
 // Sign and send one function call and wait until it is final.
 // -> { ok, outcome, hash, value, errorCode, errorMessage, logs, events, explorerUrl, settled }
 //   outcome "success": executed. "failure": executed and failed (a contract panic gives
-//   errorCode E_...). "invalid": a node refused the transaction, nothing executed.
+//   errorCode E_... and errorMessage the full text). "invalid": nothing executed, because
+//   a node refused the transaction or it could not be signed for this account; hash is
+//   null then, since there is nothing on chain to look at (`refusedHash` names a
+//   transaction that a node refused).
 // Throws only when no endpoint could be reached or the result never became final.
 export async function call(wallet, contractId, method, args = {}, { gasTgas = 100, depositYocto = '0' } = {}) {
   let hash = null;
@@ -466,6 +472,12 @@ export async function call(wallet, contractId, method, args = {}, { gasTgas = 10
       hash = signed.hash;
       return summarizeResult(await sendAndWait(signed.signedBase64, hash, wallet.accountId), hash);
     } catch (e) {
+      if (e instanceof NotSent) {
+        return {
+          ok: false, outcome: 'invalid', hash: null, refusedHash: null, value: null, errorCode: null, errorMessage: e.message,
+          logs: [], events: [], explorerUrl: null, settled: false,
+        };
+      }
       if (!(e instanceof RpcError)) throw e;
       if (/InvalidNonce|Expired/.test(e.text) && attempt < 2) {
         nonces.delete(`${wallet.accountId} ${wallet.publicKey}`);
@@ -474,7 +486,7 @@ export async function call(wallet, contractId, method, args = {}, { gasTgas = 10
       }
       const errorMessage = e.text.slice(0, 400);
       return {
-        ok: false, outcome: 'invalid', hash, value: null, errorCode: errorCode(errorMessage), errorMessage,
+        ok: false, outcome: 'invalid', hash: null, refusedHash: hash, value: null, errorCode: errorCode(errorMessage), errorMessage,
         logs: [], events: [], explorerUrl: null, settled: false,
       };
     }

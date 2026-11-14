@@ -260,6 +260,31 @@ test('a transaction a node refuses is reported as invalid; a stale nonce is retr
   assert.equal(r.outcome, 'invalid');
   assert.match(r.errorMessage, /NotEnoughBalance/);
   assert.equal(r.errorCode, null);
+  // Nothing is on chain, so there is no hash to link; the refused one is kept apart.
+  assert.equal(r.hash, null);
+  assert.equal(r.explorerUrl, null);
+  assert.match(r.refusedHash, /^[1-9A-HJ-NP-Za-km-z]{43,44}$/);
+});
+
+test('a wallet whose key is not on chain gets a result, not an exception', async () => {
+  const { wallet } = await fixedWallet();
+  let sends = 0;
+  const { fetch } = fakeRpc((body) => {
+    if (body.method === 'query') return { error: { name: 'HANDLER_ERROR', cause: { name: 'UNKNOWN_ACCOUNT' } } };
+    sends += 1;
+    return new Error(`unexpected ${body.method}`);
+  });
+  C.configure({ rpcUrls: ['https://one.example'], fetch });
+  const realSetTimeout = globalThis.setTimeout;
+  globalThis.setTimeout = (fn, _ms, ...a) => realSetTimeout(fn, 0, ...a); // skip the waits between lookups
+  try {
+    const r = await C.call({ ...wallet, accountId: 'never-made.testnet' }, 't.testnet', 'buy', {}, {});
+    assert.deepEqual([r.ok, r.outcome, r.hash, r.errorCode], [false, 'invalid', null, null]);
+    assert.match(r.errorMessage, /not on chain/);
+    assert.equal(sends, 0);
+  } finally {
+    globalThis.setTimeout = realSetTimeout;
+  }
 });
 
 test('createTestWallet asks the faucet and waits for the key to show on chain', async () => {
