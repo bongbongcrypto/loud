@@ -286,3 +286,22 @@ test('mock import of a test wallet: checked like chain.importTestWallet', async 
   const store = addWallet(parseWallets(null), w);
   assert.equal(parseWallets(serializeWallets(store)).wallets[0].accountId, 'mine.testnet');
 });
+
+test('a third wallet is refused, so no stored key is dropped', () => {
+  const k = (id) => ({ accountId: id, publicKey: 'ed25519:p', secretKey: 'ed25519:s' });
+  let s = addWallet(addWallet(parseWallets(null), k('a.testnet')), k('b.testnet'));
+  assert.equal(s.wallets.length, 2);
+  assert.throws(() => addWallet(s, k('c.testnet')), /two test wallets/);
+  s = addWallet(s, k('a.testnet')); // already there: becomes active, nothing dropped
+  assert.deepEqual([s.wallets.map((w) => w.accountId), s.active], [['a.testnet', 'b.testnet'], 0]);
+});
+
+test('launches of unknown outcome are looked up again', async () => {
+  const { recheckStatus } = await import('./launch.js');
+  const rec = { token: 'x-aaaa.a.testnet', status: 'unknown', at: new Date(0).toISOString() };
+  assert.equal(recheckStatus(rec, { account: { code_hash: 'H' }, keys: [] }, 'H'), 'found');
+  assert.equal(recheckStatus(rec, { account: { code_hash: 'Z' }, keys: [] }, 'H'), 'checks');
+  assert.equal(recheckStatus(rec, { account: null, keys: null }, 'H'), 'absent');
+  assert.equal(recheckStatus({ ...rec, at: new Date().toISOString() }, { account: null, keys: null }, 'H'), 'unknown');
+  assert.equal(recheckStatus(rec, null, 'H'), 'unknown');
+});

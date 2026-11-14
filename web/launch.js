@@ -460,12 +460,19 @@ export function parseWallets(text) {
 
 export const serializeWallets = (store) => JSON.stringify({ wallets: store.wallets.map(cleanWallet).filter(Boolean).slice(0, 2), active: store.active });
 
+// The main page holds at most two wallets, and so does this one: a third is refused, so
+// that no stored key is dropped. A wallet already in the store becomes the active one.
+export const STORE_FULL = 'This browser already holds two test wallets, as many as the main page keeps. Forget one there first: forgetting deletes its key from this browser.';
+export const storeFull = (store, accountId = null) => store.wallets.length >= 2 && !store.wallets.some((w) => w.accountId === accountId);
 export function addWallet(store, wallet) {
-  const wallets = [...store.wallets.filter((w) => w.accountId !== wallet.accountId), cleanWallet(wallet)].filter(Boolean).slice(-2);
+  const at = store.wallets.findIndex((w) => w.accountId === wallet.accountId);
+  if (at >= 0) return { wallets: store.wallets, active: at };
+  if (storeFull(store)) throw new Error(STORE_FULL);
+  const wallets = [...store.wallets, cleanWallet(wallet)].filter(Boolean);
   return { wallets, active: wallets.length - 1 };
 }
 
-const STATUSES = new Set(['sent', 'ok', 'checks', 'failed', 'unknown']);
+const STATUSES = new Set(['sent', 'ok', 'checks', 'failed', 'unknown', 'found', 'absent']);
 const cleanLaunch = (r) => (r && typeof r === 'object' && isNamedAccount(r.token)
   ? {
     token: r.token,
@@ -492,12 +499,24 @@ export function upsertLaunch(list, rec) {
   return [c, ...list.filter((r) => r.token !== c.token)].slice(0, MAX_LAUNCHES);
 }
 
+// New status of a launch that was 'sent' or 'unknown', from readToken. An account with the
+// published code and no key is 'found'; none after 10 minutes is 'absent' (a transaction
+// that has not executed by then has expired).
+export function recheckStatus(rec, read, codeHash, nowMs = Date.now()) {
+  if (!read) return rec.status;
+  if (read.account) return read.account.code_hash === codeHash && Array.isArray(read.keys) && read.keys.length === 0 ? 'found' : 'checks';
+  const at = Date.parse(rec.at ?? '');
+  return Number.isFinite(at) && nowMs - at > 10 * 60_000 ? 'absent' : rec.status;
+}
+
 export const STATUS_TEXT = Object.freeze({
   sent: 'sent, not confirmed',
   ok: 'launched, all checks passed',
   checks: 'launched, a check did not pass',
   failed: 'not launched',
   unknown: 'sent, outcome unknown',
+  found: 'on chain (found later; open it to check)',
+  absent: 'not on chain',
 });
 
 // ---------------------------------------------------------------------------------------
@@ -541,7 +560,7 @@ export function resultView(ctx) {
     return {
       tone: 'unknown',
       call: 'Sent, outcome unknown',
-      message: `The launch transaction was sent, but no node returned its outcome in time and ${tokenId} is not on chain yet. It may still execute. Open the transaction, and check this list again later; the page does not send it twice.`,
+      message: `The launch transaction was sent, but no node returned its outcome in time and ${tokenId} is not on chain yet. It may still execute. Open the transaction before you launch again: a second launch makes a second token and pays a second deposit. The list below looks the account up again when you reload the page.`,
       token: tokenId,
       open: null,
       status: 'unknown',
@@ -853,7 +872,7 @@ export async function startPage(doc = document, win = window) {
     list.replaceChildren();
     $('#l-list-empty').hidden = S.launches.length > 0;
     for (const r of S.launches) {
-      const live = r.status === 'ok' || r.status === 'checks';
+      const live = r.status === 'ok' || r.status === 'checks' || r.status === 'found';
       list.append(el('li', { 'data-status': r.status },
         el('span', { class: 'l-sym', text: r.symbol || '?' }),
         el('span', { class: 'l-acct' }, isMock ? doc.createTextNode(r.token) : el('a', { href: realChain.accountUrl(r.token), text: r.token })),
@@ -942,6 +961,10 @@ export async function startPage(doc = document, win = window) {
     if (S.busy) return;
     const idBox = $('#l-import-id');
     const keyBox = $('#l-import-key');
+    if (storeFull(S.store, idBox.value.trim())) {
+      showResult({ tone: 'fail', call: 'Not imported', message: STORE_FULL });
+      return;
+    }
     S.busy = true;
     render();
     try {
@@ -1062,6 +1085,17 @@ export async function startPage(doc = document, win = window) {
   } catch (err) {
     S.wasmError = String(err?.message ?? err);
     $('#l-wasm').textContent = S.wasmError;
+  }
+  render();
+
+  // Launches whose outcome was not known: look the accounts up again.
+  for (const r of S.launches.filter((x) => x.status === 'sent' || x.status === 'unknown')) {
+    // accountState throws when no node answered; only a clear "no such account" counts.
+    const st = await chain.accountState(r.token).catch(() => null);
+    if (!st) continue;
+    const read = st.exists ? await readToken(chain, r.token) : { account: null, keys: null };
+    const status = recheckStatus(r, read, S.codeHash);
+    if (status !== r.status) saveLaunch({ ...r, status });
   }
   render();
 }
