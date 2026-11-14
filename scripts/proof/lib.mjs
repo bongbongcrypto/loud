@@ -207,6 +207,145 @@ export function evaluateBuy({ attached, registeredBefore, poolNearBefore, poolNe
   };
 }
 
+// Fee of a catch in basis points of the quote (SPEC section 7, `CATCH_FEE_BPS`).
+export const CATCH_FEE_BPS = 100n;
+
+// The `catch` event of the `loud` standard in the logs of a transaction, or null.
+// A field the event does not carry, or that is not a decimal amount, is null.
+export function catchEvent(logs) {
+  const ev = parseEvents(logs).find((e) => e.standard === 'loud' && e.event === 'catch');
+  if (!ev) return null;
+  return {
+    id: ev.data.id === undefined || ev.data.id === null ? null : String(ev.data.id),
+    owner: typeof ev.data.account === 'string' ? ev.data.account : null,
+    catcher: typeof ev.data.catcher === 'string' ? ev.data.catcher : null,
+    amount: decimalOrNull(ev.data.amount),
+    remaining: decimalOrNull(ev.data.remaining),
+    nearPaid: decimalOrNull(ev.data.near_paid),
+    fee: decimalOrNull(ev.data.fee),
+  };
+}
+
+// NEAR to attach to a catch: the quote plus a margin, so a price that moved between the
+// view and the call does not fail it. The contract refunds what is above the quote.
+export function catchDeposit(nearIn, marginBps = 500n) {
+  const q = BigInt(nearIn);
+  return q + (q * BigInt(marginBps) + 9_999n) / 10_000n;
+}
+
+// Check of one catch against SPEC section 7: the catcher gets the tokens as loud, the exit
+// shrinks by the same amount, the pool keeps its tokens and gains the fee only, and the cap
+// is not used.
+//   amount            units asked for
+//   quote             { near_in, fee } from quote_catch, read before the call (null: not read)
+//   outcome, settled  of the catch transaction (settled: every receipt succeeded, no payout_failed)
+//   returned          return value of catch as a BigInt (null: not readable)
+//   catcherBefore/After   { loud, quiet } of the catcher from get_account
+//   remainingBefore/After exit.remaining on both sides; after is 0 when the exit is gone
+//   stateBefore/After     get_state on both sides
+//   event             catchEvent() of the transaction (null: none found)
+// State read from the contract decides. The event is evidence: a field that is present and
+// differs fails the check, a missing event is named in `notes`.
+export function evaluateCatch({
+  amount, quote, outcome, settled, returned,
+  catcherBefore, catcherAfter, remainingBefore, remainingAfter, stateBefore, stateAfter, event,
+}) {
+  const reasons = [];
+  const notes = [];
+  const big = (v) => (v === null || v === undefined ? null : decimalOrNull(typeof v === 'bigint' ? v.toString() : String(v)));
+  const want = BigInt(amount);
+  const quoteIn = big(quote?.near_in);
+  const quoteFee = big(quote?.fee);
+  const ev = event ?? null;
+  if (outcome !== 'success') reasons.push(`the catch did not succeed (${outcome ?? 'not sent'})`);
+  else if (settled !== true) reasons.push('a receipt of the catch failed or logged payout_failed');
+  if (returned === null || returned === undefined) notes.push('the return value was not readable');
+  else if (BigInt(returned) !== want) reasons.push(`catch returned ${returned}, expected ${want}`);
+
+  const loudBefore = big(catcherBefore?.loud);
+  const loudAfter = big(catcherAfter?.loud);
+  const quietBefore = big(catcherBefore?.quiet);
+  const quietAfter = big(catcherAfter?.quiet);
+  if (loudBefore === null || loudAfter === null || quietBefore === null || quietAfter === null) {
+    reasons.push('the catcher balances were not read on both sides');
+  } else {
+    if (loudAfter - loudBefore !== want) reasons.push(`the catcher's loud balance changed by ${loudAfter - loudBefore}, expected ${want}`);
+    if (quietAfter !== quietBefore) reasons.push(`the catcher's quiet balance changed by ${quietAfter - quietBefore}, expected 0`);
+  }
+
+  const remBefore = big(remainingBefore);
+  const remAfter = big(remainingAfter);
+  if (remBefore === null || remAfter === null) reasons.push('the exit was not read on both sides');
+  else if (remBefore - remAfter !== want) reasons.push(`the exit's remaining fell by ${remBefore - remAfter}, expected ${want}`);
+
+  const s0 = stateBefore ?? {};
+  const s1 = stateAfter ?? {};
+  const pair = (key) => [big(s0[key]), big(s1[key])];
+  const [tok0, tok1] = pair('pool_tokens');
+  const [near0, near1] = pair('pool_near');
+  const [cap0, cap1] = pair('cap_available');
+  const [caught0, caught1] = pair('total_caught');
+  const [count0, count1] = pair('catch_count');
+  const fee = ev?.fee ?? quoteFee;
+  let poolNearChange = null;
+  if ([tok0, tok1, near0, near1, cap0, cap1].some((v) => v === null)) {
+    reasons.push('get_state was not read on both sides');
+  } else {
+    poolNearChange = near1 - near0;
+    if (tok1 !== tok0) reasons.push(`pool_tokens changed by ${tok1 - tok0}, expected 0`);
+    if (fee === null) reasons.push('no fee to compare pool_near with: neither the event nor the quote carries one');
+    else if (poolNearChange !== fee) reasons.push(`pool_near changed by ${poolNearChange}, expected the fee ${fee}`);
+    // Nobody leaves between the two reads, so the room can only have grown by refill.
+    if (cap1 < cap0) reasons.push(`cap_available fell by ${cap0 - cap1}; a catch must not use the cap`);
+  }
+  if (caught0 === null || caught1 === null || count0 === null || count1 === null) {
+    reasons.push('get_state has no total_caught / catch_count on both sides');
+  } else {
+    if (caught1 - caught0 !== want) reasons.push(`total_caught changed by ${caught1 - caught0}, expected ${want}`);
+    if (count1 - count0 !== 1n) reasons.push(`catch_count changed by ${count1 - count0}, expected 1`);
+  }
+
+  if (ev === null) {
+    notes.push('no catch event was read');
+  } else {
+    if (ev.amount !== null && ev.amount !== want) reasons.push(`the catch event says amount ${ev.amount}, expected ${want}`);
+    if (ev.nearPaid === null || ev.fee === null) notes.push('the catch event lacks near_paid or fee');
+    else if (ev.fee !== ev.nearPaid * CATCH_FEE_BPS / 10_000n) reasons.push(`the catch event says fee ${ev.fee} for near_paid ${ev.nearPaid}; 1% rounded down is ${ev.nearPaid * CATCH_FEE_BPS / 10_000n}`);
+    if (ev.remaining !== null && remAfter !== null && ev.remaining !== remAfter) reasons.push(`the catch event says remaining ${ev.remaining}, the exit shows ${remAfter}`);
+    if (ev.nearPaid !== null && quoteIn !== null && ev.nearPaid !== quoteIn) notes.push(`the price moved between the quote (${quoteIn}) and the catch (${ev.nearPaid})`);
+  }
+  if (quoteIn === null) notes.push('quote_catch was not read');
+
+  const text = (v) => (v === null || v === undefined ? null : v.toString());
+  return {
+    pass: reasons.length === 0,
+    reasons,
+    notes,
+    // The part that goes into receipts.json (the caller adds ids, accounts and the hash).
+    record: {
+      amount: want.toString(),
+      quote_near_in: text(quoteIn),
+      quote_fee: text(quoteFee),
+      near_in: text(ev?.nearPaid ?? quoteIn),
+      fee: text(fee),
+      catcher_loud_before: text(loudBefore),
+      catcher_loud_after: text(loudAfter),
+      catcher_quiet_before: text(quietBefore),
+      catcher_quiet_after: text(quietAfter),
+      remaining_before: text(remBefore),
+      remaining_after: text(remAfter),
+      pool_tokens_change: tok0 === null || tok1 === null ? null : (tok1 - tok0).toString(),
+      pool_near_change: text(poolNearChange),
+      cap_available_before: text(cap0),
+      cap_available_after: text(cap1),
+      total_caught_change: caught0 === null || caught1 === null ? null : (caught1 - caught0).toString(),
+      catch_count_change: count0 === null || count1 === null ? null : (count1 - count0).toString(),
+      settled: outcome === 'success' ? settled === true : null,
+      pass: reasons.length === 0,
+    },
+  };
+}
+
 // NEAR held by the token account, split by what it is for. Inputs in yoctoNEAR and bytes.
 //   spare         = balance - pool_near                  everything that is not pool liquidity
 //   storage_stake = storage_bytes * 1e19                 what the protocol keeps locked for state

@@ -1,8 +1,8 @@
 # LOUD
 
-**A NEAR memecoin where you have to shout before you sell.**
+**A NEAR memecoin where you have to shout before you sell, and the room can answer.**
 
-LOUD makes launch supply announce its exit. The creator allocation and the tokens bought in the launch window are *loud*. They sell into the token's own pool only after a public notice that cannot be taken back, and every wallet draws on one shared cap, so splitting a bag across 100 wallets adds no room. Tokens bought later are *quiet* and sell at once. That includes tokens a holder sells through the cap and then buys back: the cap sets how fast early supply can be sold or converted, and it does not stop a price from falling ([Limits](#limits)).
+LOUD makes launch supply announce its exit. The creator allocation and the tokens bought in the launch window are *loud*. They sell into the token's own pool only after a public notice that cannot be taken back, and every wallet draws on one shared cap, so splitting a bag across 100 wallets adds no room. While a notice is up, anyone can *catch* the exit: pay the seller what the pool would have paid and take the tokens, still loud, so the sale never hits the pool. Tokens bought later are *quiet* and sell at once. That includes tokens a holder sells through the cap and then buys back: the cap sets how fast early supply can be sold or converted, and it does not stop a price from falling ([Limits](#limits)).
 
 - Live page: https://bongbongcrypto.github.io/loud/
 - Testnet token: <!-- proof:token -->[t.loud-mwf8y9vabcbf40.testnet](https://testnet.nearblocks.io/address/t.loud-mwf8y9vabcbf40.testnet), no access keys, demo preset, recorded 2026-11-13<!-- /proof:token -->. Every transaction: [Testnet proof](https://bongbongcrypto.github.io/loud/#proof).
@@ -39,7 +39,8 @@ Nobody leaves this launch quietly. Every early exit goes up on a public departur
 2. Loud tokens cannot use `sell`. To sell into the pool the holder calls `shout`, which locks them and posts a public notice, then `leave` when the notice ends.
 3. Every wallet's `leave` draws on one shared cap. More wallets never mean more room.
 4. A shout cannot be cancelled. Unsold tokens stay locked until the exit ends, and then `hush` returns them, still loud.
-5. Every wallet but the creator's needs a one-time 0.03 NEAR storage fee. Nobody, the creator included, can change or pause the token: it has no owner method and its account has no access key.
+5. From the moment of the shout until the exit ends, anyone can call `catch` on it with NEAR attached. The catcher pays the seller the pool's own sell quote for the amount caught and receives the tokens as loud. Of that price, 1% stays in the pool and the seller gets the rest. The pool sells nothing and the cap is not used, so an exit that is fully caught never pushes the price down. Holders who believe in the coin can absorb an insider's exit instead of watching the chart fall, and what they catch is as loud as it was: to sell it they must shout too.
+6. Every wallet but the creator's needs a one-time 0.03 NEAR storage fee. Nobody, the creator included, can change or pause the token: it has no owner method and its account has no access key.
 
 Standard preset: 1,000,000,000 supply, 5% creator, launch window 10 min, notice 30 min, exit window 60 min, cap 0.5% of supply per 60 min. The cap is a bucket that holds 0.5% and refills 0.5% per 60 min, so a full bucket plus one refill lets out at most 1% in any 60 min.
 
@@ -49,6 +50,8 @@ What a launch buyer accepts:
 - A shout locks the tokens until they sell or the exit expires, 90 min after the shout on the standard preset. After that `hush` returns them.
 - The cap is first come, first served. A `leave` fills only what the cap and the pool have room for.
 - Anyone who wants no part of this buys after the launch window and holds quiet tokens.
+
+What everyone else can do: watch the board, and when a shout goes up, sell first, hold, or catch it. Every shout is a public question to the room, and catching is the answer that keeps the price where it is.
 
 ## Check it yourself
 
@@ -125,6 +128,7 @@ Under LOUD, holders in both cases also get 30 minutes of public notice before th
 - **Waiting out the launch window avoids the tag.** Someone who buys right after it gets quiet tokens with no notice and no cap. The creator allocation starts loud, and so do the tokens of honest launch-window buyers.
 - **A shout does not force a sale.** A holder can shout, sell nothing and take the tokens back after the exit expires. There is no penalty beyond gas and the lock.
 - **A notice can trigger a rush.** Quiet holders can sell before a shouted exit is ready.
+- **Catching is a cash-out the cap does not slow.** A seller whose exit is caught gets paid at once, however large it is. The pool and the price are not touched, and the supply stays loud in the catcher's hands, but an insider with a willing buyer leaves faster than the cap. A holder can also take back their own shout by catching it from a second wallet. That costs the 1% fee and only moves loud tokens between their wallets.
 - **The creator allocation is unbacked.** It is minted without payment, so its proceeds come from buyers' NEAR. The last sellers may be unable to sell.
 - **First come, first served.** There is no queue. One holder who keeps calling `leave` can take every refill and starve the others until their exits expire.
 - **Sybil resistance.** The shared cap is the whole defence. More accounts add no room under it. They do add exit slots, eight per account. The contract cannot tell people apart and offers no per-person fairness.
@@ -138,7 +142,7 @@ Under LOUD, holders in both cases also get 30 minutes of public notice before th
 - **The 0.03 NEAR storage fee is never refunded.** A `storage_deposit` above it is refunded at once. On a first buy the fee comes out of the attached NEAR and the rest buys tokens. There is no withdraw and no unregister. A transfer to an unregistered account fails with `E_UNREGISTERED`. The 0.03 NEAR covers the account's records and eight open exits, the most one account can have.
 - **Failed payouts.** A payout whose transfer fails is recorded and collected with `claim`. The record depends on a callback that can itself fail, and then nothing is recorded.
 - **More than 100 open exits.** `get_exits` then pages in storage order, so a reader can skip or repeat an exit.
-- **Not built.** There is no trading fee, no liquidity migration, no audit and no mainnet token.
+- **Not built.** There is no trading fee beyond the 1% catch fee, no liquidity migration, no audit and no mainnet token.
 
 </details>
 

@@ -166,16 +166,21 @@ const EXIT_KEYS = ['id', 'amount', 'remaining', 'shouted_at', 'ready_at', 'expir
 export function normalizeExit(raw) {
   const ex = { owner: String(raw.owner ?? raw.account ?? '') };
   for (const k of EXIT_KEYS) ex[k] = BigInt(raw[k]);
-  ex.closed = raw.closed ?? null; // null | 'left' | 'hushed'
+  ex.closed = raw.closed ?? null; // null | 'left' | 'caught' | 'hushed'
+  // Units taken out of the exit with catch. null: the source cannot tell them
+  // from units sold (the contract keeps `amount` and `remaining` only).
+  ex.caught = raw.caught === undefined || raw.caught === null ? null : BigInt(raw.caught);
   ex.closed_at = raw.closed_at === undefined || raw.closed_at === null ? null : BigInt(raw.closed_at);
   return ex;
 }
 
 // NOTICE: shouted, notice running. BOARDING: leave is allowed now.
-// LEFT: fully sold through the door. EXPIRED: the exit window ran out.
+// LEFT: fully sold through the door. CAUGHT: emptied by a catch, so the last of
+// it went to another holder and not into the pool. EXPIRED: the exit window ran out.
 // hush only works on an expired exit, so a hushed exit keeps the EXPIRED status.
 export function exitStatus(ex, now) {
   const t = BigInt(now);
+  if (ex.closed === 'caught') return 'CAUGHT';
   if (ex.closed === 'left' || (ex.closed !== 'hushed' && ex.remaining === 0n)) return 'LEFT';
   if (ex.closed === 'hushed') return 'EXPIRED';
   if (t < ex.ready_at) return 'NOTICE';
@@ -192,8 +197,14 @@ export function exitsFromEvents(events, noticeNs) {
       map.set(data.id, {
         id: data.id, owner: data.account, amount: data.amount, remaining: data.amount,
         shouted_at: data.ready_at - BigInt(noticeNs), ready_at: data.ready_at, expires_at: data.expires_at,
-        closed: null, closed_at: null,
+        closed: null, closed_at: null, caught: 0n,
       });
+    } else if (event === 'catch') {
+      const ex = map.get(data.id);
+      if (!ex) continue;
+      ex.remaining = data.remaining;
+      ex.caught += data.amount;
+      if (data.remaining === 0n) { ex.closed = 'caught'; ex.closed_at = t; }
     } else if (event === 'leave') {
       const ex = map.get(data.id);
       if (!ex) continue;
@@ -209,15 +220,32 @@ export function exitsFromEvents(events, noticeNs) {
   return [...map.values()];
 }
 
+// What has gone out of an exit so far, in words. With a known caught amount
+// the sold and the caught parts are named apart; a chain exit only knows the sum.
+function goneText(ex) {
+  const gone = ex.amount - ex.remaining;
+  if (gone === 0n) return '';
+  if (ex.caught === null) return `${fmtCompact(gone)} out`;
+  const sold = gone - ex.caught;
+  return [sold > 0n ? `${fmtCompact(sold)} out` : '', ex.caught > 0n ? `${fmtCompact(ex.caught)} caught` : '']
+    .filter(Boolean).join(', ');
+}
+
 function statusDetail(ex, status, now) {
-  if (status === 'NOTICE') return `ready in ${fmtDuration(nsToSeconds(ex.ready_at - BigInt(now)))}`;
+  if (status === 'NOTICE') {
+    const gone = goneText(ex);
+    return `${gone ? `${gone}, ` : ''}ready in ${fmtDuration(nsToSeconds(ex.ready_at - BigInt(now)))}`;
+  }
   if (status === 'BOARDING') {
     const left = nsToSeconds(ex.expires_at - BigInt(now));
-    const sold = ex.amount - ex.remaining;
-    return sold > 0n
-      ? `${fmtCompact(sold)} out, ${fmtDuration(left)} left`
-      : `${fmtDuration(left)} left`;
+    const gone = goneText(ex);
+    return gone ? `${gone}, ${fmtDuration(left)} left` : `${fmtDuration(left)} left`;
   }
+  if (status === 'CAUGHT') {
+    const sold = ex.amount - ex.caught;
+    return sold > 0n ? `${fmtCompact(sold)} sold, ${fmtCompact(ex.caught)} caught, still loud` : 'taken by another holder, still loud';
+  }
+  if (status === 'LEFT' && ex.caught !== null && ex.caught > 0n) return `${fmtCompact(ex.caught)} of it caught`;
   if (status === 'EXPIRED') {
     if (ex.remaining === 0n) return '';
     return ex.closed === 'hushed'
@@ -648,6 +676,32 @@ export class Sandbox {
         : `Partial fill: ${fmtTokens(r.fill)} LOUD left for ${fmtNear(r.near)} NEAR. The cap had no more room; ${fmtTokens(r.remaining)} LOUD stay in the exit.`));
   }
 
+  // The active account catches an exit of the other one: all of what is left,
+  // or half of it. It attaches exactly the quoted price. Both accounts are the
+  // visitor's, so the price counts as NEAR paid and the owner's part as received.
+  catch(exitId, part = 'all') {
+    return this._run(`catch ${part === 'half' ? 'half of ' : ''}exit ${exitId}`,
+      () => {
+        const id = BigInt(exitId);
+        const open = this.token.getExits(0, 100).find((e) => e.id === id);
+        return { id, amount: part === 'half' && open ? open.remaining / 2n : null };
+      },
+      ({ id, amount }) => {
+        const owner = this.token.getExits(0, 100).find((e) => e.id === id)?.owner;
+        const price = this.token.quoteCatch(id, amount).near_in;
+        const x = this.token.catch(this.account, id, amount, price, this.now);
+        const pay = this.token.last_catch;
+        this.near_in += pay.near_paid;
+        this.near_out += pay.to_owner;
+        const still = this.token.getExits(0, 100).find((e) => e.id === id);
+        return { x, owner, pay, remaining: still ? still.remaining : 0n };
+      },
+      (r, { id }) => `Caught ${fmtTokens(r.x)} LOUD from exit ${id}. ${this.account} paid ${fmtNear(r.pay.near_paid)} NEAR, ` +
+        `the pool's own price for that amount: ${fmtNear(r.pay.to_owner)} NEAR went to ${r.owner} and ${fmtNear(r.pay.fee)} NEAR, the 1% fee, stays in the pool. ` +
+        `The tokens are loud in ${this.account}'s balance. The pool sold nothing and the cap was not used. ` +
+        (r.remaining === 0n ? 'The exit is closed.' : `${fmtTokens(r.remaining)} LOUD stay in the exit.`));
+  }
+
   hush(exitId) {
     return this._run(`hush exit ${exitId}`, () => BigInt(exitId),
       (id) => this.token.hush(this.account, id, this.now),
@@ -685,7 +739,8 @@ export class Sandbox {
       const mine = ex.owner === this.account;
       // Leave and Hush are offered on every open exit of the active account, so
       // a visitor can press them at the wrong time and read the engine error.
-      return { ...r, mine, canLeave: r.canHush && mine, canHush: r.canHush && mine };
+      // Catch is offered on every open exit of the other account, also an expired one.
+      return { ...r, mine, canLeave: r.canHush && mine, canHush: r.canHush && mine, canCatch: r.canHush && !mine };
     });
     const capFraction = Number((s.cap_available * 10000n) / s.cap_units) / 10000;
     return {
@@ -714,6 +769,7 @@ export class Sandbox {
       poolNear: s.pool_near,
       loudOutstanding: s.loud_outstanding,
       totalLeft: s.total_left,
+      totalCaught: s.total_caught,
       rows,
       log: this.log,
       path: pathProgress(this.log),
@@ -721,7 +777,7 @@ export class Sandbox {
   }
 }
 
-// Which of the six steps of the guided path the call log already shows, in
+// Which of the seven steps of the guided path the call log already shows, in
 // the order of the list on the page.
 export function pathProgress(log) {
   const has = (test) => log.some(test);
@@ -733,6 +789,7 @@ export function pathProgress(log) {
     has((x) => x.code === 'E_NOTICE_BINDING'),
     has((x) => x.ok && call('leave')(x)),
     has((x) => x.ok && call('hush')(x)),
+    has((x) => x.ok && call('catch')(x)),
   ];
 }
 

@@ -20,7 +20,7 @@ The step numbers are the ones used in `receipts.json`. Step 3 runs before step 2
 | 5 | The insider sends 1 unit to a wallet that is not registered. Then all 20 wallets call `storage_deposit` with 0.03 NEAR. Then the insider splits its whole loud balance across them with `ft_transfer` | the first transfer fails with `E_UNREGISTERED`; all 20 wallets are registered; every wallet holds loud, no quiet |
 | 6 | One wallet calls `sell()` | fails with `E_NO_QUIET` |
 | 7 | After the loud window the late buyer buys with 0.5 NEAR and sells half | holds quiet only; the buy registers the buyer and `pool_near` rises by 0.47 NEAR; the sell succeeds and none of its receipts failed |
-| 8 | All 20 wallets `shout` their full balance; one calls `leave()` at once and then `hush()` on the same exit | 20 open exits; the leave fails with `E_NOTICE`; the hush fails with `E_NOTICE_BINDING` and the exit stays open |
+| 8 | All 20 wallets `shout` their full balance; one calls `leave()` at once and then `hush()` on the same exit; the late buyer catches a quarter of another exit | 20 open exits; the leave fails with `E_NOTICE`; the hush fails with `E_NOTICE_BINDING` and the exit stays open; the owner's own `catch` fails with `E_SELF`; the late buyer's `catch` succeeds, its tokens arrive loud, `pool_tokens` stays, `pool_near` rises by the 1% fee and the cap room does not fall |
 | 9 | After the notice all 20 wallets call `leave()` in rounds for one full cap window | at least one fill; calls that executed and failed did so with `E_CAP` (or `E_EXPIRED` at the end); no successful leave has a failed receipt or a `payout_failed` event. Calls that were not executed and calls whose outcome stayed unknown are counted apart and do not fail the step |
 | 10 | Compare what left with the cap, measured over the full cap window | `sold_total <= bucket_at_start + cap_units * elapsed / cap_window_ns` (SPEC invariant 4), and the conditions listed below |
 
@@ -38,6 +38,20 @@ Storage (steps 2, 4, 5 and 7): an account pays 0.03 NEAR once to be registered, 
 How a buy is checked: the script reads `is_registered(buyer)` and `get_state().pool_near` before the buy and `pool_near` again after it. The change must equal the attached NEAR, less 0.03 NEAR if the buyer was not registered. Nothing is computed from a local price formula. The `buy` event is read as well: its `near_in` and `storage_paid` must agree when they are present. A field that is missing is named in the step text and does not fail the step. Step 7 also needs `is_registered(late buyer)` to change from `false` to `true`.
 
 Step 8, the hush: a shout is binding. `hush` fails with `E_NOTICE_BINDING` for everyone, the owner included, until the exit has expired. The wallet whose early `leave` was refused calls `hush` on the same exit right after it. The step needs that call to fail with this code and the exit to be still open. `early_hush.before_ready` says whether the call landed before the notice ended; it has to fail either way, because the exit has not expired.
+
+Step 8, the catch (SPEC section 7): after the two refusals, and normally while the notices are still running, the script picks the first open exit that is not the one used for the early calls and reads its `remaining`. The amount is a quarter of that, rounded down. It reads `quote_catch(exit_id, amount)` and attaches `near_in` plus 5% to both calls that follow; the contract refunds what is above the quote. First the owner of the exit calls `catch` on it and must be refused with `E_SELF`. Then the late buyer calls `catch`. It was registered by its buy in step 7; if `is_registered` says otherwise, it calls `storage_deposit` first. The script reads the late buyer's account and `get_state` before the call, and the account, `get_state` and the exit after it. All of this must hold:
+
+- the call succeeded, returned the amount, and none of its receipts failed or logged `payout_failed` (it pays the exit owner and refunds the margin);
+- the late buyer's loud balance rose by exactly the amount and its quiet balance did not change;
+- the exit's `remaining` fell by exactly the amount;
+- `pool_tokens` did not change and `pool_near` rose by exactly the fee, which is the `fee` of the `catch` event (the quoted fee if no event was read);
+- `cap_available` did not fall (nobody leaves between the two reads, so it can only have grown by refill);
+- `total_caught` rose by the amount and `catch_count` by 1;
+- where the `catch` event carries them: `amount` equals the amount, `fee` equals 1% of `near_paid` rounded down, `remaining` equals what the exit shows.
+
+`catch.before_ready` says whether the catch landed before the notice of that exit ended. It is recorded and does not decide the step: a catch is open from the shout until the exit expires. A catch call whose result no endpoint confirmed is looked up once more by hash before it is judged. The caught exit has less left for step 9, which changes nothing there: step 9 counts what each `leave` filled and step 10 compares those fills with the contract counter `total_left`, which a catch does not touch.
+
+Cost of the catch on the demo preset: the insider's 1 NEAR buys about 158.3M LOUD against the 5 NEAR virtual reserve; with the 50M creator allocation that is about 208.3M LOUD, 10.4M per wallet, so a quarter of one exit is about 2.6M LOUD. With about 6.24 NEAR of reserve and 763M LOUD in the pool at that point the quote is about 0.021 NEAR, 0.022 NEAR with the margin. The late buyer was funded with 0.65 NEAR, spent 0.5 NEAR on its buy and got about 0.23 NEAR back from selling half, so it holds about 0.37 NEAR. The funding plan is unchanged.
 
 Closing record: after step 10 the script reads the token account and `get_state` once more and writes `token_near.at_end` and `owed_total_at_end` (expected `"0"`: no payout failed). The same reading right after the deploy is in `token_near.at_deploy`. `spare` is the account balance minus `pool_near`, that is, the NEAR that is not pool liquidity. `storage_stake` is what the protocol locks for the account's state (code and records), and `free` is what is left after that and after `owed_total`. These values are recorded only: no step depends on them.
 
@@ -192,6 +206,14 @@ All token and NEAR amounts and all nanosecond timestamps are decimal strings.
       // step 8 only: "early_leave": { "account", "exit_id", "hash", "outcome", "error_code" }
       // step 8 only: "early_hush": { "account", "exit_id", "hash", "outcome", "error_code", "block_timestamp",
       //   "ready_at", "before_ready", "exit_still_open", "pass" }
+      // step 8 only: "self_catch": { "account", "exit_id", "hash", "outcome", "error_code" } | null
+      // step 8 only: "catch": { "exit_id", "owner", "catcher", "hash", "outcome", "error_code", "attached",
+      //   "block_timestamp", "ready_at", "before_ready", "amount", "quote_near_in", "quote_fee", "near_in", "fee",
+      //   "catcher_loud_before", "catcher_loud_after", "catcher_quiet_before", "catcher_quiet_after",
+      //   "remaining_before", "remaining_after", "pool_tokens_change", "pool_near_change",
+      //   "cap_available_before", "cap_available_after", "total_caught_change", "catch_count_change",
+      //   "settled", "pass", "reasons": [...], "notes": [...] } | null
+      // step 8 only, when the catch could not be run at all: "catch_error": "<text>"
     }
   ],
   "split": {
@@ -239,6 +261,6 @@ Explorer links: `https://testnet.nearblocks.io/txns/<hash>` and `https://testnet
 
 The files in the repository start as placeholders with `"status": "pending"`. Keys are only ever added to the two files, never renamed or removed, so a file written by an earlier version of the script may lack the newer keys (`expected_code_hash`, `code_hash_match`, `params_match`, `param_mismatches`, `settled`, `payout_calls`, `payouts_settled`, `measured_ns`, `full_window`, `timestamps_valid`, `fail_reasons`, `executed_failed`, `not_executed`, `unresolved`, `unresolved_txs`, `unresolved_hashes`, `unresolved_note`, `earlier_attempts`, `earlier_attempt_outcomes`, `resolved_late`, `retried_as`, `call`, `storage`, `buy`, `unregistered_transfer`, `registration`, `early_leave`, `early_hush`, `token_near`, `owed_total_at_end`).
 
-Step 5 holds 41 transactions in a run without retries: the refused transfer, 20 `storage_deposit` calls and 20 transfers. Step 8 holds 22: 20 shouts, the refused `leave` and the refused `hush`. The `call` key tells them apart.
+Step 5 holds 41 transactions in a run without retries: the refused transfer, 20 `storage_deposit` calls and 20 transfers. Step 8 holds 24: 20 shouts, the refused `leave`, the refused `hush`, the refused `catch` by the exit owner and the late buyer's `catch`. The `call` key tells them apart.
 
 A file written before the unresolved count existed has no `unresolved_txs` key, and its step 9 text puts the calls with the outcome `unknown` under "not executed" together with the `invalid` ones. By the grouping above, those with a hash are unresolved. A reader of such a file gets the same number by counting the records with `"outcome": "unknown"` and a hash that the script sent (in step 1, a record the faucet returned is not one of them). Such a file has no `earlier_attempts` either: a send that was retried is recorded with its last attempt only.

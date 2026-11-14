@@ -36,6 +36,10 @@ export const CHECK_TEXT = Object.freeze({
   10: ['What left, against the cap', 'no more than the cap allows'],
 });
 
+// Step 8 of a run that also recorded a catch (receipts.json: steps[7].catch).
+export const CHECK_TEXT_CATCH = Object.freeze(['All 20 wallets shout; one tries to leave at once; a late buyer catches part of another exit',
+  '20 open exits; the early leave is refused (E_NOTICE); the caught tokens arrive loud, and the pool and the cap are not used']);
+
 export const SCOPE_SHORT = 'Recorded before two later rules, listed under Testnet proof. ';
 export const NO_TOKEN_HTML = 'Not deployed yet.';
 export const NO_TOKEN_README = 'none recorded by the last run';
@@ -76,7 +80,7 @@ function lines(html, openStart, items) {
   return `${items.map((x) => `\n${indent}  ${x}`).join('')}\n${indent}`;
 }
 
-function setRows(html, tableId, steps) {
+function setRows(html, tableId, steps, withCatch = false) {
   const table = locate(html, tableId);
   const openStart = html.indexOf('<tbody>', table.openEnd);
   const closeStart = html.indexOf('</tbody>', openStart);
@@ -84,7 +88,7 @@ function setRows(html, tableId, steps) {
     throw new Error(`web/index.html: the table with id="${tableId}" has no <tbody>`);
   }
   const rows = steps.map((s) => {
-    const [title, expect] = CHECK_TEXT[s.n] ?? [s.title || 'Untitled check', s.expect || 'not recorded'];
+    const [title, expect] = (withCatch && String(s.n) === '8' ? CHECK_TEXT_CATCH : CHECK_TEXT[s.n]) ?? [s.title || 'Untitled check', s.expect || 'not recorded'];
     return `<tr><td>${esc(s.n)}. ${esc(title)} <span class="expect">Expected: ${esc(expect)}</span></td><td class="res" data-result="${s.result}">${s.result}</td></tr>`;
   });
   return html.slice(0, openStart + '<tbody>'.length) + lines(html, openStart, rows) + html.slice(closeStart);
@@ -113,8 +117,10 @@ export function syncHtml(html, deployment, receipts) {
     quiet ? '<p class="state" id="rec-state" data-state="pending" hidden>' : `<p class="state" id="rec-state" data-state="${r.state}">`);
 
   const { key, rest } = L.splitChecks(r.steps);
-  out = setRows(out, 'steps-key', key);
-  out = setRows(out, 'steps-table', rest);
+  const step8 = (Array.isArray(receipts?.steps) ? receipts.steps : []).find((x) => String(x?.n) === '8');
+  const withCatch = Boolean(step8 && step8.catch && typeof step8.catch === 'object');
+  out = setRows(out, 'steps-key', key, withCatch);
+  out = setRows(out, 'steps-table', rest, withCatch);
   out = setOpenTag(out, 'steps-rest', `<details class="fine-print" id="steps-rest"${rest.length ? '' : ' hidden'}>`);
 
   out = setElement(out, 'dep-state', esc(d.headline), `<p class="state" id="dep-state" data-state="${d.state}">`);

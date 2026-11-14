@@ -5,7 +5,7 @@ import { spawnSync } from 'node:child_process';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { syncFiles, syncHtml, syncReadme } from './sync-proof-text.mjs';
+import { syncFiles, syncHtml, syncReadme, CHECK_TEXT, CHECK_TEXT_CATCH } from './sync-proof-text.mjs';
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const SCRIPT = path.join(REPO, 'scripts', 'sync-proof-text.mjs');
@@ -277,4 +277,21 @@ test('README: every linked transaction and the run totals are in the recorded ru
   assert.ok(readme.includes(`${sp.attempts} calls`));
   assert.ok(readme.includes(`${sp.fills} sales, ${sp.cap_hits} \`E_CAP\` rejections, and ${sp.attempts - sp.fills - sp.cap_hits} \`E_EXPIRED\``));
   assert.ok(readme.includes(`${whole(sp.sold_total)} LOUD got out; the cap allowed at most ${whole(sp.bound)}`));
+});
+
+test('check 8 names the catch only for a run that recorded one', () => {
+  const page = readFileSync(path.join(REPO, 'web', 'index.html'), 'utf8');
+  const row = (title, expect) => `<tr><td>8. ${title} <span class="expect">Expected: ${expect}</span></td>`;
+  const without = receiptsFile();
+  assert.ok(syncHtml(page, deploymentFile(), without).includes(row(...CHECK_TEXT[8])));
+  assert.ok(!syncHtml(page, deploymentFile(), without).includes('catches part of another exit'));
+  const withCatch = receiptsFile();
+  withCatch.steps.find((s) => s.n === 8).catch = { exit_id: '2', pass: true };
+  const html = syncHtml(page, deploymentFile(), withCatch);
+  assert.ok(html.includes(row(...CHECK_TEXT_CATCH)));
+  assert.ok(!html.includes(row(...CHECK_TEXT[8])));
+  // A catch that could not be run leaves `catch: null`: the row keeps the older text.
+  const nullCatch = receiptsFile();
+  nullCatch.steps.find((s) => s.n === 8).catch = null;
+  assert.ok(syncHtml(page, deploymentFile(), nullCatch).includes(row(...CHECK_TEXT[8])));
 });

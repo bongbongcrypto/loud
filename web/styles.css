@@ -207,9 +207,10 @@ h1 {
 .status[data-status="NOTICE"] { color: var(--amber); }
 .status[data-status="BOARDING"] { background: var(--amber); color: var(--board); padding: 0 6px; }
 .status[data-status="LEFT"] { color: var(--dim); }
+.status[data-status="CAUGHT"] { color: var(--warm); }
 .status[data-status="EXPIRED"] { color: var(--coral); }
 .detail { display: inline-block; margin-left: 10px; font-size: 12px; letter-spacing: 0.02em; color: var(--dim); }
-tr[data-status="LEFT"] td { color: var(--dim); }
+tr[data-status="LEFT"] td, tr[data-status="CAUGHT"] td { color: var(--dim); }
 
 @media (prefers-reduced-motion: no-preference) {
   .status.flip-out { animation: flip-out 150ms ease-in forwards; }

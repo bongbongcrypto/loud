@@ -9,11 +9,13 @@
 //       minNearOut is for everything left in the exit and is scaled to the part filled
 //   hush(account, exitId, now)                      -> units returned to loud;
 //       only after the exit has expired, by anyone (a shout is binding)
+//   catch(account, exitId, amount, nearYocto, now)  -> units caught (payment in last_catch);
+//       amount null means everything left; nearYocto is the attached deposit
 //   transfer(account, receiver, amount, now)        -> { quiet_amount, loud_amount }
 //   transferLoud(account, receiver, amount, now)    -> amount
 //   transferCall(account, receiver, amount, now)    -> amount (quiet only)
 //   getParams(), getState(now), getAccount(id), getExits(from, limit),
-//   quoteBuy(near), quoteSell(amount)
+//   quoteBuy(near), quoteSell(amount), quoteCatch(exitId, amount)
 // A failed call throws LoudError (an Error with .code; the message starts with
 // the code) and leaves the state untouched, like a reverted transaction.
 // Amounts must fit u128 and timestamps and exit ids u64, as on chain; anything
@@ -26,7 +28,7 @@
 // Differences from the contract, sandbox only: hush returns the units returned
 // (the contract method returns nothing), and the constructor emits no ft_mint.
 // Storage registration is not modelled: there is no storage_deposit, no
-// storage fee and no E_UNREGISTERED, any account can receive tokens, the whole
+// storage fee and no E_UNREGISTERED (also not for catch), any account can receive tokens, the whole
 // NEAR passed to buy reaches the pool, and the buy event has no storage_paid.
 // name, symbol and icon are optional here and only checked for their size.
 //
@@ -46,6 +48,8 @@ const U64_MAX = (1n << 64n) - 1n;
 export const CONTRACT_ACCOUNT = 'loud.contract';
 const MIN_DEPOSIT = 10n ** 21n;
 const MAX_EXITS_PER_ACCOUNT = 8;
+// Share of a catch price that stays in the pool, a constant of the contract.
+export const CATCH_FEE_BPS = 100n;
 // Metadata size limits of `new`, in UTF-8 bytes.
 const MAX_META_BYTES = Object.freeze({ name: 64, symbol: 16, icon: 2048 });
 
@@ -300,7 +304,10 @@ export class LoudToken extends Pool {
     this.total_left = 0n;
     this.shout_count = 0n;
     this.leave_count = 0n;
+    this.total_caught = 0n;
+    this.catch_count = 0n;
     this.last_near_out = 0n;
+    this.last_catch = null;
 
     if (creatorAlloc > 0n) this.loud.set(this.creator, creatorAlloc);
   }
@@ -517,6 +524,55 @@ export class LoudToken extends Pool {
     });
   }
 
+  // What a catch of `amount` units of an exit costs now: the pool's own sell
+  // quote for that amount, whether or not the pool could pay it, and the part
+  // of it that stays in the pool. `amount` null or undefined means all of it.
+  _catchQuote(ex, amount) {
+    const x = amount === null || amount === undefined ? ex.remaining : big(amount, 'amount');
+    if (x === 0n || x > ex.remaining) fail('E_AMOUNT', `this exit has ${ex.remaining} units left to catch`);
+    const quote = this.quoteSell(x);
+    if (quote === 0n) fail('E_AMOUNT', 'this catch is too small to pay anything');
+    return { x, quote, fee: (quote * CATCH_FEE_BPS) / 10000n };
+  }
+
+  quoteCatch(exitId, amount) {
+    const { quote, fee } = this._catchQuote(this._exit(exitId), amount);
+    return { near_in: quote, fee };
+  }
+
+  // Anyone but the owner takes tokens out of an open exit by paying the owner
+  // the pool's sell quote for them. The tokens stay loud, the pool inventory
+  // and the cap are not touched, and 1% of the price stays in the pool.
+  // `nearYocto` is the attached deposit; what is above the quote goes back.
+  // The payment of the last catch is in last_catch.
+  catch(account, exitId, amount, nearYocto, now) {
+    return this._tx(account, now, (t) => {
+      const ex = this._exit(exitId);
+      if (ex.owner === account) fail('E_SELF', 'the exit owner cannot catch their own exit');
+      if (t > ex.expires_at) fail('E_EXPIRED', 'this exit has expired and can no longer be caught');
+      const { x, quote, fee } = this._catchQuote(ex, amount);
+      const deposit = big(nearYocto, 'near');
+      if (deposit < quote) fail('E_DEPOSIT', `this catch costs ${quote} yoctoNEAR; ${deposit} attached`);
+      ex.remaining -= x;
+      this.escrowed -= x;
+      this.loud.set(account, this._loudOf(account) + x);
+      if (ex.remaining === 0n) this.exits.delete(ex.id);
+      // The catcher's NEAR pays the owner. Only the fee stays, in the pool.
+      this.pool_near += fee;
+      this.contract_near += fee;
+      this.total_caught = min(this.total_caught + x, U128_MAX);
+      this.catch_count = min(this.catch_count + 1n, U64_MAX);
+      this.last_catch = { near_paid: quote, fee, to_owner: quote - fee, refund: deposit - quote };
+      this._emit('ft_transfer', t, {
+        old_owner_id: CONTRACT_ACCOUNT, new_owner_id: account, amount: x, memo: 'catch',
+      });
+      this._emit('catch', t, {
+        id: ex.id, account: ex.owner, catcher: account, amount: x, remaining: ex.remaining, near_paid: quote, fee,
+      });
+      return x;
+    });
+  }
+
   // NEP-141
 
   transfer(account, receiver, amount, now) {
@@ -629,8 +685,10 @@ export class LoudToken extends Pool {
       open_exits: this.exits.size,
       total_shouted: this.total_shouted,
       total_left: this.total_left,
+      total_caught: this.total_caught,
       shout_count: this.shout_count,
       leave_count: this.leave_count,
+      catch_count: this.catch_count,
       now: t,
       is_loud_window: t < this.loud_until,
     };

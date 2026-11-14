@@ -124,12 +124,14 @@ function createBoard(table, { actions = false } = {}) {
       setText(e.cells.ready, row.ready);
       setText(e.detail, row.detail);
       if (e.act) {
-        const actKey = `${row.canLeave}/${row.canHush}`;
+        const actKey = `${row.canLeave}/${row.canHush}/${Boolean(row.canCatch)}`;
         if (actKey !== e.actKey) {
           e.actKey = actKey;
           put(e.act,
             row.canLeave ? h('button', { type: 'button', 'data-do': 'leave', 'data-id': row.id, text: 'Leave', 'aria-label': `Leave exit ${row.id}` }) : null,
             row.canHush ? h('button', { type: 'button', 'data-do': 'hush', 'data-id': row.id, text: 'Hush', 'aria-label': `Hush exit ${row.id}` }) : null,
+            row.canCatch ? h('button', { type: 'button', 'data-do': 'catch', 'data-id': row.id, text: 'Catch', 'aria-label': `Catch all of exit ${row.id}` }) : null,
+            row.canCatch ? h('button', { type: 'button', 'data-do': 'catch-half', 'data-id': row.id, text: 'Catch half', 'aria-label': `Catch half of exit ${row.id}` }) : null,
           );
         }
       }
@@ -464,6 +466,7 @@ const HINTS = {
   E_NO_QUIET: 'Loud tokens cannot be sold directly. Shout them, wait for the notice, then leave.',
   E_NOTICE: 'Skip time with the clock buttons, then press Leave again.',
   E_EXPIRED: 'Press Hush to take the tokens back. They are still loud. Then shout again.',
+  E_SELF: 'You cannot catch your own exit. Switch wallet and catch it from there.',
   E_NOTICE_BINDING: 'A shout cannot be cancelled. Leave when the notice is over, or skip past the exit window and hush then.',
   E_NO_LOUD: 'Shout takes loud tokens only. Quiet tokens can simply be sold.',
   E_DUST: 'A shout must be at least one millionth of supply, which is 1,000 LOUD here. A smaller shout must be your whole loud balance, with no other exit of yours open.',
@@ -509,6 +512,10 @@ function renderSandbox() {
     box.dataset.ok = String(e.ok);
     let hint = e.ok ? '' : (HINTS[e.code] || '');
     if (e.code === 'E_CAP') hint = `${v.nextRoomText || 'Room is back'}. Skip a few minutes and leave again.`;
+    if (!e.ok && e.call.startsWith('catch')) {
+      hint = e.code === 'E_EXPIRED' ? 'An expired exit can no longer be caught. Hush returns its tokens to the owner.'
+        : e.code === 'E_AMOUNT' ? 'There is nothing left in this exit to catch.' : hint;
+    }
     if (!e.ok && /units/.test(e.message)) hint += ' The engine counts in units: 1 LOUD is 10^18 units.';
     put(box,
       h('p', { class: 'call', text: `${L.fmtSinceLaunch(e.t)}  ${e.account}  ${e.call}  ${e.ok ? 'ok' : 'rejected'}` }),
@@ -574,7 +581,9 @@ function initSandbox() {
     const b = ev.target.closest('button[data-do]');
     if (!b) return;
     const id = b.dataset.id;
-    act(() => (b.dataset.do === 'leave' ? sb.box.leave(id) : sb.box.hush(id)), b.dataset.do === 'hush');
+    const kind = b.dataset.do;
+    if (kind === 'catch' || kind === 'catch-half') act(() => sb.box.catch(id, kind === 'catch' ? 'all' : 'half'), true);
+    else act(() => (kind === 'leave' ? sb.box.leave(id) : sb.box.hush(id)), kind === 'hush');
   });
   renderSandbox();
 }

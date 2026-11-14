@@ -276,7 +276,7 @@ test('sandbox: the guided path shows the real errors', () => {
   assert.equal(v.rows.length, 1);
   assert.equal(v.rows[0].status, 'NOTICE');
   assert.ok(v.rows[0].canLeave && v.rows[0].canHush);
-  assert.deepEqual(v.path, [true, true, true, false, false, false]);
+  assert.deepEqual(v.path, [true, true, true, false, false, false, false]);
 
   r = sb.leave('1');
   assert.equal(r.code, 'E_NOTICE');
@@ -292,7 +292,7 @@ test('sandbox: the guided path shows the real errors', () => {
   assert.match(r.message, /90 min/);
   assert.doesNotMatch(r.message, /\d{9,}/);
   assert.equal(sb.view().escrowed, 86363636363636363636363636n);
-  assert.deepEqual(sb.view().path, [true, true, true, true, false, false]);
+  assert.deepEqual(sb.view().path, [true, true, true, true, false, false, false]);
 
   sb.skip(30n * MIN);
   assert.equal(sb.view().rows[0].status, 'BOARDING');
@@ -320,7 +320,7 @@ test('sandbox: the guided path shows the real errors', () => {
   assert.equal(v.rows[0].status, 'EXPIRED');
   assert.match(v.rows[0].detail, /returned, still loud$/);
   assert.equal(v.rows[0].canLeave, false);
-  assert.deepEqual(v.path, [true, true, true, true, true, true]);
+  assert.deepEqual(v.path, [true, true, true, true, true, true, false]);
   assert.equal(v.loud, 86363636363636363636363636n - 2_500_000n * UNIT);
 
   // A buy after the launch window is quiet and sells at once.
@@ -1107,4 +1107,98 @@ test('real launch: the lines on the page carry the numbers of the case file and 
   assert.ok(block.includes(`<code>${data.token.address}</code>`));
   assert.match(block, /The first two lines are measured on chain\. The LOUD line replays the same sales through the rule engine/);
   assert.equal(notice, String(Number(PRESETS.standard.notice_ns / MIN)));
+});
+
+test('sandbox: the second wallet catches an exit, the tokens stay loud and the pool sells nothing', () => {
+  const sb = new L.Sandbox();
+  assert.ok(sb.buy('10').ok);
+  const lot = sb.view().loud;
+  assert.ok(sb.shout(L.tokensForInput(lot)).ok);
+  // The owner sees Leave and Hush on the row, never Catch, and cannot catch it anyway.
+  let row = sb.view().rows[0];
+  assert.deepEqual([row.canLeave, row.canHush, row.canCatch], [true, true, false]);
+  let r = sb.catch('1');
+  assert.equal(r.code, 'E_SELF');
+
+  sb.switchAccount();
+  let v = sb.view();
+  row = v.rows[0];
+  assert.deepEqual([row.mine, row.canLeave, row.canHush, row.canCatch], [false, false, false, true]);
+  const pool = { near: v.poolNear, cap: v.capAvailable, left: v.totalLeft, price: v.price };
+  const nearIn = v.nearIn;
+
+  // Half of it, during the notice.
+  r = sb.catch('1', 'half');
+  assert.ok(r.ok, r.message);
+  assert.equal(r.call, 'catch half of exit 1');
+  assert.match(r.message, /^Caught 43,181,818 LOUD from exit 1\. you-2\.testnet paid [\d.]+ NEAR, the pool's own price for that amount: [\d.]+ NEAR went to you\.testnet and [\d.]+ NEAR, the 1% fee, stays in the pool\. The tokens are loud in you-2\.testnet's balance\. The pool sold nothing and the cap was not used\. 43,181,818 LOUD stay in the exit\.$/);
+  v = sb.view();
+  assert.equal(v.loud, lot / 2n);
+  assert.equal(v.quiet, 0n);
+  row = v.rows[0];
+  assert.equal(row.status, 'NOTICE');
+  assert.match(row.detail, /^43\.2M caught, ready in /);
+  assert.equal(row.canCatch, true);
+  const pay = sb.token.last_catch;
+  assert.equal(v.poolNear, pool.near + pay.fee);
+  assert.equal(pay.fee, pay.near_paid / 100n);
+  assert.equal(v.nearIn, nearIn + pay.near_paid);
+  assert.equal(v.capAvailable, pool.cap);
+  assert.equal(v.totalLeft, pool.left);
+  assert.equal(v.totalCaught, lot / 2n);
+
+  // The rest: the exit closes as CAUGHT and offers nothing more.
+  r = sb.catch('1');
+  assert.ok(r.ok, r.message);
+  assert.match(r.message, /The exit is closed\.$/);
+  v = sb.view();
+  assert.equal(v.loud, lot);
+  row = v.rows[0];
+  assert.equal(row.status, 'CAUGHT');
+  assert.equal(row.detail, 'taken by another holder, still loud');
+  assert.deepEqual([row.canLeave, row.canHush, row.canCatch], [false, false, false]);
+  assert.equal(v.totalLeft, 0n);
+  assert.ok(v.price >= pool.price);
+  assert.equal(v.path[6], true);
+
+  // Caught tokens are loud: selling them directly is refused, shouting works.
+  r = sb.sell(L.tokensForInput(lot));
+  assert.equal(r.code, 'E_NO_QUIET');
+  assert.ok(sb.shout(L.tokensForInput(v.loud)).ok);
+  // A closed exit cannot be caught again.
+  assert.equal(sb.catch('1').code, 'E_NO_EXIT');
+});
+
+test('board: caught amounts are named apart from sold ones, and a chain exit only knows the sum', () => {
+  const sb = new L.Sandbox();
+  sb.buy('10');
+  sb.shout('10000000');
+  sb.skip(30n * MIN);
+  assert.ok(sb.leave('1').ok);
+  sb.switchAccount();
+  assert.ok(sb.catch('1', 'half').ok);
+  let row = sb.view().rows[0];
+  assert.equal(row.status, 'BOARDING');
+  assert.match(row.detail, /^2\.50M out, 3\.75M caught, 1 h left$/);
+  // An expired exit of the other wallet still shows Catch, and the engine refuses it.
+  sb.skip(61n * MIN);
+  row = sb.view().rows[0];
+  assert.equal(row.status, 'EXPIRED');
+  assert.equal(row.canCatch, true);
+  assert.equal(sb.catch('1').code, 'E_EXPIRED');
+
+  // Chain exits carry amount and remaining only.
+  const chain = { id: '4', owner: 'a.testnet', amount: String(10n * UNIT), remaining: String(4n * UNIT), shouted_at: '0', ready_at: '60', expires_at: '600' };
+  assert.equal(L.normalizeExit(chain).caught, null);
+  assert.match(L.boardRows([chain], 100n)[0].detail, /^6.00 out, /);
+  assert.equal(L.exitStatus(L.normalizeExit({ ...chain, remaining: '0', closed: 'caught', caught: String(10n * UNIT) }), 100n), 'CAUGHT');
+});
+
+test('index.html: the catch rule is on the page', () => {
+  const html = readFileSync(new URL('./index.html', import.meta.url), 'utf8');
+  assert.ok(html.includes('<b>The room can answer.</b>'));
+  assert.ok(html.includes('<dt>A catch is a cash-out the cap does not slow</dt>'));
+  assert.ok(html.includes('<tr><th scope="row">Catch fee</th><td>1%</td>'));
+  assert.ok(html.includes('<b>CAUGHT</b> taken by another holder, still loud.'));
+  assert.equal((html.split('<ol class="path" id="sb-path">')[1].split('</ol>')[0].match(/<li>/g) || []).length, 7);
 });

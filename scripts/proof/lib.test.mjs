@@ -7,6 +7,7 @@ import {
   receiptSettlement, base58Encode, isTxHash, faucetTx, paramMismatches,
   txRecord, outcomeClass, needsLookup, unresolvedEarlier, leaveCounts, leaveCountsText, unresolvedSummary,
   STORAGE_MIN_YOCTO, decimalOrNull, buyEvent, evaluateBuy, tokenNear,
+  CATCH_FEE_BPS, catchEvent, catchDeposit, evaluateCatch,
 } from './lib.mjs';
 
 const b64 = (v) => Buffer.from(JSON.stringify(v)).toString('base64');
@@ -664,4 +665,126 @@ test('unresolvedSummary counts what the run sent and could not confirm', () => {
   assert.deepEqual(many.hashes, [h(4), h(6), h(9)]);
   assert.match(many.note, /^3 transactions that the run sent have no confirmed outcome/);
   assert.match(many.note, /each of them never executed or executed and failed/);
+});
+
+// A catch of 400 units at a quote of 1,000 yoctoNEAR (fee 10) as the contract reports it.
+const catchLog = (data) => `EVENT_JSON:${JSON.stringify({ standard: 'loud', version: '1.0.0', event: 'catch', data: [data] })}`;
+const goodCatch = () => ({
+  amount: 400n,
+  quote: { near_in: '1000', fee: '10' },
+  outcome: 'success',
+  settled: true,
+  returned: 400n,
+  catcherBefore: { loud: '0', quiet: '77' },
+  catcherAfter: { loud: '400', quiet: '77' },
+  remainingBefore: 1600n,
+  remainingAfter: 1200n,
+  stateBefore: { pool_tokens: '9000', pool_near: '500', cap_available: '30', total_caught: '0', catch_count: 0 },
+  stateAfter: { pool_tokens: '9000', pool_near: '510', cap_available: '42', total_caught: '400', catch_count: 1 },
+  event: catchEvent([catchLog({ id: '12', account: 'w02.x', catcher: 'late.x', amount: '400', remaining: '1200', near_paid: '1000', fee: '10' })]),
+});
+
+test('catchEvent reads the loud catch event and nothing else', () => {
+  assert.equal(catchEvent([]), null);
+  assert.equal(catchEvent(['EVENT_JSON:{"standard":"loud","version":"1.0.0","event":"leave","data":[{"filled":"1"}]}']), null);
+  const ev = catchEvent(['noise', catchLog({ id: 12, account: 'w02.x', catcher: 'late.x', amount: '400', remaining: '0', near_paid: '1000', fee: '10' })]);
+  assert.deepEqual(ev, { id: '12', owner: 'w02.x', catcher: 'late.x', amount: 400n, remaining: 0n, nearPaid: 1000n, fee: 10n });
+  const bare = catchEvent([catchLog({})]);
+  assert.deepEqual(bare, { id: null, owner: null, catcher: null, amount: null, remaining: null, nearPaid: null, fee: null });
+});
+
+test('catchDeposit adds a margin and rounds it up', () => {
+  assert.equal(catchDeposit('1000'), 1050n);
+  assert.equal(catchDeposit(1n), 2n);
+  assert.equal(catchDeposit('0'), 0n);
+  assert.equal(catchDeposit(21_000_000_000_000_000_000_000n), 22_050_000_000_000_000_000_000n);
+  assert.equal(catchDeposit('1000', 0n), 1000n);
+});
+
+test('CATCH_FEE_BPS is 1%', () => {
+  assert.equal(CATCH_FEE_BPS, 100n);
+});
+
+test('evaluateCatch: a catch that follows the rule passes', () => {
+  const r = evaluateCatch(goodCatch());
+  assert.equal(r.pass, true);
+  assert.deepEqual(r.reasons, []);
+  assert.deepEqual(r.notes, []);
+  assert.deepEqual(r.record, {
+    amount: '400', quote_near_in: '1000', quote_fee: '10', near_in: '1000', fee: '10',
+    catcher_loud_before: '0', catcher_loud_after: '400', catcher_quiet_before: '77', catcher_quiet_after: '77',
+    remaining_before: '1600', remaining_after: '1200',
+    pool_tokens_change: '0', pool_near_change: '10', cap_available_before: '30', cap_available_after: '42',
+    total_caught_change: '400', catch_count_change: '1', settled: true, pass: true,
+  });
+  // The whole exit caught: the caller passes 0 for an exit that is gone.
+  const all = goodCatch();
+  Object.assign(all, { amount: 1600n, returned: 1600n, remainingAfter: 0n, catcherAfter: { loud: '1600', quiet: '77' } });
+  all.stateAfter.total_caught = '1600';
+  all.event = catchEvent([catchLog({ amount: '1600', remaining: '0', near_paid: '1000', fee: '10' })]);
+  assert.equal(evaluateCatch(all).pass, true);
+});
+
+test('evaluateCatch: each broken condition fails with its reason', () => {
+  const broken = (change, pattern) => {
+    const input = goodCatch();
+    change(input);
+    const r = evaluateCatch(input);
+    assert.equal(r.pass, false, String(pattern));
+    assert.equal(r.record.pass, false);
+    assert.ok(r.reasons.some((x) => pattern.test(x)), `${pattern} not in ${JSON.stringify(r.reasons)}`);
+  };
+  broken((i) => { i.outcome = 'failure'; }, /did not succeed \(failure\)/);
+  broken((i) => { i.outcome = 'unknown'; }, /did not succeed \(unknown\)/);
+  broken((i) => { i.settled = false; }, /receipt of the catch failed/);
+  broken((i) => { i.returned = 399n; }, /returned 399, expected 400/);
+  broken((i) => { i.catcherAfter.loud = '399'; }, /loud balance changed by 399, expected 400/);
+  // Caught tokens must not arrive as quiet.
+  broken((i) => { i.catcherAfter = { loud: '0', quiet: '477' }; }, /quiet balance changed by 400/);
+  broken((i) => { i.remainingAfter = 1600n; }, /remaining fell by 0, expected 400/);
+  broken((i) => { i.stateAfter.pool_tokens = '9400'; }, /pool_tokens changed by 400/);
+  // The whole payment in the pool instead of the fee only.
+  broken((i) => { i.stateAfter.pool_near = '1500'; }, /pool_near changed by 1000, expected the fee 10/);
+  broken((i) => { i.stateAfter.pool_near = '500'; }, /pool_near changed by 0, expected the fee 10/);
+  broken((i) => { i.stateAfter.cap_available = '29'; }, /cap_available fell by 1/);
+  broken((i) => { i.stateAfter.total_caught = '0'; }, /total_caught changed by 0/);
+  broken((i) => { i.stateAfter.catch_count = 0; }, /catch_count changed by 0/);
+  broken((i) => { delete i.stateBefore.total_caught; }, /no total_caught/);
+  broken((i) => { i.stateBefore = null; }, /get_state was not read/);
+  broken((i) => { i.catcherBefore = null; }, /catcher balances were not read/);
+  broken((i) => { i.remainingBefore = null; }, /exit was not read/);
+  broken((i) => { i.event.amount = 1n; }, /event says amount 1/);
+  broken((i) => { i.event.fee = 11n; i.stateAfter.pool_near = '511'; }, /1% rounded down is 10/);
+  broken((i) => { i.event.remaining = 5n; }, /event says remaining 5/);
+});
+
+test('evaluateCatch: a missing event or quote is a note, and the other one supplies the fee', () => {
+  const noEvent = goodCatch();
+  noEvent.event = null;
+  const a = evaluateCatch(noEvent);
+  assert.equal(a.pass, true);
+  assert.deepEqual(a.notes, ['no catch event was read']);
+  assert.equal(a.record.fee, '10');
+  const noQuote = goodCatch();
+  noQuote.quote = null;
+  const b = evaluateCatch(noQuote);
+  assert.equal(b.pass, true);
+  assert.deepEqual(b.notes, ['quote_catch was not read']);
+  const neither = goodCatch();
+  neither.quote = null;
+  neither.event = null;
+  const c = evaluateCatch(neither);
+  assert.equal(c.pass, false);
+  assert.ok(c.reasons.some((x) => /no fee to compare/.test(x)));
+  // The price moved between the view and the call: the event decides, the quote is a note.
+  const moved = goodCatch();
+  moved.quote = { near_in: '990', fee: '9' };
+  const d = evaluateCatch(moved);
+  assert.equal(d.pass, true);
+  assert.ok(d.notes.some((x) => /price moved/.test(x)));
+  assert.equal(d.record.near_in, '1000');
+  // A call that failed has nothing to settle.
+  const failed = goodCatch();
+  failed.outcome = 'failure';
+  assert.equal(evaluateCatch(failed).record.settled, null);
 });

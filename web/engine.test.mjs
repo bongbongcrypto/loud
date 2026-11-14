@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   LoudToken, NaiveToken, PerWalletToken, LoudError, PRESETS, NEAR, UNIT, SEC, MIN, HOUR, DAY,
-  mulDiv, makeRng, runSplitScenario, CONTRACT_ACCOUNT,
+  mulDiv, makeRng, runSplitScenario, CONTRACT_ACCOUNT, CATCH_FEE_BPS,
 } from './engine.js';
 
 const P = PRESETS.standard;
@@ -850,4 +850,161 @@ test('exitPrice: quotes only what the pool can pay for, 0 when nothing can be so
   assert.ok(px > Number((thin.pool_near * 10n ** 12n) / have) / 1e18);
   assert.ok(px > 0 && px < thin.price());
   assert.equal(thin.sell('late', part, 0n, 11n * MIN), quote);
+});
+
+// catch: the room takes an announced exit (SPEC section 7)
+
+// A seeded token with one open exit of the early buyer's whole loud balance.
+function withExit() {
+  const t = seeded();
+  const lot = t.getAccount('early').loud;
+  const id = t.shout('early', lot, 12n * MIN);
+  return { t, lot, id, shoutedAt: 12n * MIN };
+}
+
+test('catch: a full catch pays the owner the pool quote, keeps 1% in the pool and moves nothing else', () => {
+  const { t, lot, id } = withExit();
+  const now = 13n * MIN; // inside the notice period
+  const before = { ...t.getState(now), contract_near: t.contract_near, bucket_units: t.bucket_units };
+  const quote = t.quoteSell(lot);
+  assert.deepEqual(t.quoteCatch(id), { near_in: quote, fee: quote / 100n });
+  const events = t.events.length;
+  assert.equal(t.catch('holder-0', id, null, quote, now), lot);
+  assert.deepEqual(t.last_catch, { near_paid: quote, fee: quote / 100n, to_owner: quote - quote / 100n, refund: 0n });
+  const after = t.getState(now);
+  // The tokens are loud in the catcher's account and the exit is gone.
+  assert.equal(t.getAccount('holder-0').loud, lot);
+  assert.equal(t.getAccount('early').loud, 0n);
+  assert.equal(after.open_exits, 0);
+  assert.throws(() => t.quoteCatch(id), code('E_NO_EXIT'));
+  // Pool inventory, cap and loud supply are untouched; only the fee enters the pool.
+  assert.equal(after.pool_tokens, before.pool_tokens);
+  assert.equal(after.loud_outstanding, before.loud_outstanding);
+  assert.equal(after.cap_available, before.cap_available);
+  assert.equal(after.total_left, before.total_left);
+  assert.equal(after.pool_near, before.pool_near + quote / 100n);
+  assert.equal(t.contract_near, before.contract_near + quote / 100n);
+  assert.equal(after.escrowed, before.escrowed - lot);
+  assert.equal(after.total_caught, lot);
+  assert.equal(after.catch_count, 1n);
+  assert.deepEqual(t.events.slice(events).map((e) => e.event), ['ft_transfer', 'catch']);
+  assert.deepEqual(t.events[events].data, {
+    old_owner_id: CONTRACT_ACCOUNT, new_owner_id: 'holder-0', amount: lot, memo: 'catch',
+  });
+  assert.deepEqual(t.events[events + 1].data, {
+    id, account: 'early', catcher: 'holder-0', amount: lot, remaining: 0n, near_paid: quote, fee: quote / 100n,
+  });
+  checkInvariants(t);
+});
+
+test('catch: caught tokens stay loud, so the catcher must shout to sell them', () => {
+  const { t, lot, id } = withExit();
+  const quietBefore = t.getAccount('holder-1').quiet;
+  t.catch('holder-1', id, null, t.quoteSell(lot), 13n * MIN);
+  const a = t.getAccount('holder-1');
+  assert.equal(a.loud, lot);
+  assert.equal(a.quiet, quietBefore);
+  // sell uses quiet only: one unit more than the quiet balance is refused.
+  assert.throws(() => t.sell('holder-1', quietBefore + 1n, 0n, 14n * MIN), code('E_NO_QUIET'));
+  const again = t.shout('holder-1', lot, 14n * MIN);
+  assert.throws(() => t.leave('holder-1', again, 0n, 15n * MIN), code('E_NOTICE'));
+  checkInvariants(t);
+});
+
+test('catch: a partial catch leaves the rest in the exit, which can still leave or be caught', () => {
+  const { t, lot, id } = withExit();
+  const half = lot / 2n;
+  const q1 = t.quoteCatch(id, half);
+  assert.equal(q1.near_in, t.quoteSell(half));
+  assert.equal(t.catch('holder-0', id, half, q1.near_in, 13n * MIN), half);
+  assert.equal(t.getExits()[0].remaining, lot - half);
+  assert.equal(t.getState(13n * MIN).escrowed, lot - half);
+  // The fee of the first catch raised the pool NEAR, so the next quote is for the new state.
+  const q2 = t.quoteCatch(id);
+  assert.equal(q2.near_in, t.quoteSell(lot - half));
+  // The owner can still leave with what is left once the notice is over.
+  const ready = 12n * MIN + P.notice_ns;
+  const filled = t.leave('early', id, 0n, ready);
+  assert.ok(filled > 0n && filled <= lot - half);
+  const rest = lot - half - filled;
+  if (rest > 0n) {
+    assert.equal(t.catch('holder-2', id, null, t.quoteCatch(id).near_in, ready), rest);
+    assert.equal(t.getAccount('holder-2').loud, rest);
+  }
+  assert.equal(t.getState(ready).open_exits, 0);
+  assert.equal(t.getState(ready).catch_count, rest > 0n ? 2n : 1n);
+  checkInvariants(t);
+});
+
+test('catch: open from the shout until the exit expires, the notice period included', () => {
+  const { t, lot, id, shoutedAt } = withExit();
+  const expires = shoutedAt + P.notice_ns + P.exit_window_ns;
+  const unit = 10n ** 18n;
+  // In the block of the shout, during the notice, during the window and at the last moment.
+  for (const now of [shoutedAt, shoutedAt + 1n * MIN, shoutedAt + P.notice_ns + 1n * MIN, expires]) {
+    assert.equal(t.catch('holder-0', id, unit, t.quoteCatch(id, unit).near_in, now), unit, `at ${now}`);
+  }
+  assert.throws(() => t.catch('holder-0', id, unit, NEAR, expires + 1n), code('E_EXPIRED'));
+  // After expiry the rest goes back to the owner with hush, as before.
+  assert.equal(t.hush('holder-0', id, expires + 1n), lot - 4n * unit);
+  checkInvariants(t);
+});
+
+test('catch: the owner, a short deposit, a bad amount and an unknown exit are refused and change nothing', () => {
+  const { t, lot, id } = withExit();
+  const now = 13n * MIN;
+  const snapshot = () => JSON.stringify([t.getState(now), t.getAccount('early'), t.getAccount('holder-0'), t.contract_near, t.events.length],
+    (_, v) => (typeof v === 'bigint' ? v.toString() : v));
+  const before = snapshot();
+  const quote = t.quoteSell(lot);
+  assert.throws(() => t.catch('early', id, null, quote, now), code('E_SELF'));
+  assert.throws(() => t.catch('holder-0', id, null, quote - 1n, now), (e) => code('E_DEPOSIT')(e) && e.message.includes(String(quote)));
+  assert.throws(() => t.catch('holder-0', id, 0n, quote, now), code('E_AMOUNT'));
+  assert.throws(() => t.catch('holder-0', id, lot + 1n, quote * 2n, now), code('E_AMOUNT'));
+  assert.throws(() => t.quoteCatch(id, lot + 1n), code('E_AMOUNT'));
+  assert.throws(() => t.catch('holder-0', id + 5n, null, quote, now), code('E_NO_EXIT'));
+  // One unit of a token this cheap is worth less than one yoctoNEAR.
+  assert.equal(t.quoteSell(1n), 0n);
+  assert.throws(() => t.catch('holder-0', id, 1n, NEAR, now), code('E_AMOUNT'));
+  assert.equal(snapshot(), before);
+  checkInvariants(t);
+});
+
+test('catch: what is attached above the quote is refunded', () => {
+  const { t, lot, id } = withExit();
+  const quote = t.quoteSell(lot);
+  const nearBefore = t.contract_near;
+  t.catch('holder-0', id, null, quote + 7n * NEAR, 13n * MIN);
+  assert.equal(t.last_catch.refund, 7n * NEAR);
+  assert.equal(t.last_catch.to_owner + t.last_catch.fee, quote);
+  // Only the fee stays with the contract.
+  assert.equal(t.contract_near, nearBefore + quote / 100n);
+});
+
+test('catch: the cap is not used and a caught exit never sells into the pool', () => {
+  const { t, lot, id, shoutedAt } = withExit();
+  const ready = shoutedAt + P.notice_ns;
+  const availBefore = t.getState(ready).cap_available;
+  const priceBefore = t.price();
+  assert.ok(lot > availBefore, 'the lot is larger than the room in the cap');
+  t.catch('holder-0', id, null, t.quoteSell(lot), ready);
+  const s = t.getState(ready);
+  assert.equal(s.cap_available, availBefore);
+  assert.equal(s.total_left, 0n);
+  // The fee is the only thing that moved the price, and it moved it up.
+  assert.ok(t.price() >= priceBefore);
+  // Another holder's exit finds the whole room still there.
+  const other = t.shout(CREATOR, availBefore, ready);
+  assert.equal(t.leave(CREATOR, other, 0n, ready + P.notice_ns), availBefore);
+  checkInvariants(t);
+});
+
+test('catch: the fee makes taking back a shout through a second wallet cost 1% of its value', () => {
+  const { t, lot, id } = withExit();
+  const quote = t.quoteSell(lot);
+  t.catch('early-2', id, null, quote, 13n * MIN);
+  // The pair of wallets holds the same loud tokens and is poorer by the fee.
+  assert.equal(t.getAccount('early-2').loud, lot);
+  assert.equal(quote - t.last_catch.to_owner, quote / 100n);
+  assert.equal(CATCH_FEE_BPS, 100n);
 });

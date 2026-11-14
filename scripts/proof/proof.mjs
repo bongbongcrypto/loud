@@ -19,6 +19,7 @@ import {
   receiptSettlement, base58Encode, faucetTx, paramMismatches,
   txRecord, needsLookup, leaveCounts, leaveCountsText, unresolvedSummary,
   STORAGE_MIN_YOCTO, buyEvent, evaluateBuy, tokenNear,
+  catchEvent, catchDeposit, evaluateCatch,
 } from './lib.mjs';
 
 const { KeyPair, transactions: T, utils } = nearApi;
@@ -369,6 +370,9 @@ function summarize(result, hash, account) {
 // Gas for sell and leave. Their NEAR payout carries the on_payout callback, for which the
 // contract reserves 10 Tgas out of the attached gas.
 const PAY_GAS = 80n * TGAS;
+// Gas for catch: two payouts (the exit owner's NEAR and the refund of the margin), each
+// with its own 10 Tgas callback.
+const CATCH_GAS = 120n * TGAS;
 
 // One function call. The result carries the method name, which txRecord writes as `call`.
 const call = async (signer, contract, method, args, { gas = 30n * TGAS, deposit = 0n } = {}) => ({
@@ -803,8 +807,10 @@ async function main() {
     + (lateSell?.outcome === 'success' ? `; payout receipts: ${sellSettled ? 'all succeeded' : `NOT settled (${lateSell.receiptError ?? 'unknown'})`}` : ''));
 
   // Step 8: every wallet shouts; an early leave is rejected
-  const s8 = addStep(8, `All ${WALLETS} wallets shout their full balance; one tries leave() and then hush() before the notice ends`,
-    `${WALLETS} open exits; the early leave fails with E_NOTICE; the hush of the same exit by its owner fails with E_NOTICE_BINDING and the exit stays open`);
+  const s8 = addStep(8, `All ${WALLETS} wallets shout their full balance; one tries leave() and then hush() before the notice ends; the late buyer catches a quarter of another exit`,
+    `${WALLETS} open exits; the early leave fails with E_NOTICE; the hush of the same exit by its owner fails with E_NOTICE_BINDING and the exit stays open; `
+    + 'an owner catching its own exit fails with E_SELF; the catch by the late buyer succeeds: it receives the tokens as loud, the exit shrinks by the same amount, '
+    + 'pool_tokens does not change, pool_near rises by the 1% fee only and the cap room does not fall');
   const shouts = await Promise.all(wallets.map((w, i) => call(w, token, 'shout', { amount: parts[i].toString() }, { deposit: ONE_YOCTO })));
   shouts.forEach((r) => s8.txs.push(txRecord(r)));
   // The early leave goes out at once, while the notice of the exit just opened is still running.
@@ -854,10 +860,104 @@ async function main() {
     exit_still_open: hushedExit !== null,
     pass: hushOk,
   } : null;
-  finishStep(s8, open.length === WALLETS && early?.outcome === 'failure' && early.code === 'E_NOTICE' && hushOk,
+  // The catch (SPEC section 7): while the notices run, the late buyer takes a quarter of one
+  // other exit by paying its owner what the pool would have paid. The tokens stay loud, the
+  // pool keeps its tokens and gains the 1% fee only, and the cap is not used. First the
+  // refusal: the owner of that exit cannot catch it itself.
+  let selfCatch = null;
+  let caught = null;
+  let catchEval = null;
+  const target = open.find((e) => e.id !== earlyExitId) ?? null;
+  s8.catch = null;
+  s8.self_catch = null;
+  if (target !== null) {
+    try {
+      const readTarget = async () => ((await account(target.wallet.id)).exits ?? []).find((x) => String(x.id) === target.id) ?? null;
+      const exitBefore = await readTarget();
+      const remainingBefore = exitBefore ? BigInt(exitBefore.remaining ?? exitBefore.amount) : 0n;
+      const catchAmount = remainingBefore / 4n;
+      if (catchAmount === 0n) throw new Error(`exit ${target.id} has nothing left to catch`);
+      const quote = await view('quote_catch', { exit_id: target.id, amount: catchAmount.toString() });
+      const deposit = catchDeposit(quote.near_in);
+      // The late buyer was registered by its buy in step 7. If that did not happen, it
+      // registers now, so the catch is not refused for a reason this step does not test.
+      if (await view('is_registered', { account_id: late.id }) !== true) {
+        const reg = await call(late, token, 'storage_deposit', {}, { gas: CATCH_GAS, deposit: STORAGE_MIN_YOCTO });
+        s8.txs.push(txRecord(reg));
+      }
+      // A result no endpoint confirmed is looked up once more by hash before it is judged.
+      const confirmed = async (r) => {
+        if (r.outcome !== 'unknown' || !r.hash) return r;
+        const look = await lookupTx(r.hash, r.account);
+        return look.found ? { ...look.found, method: r.method, earlierAttempts: r.earlierAttempts, resolvedLate: true } : r;
+      };
+      selfCatch = await confirmed(await call(target.wallet, token, 'catch', { exit_id: target.id, amount: catchAmount.toString() }, { gas: CATCH_GAS, deposit }));
+      s8.txs.push(txRecord(selfCatch));
+      s8.self_catch = { account: selfCatch.account, exit_id: target.id, hash: selfCatch.hash, outcome: selfCatch.outcome, error_code: selfCatch.code };
+      const [catcherBefore, stateBefore] = await Promise.all([account(late.id), view('get_state')]);
+      caught = await confirmed(await call(late, token, 'catch', { exit_id: target.id, amount: catchAmount.toString() }, { gas: CATCH_GAS, deposit }));
+      // A catch pays NEAR to the exit owner and refunds the margin, so the record carries `settled`.
+      s8.txs.push(payRecord(caught));
+      const catchTs = await blockTsOf(caught);
+      const moved = caught.outcome === 'success';
+      const [catcherAfter, stateAfter, exitAfter] = await Promise.all([
+        readUntil(() => account(late.id), (a) => !moved || BigInt(a.loud) !== BigInt(catcherBefore.loud), 6),
+        readUntil(() => view('get_state'), (st) => !moved || String(st.catch_count) !== String(stateBefore.catch_count), 6),
+        readUntil(readTarget, (x) => !moved || x === null || BigInt(x.remaining ?? x.amount) !== remainingBefore, 6),
+      ]);
+      catchEval = evaluateCatch({
+        amount: catchAmount,
+        quote,
+        outcome: caught.outcome,
+        settled: caught.settled,
+        returned: returnValueBigInt(caught.successValue),
+        catcherBefore,
+        catcherAfter,
+        remainingBefore,
+        remainingAfter: exitAfter ? BigInt(exitAfter.remaining ?? exitAfter.amount) : 0n,
+        stateBefore,
+        stateAfter,
+        event: catchEvent(caught.logs),
+      });
+      s8.catch = {
+        exit_id: target.id,
+        owner: target.wallet.id,
+        catcher: late.id,
+        hash: caught.hash,
+        outcome: caught.outcome,
+        error_code: caught.code,
+        attached: deposit.toString(),
+        block_timestamp: catchTs === null || catchTs === undefined ? null : catchTs.toString(),
+        ready_at: target.readyAt.toString(),
+        before_ready: catchTs === null || catchTs === undefined ? null : catchTs < target.readyAt,
+        ...catchEval.record,
+        reasons: catchEval.reasons,
+        notes: catchEval.notes,
+      };
+    } catch (e) {
+      log(`the catch could not be run: ${String(e?.message ?? e).slice(0, 200)}`);
+      s8.catch_error = String(e?.message ?? e).slice(0, 300);
+    }
+  }
+  const selfCatchOk = selfCatch?.outcome === 'failure' && selfCatch.code === 'E_SELF';
+  const catchOk = catchEval?.pass === true;
+  const catchText = target === null ? 'no second exit to catch from'
+    : s8.catch_error ? `not run (${s8.catch_error})`
+    : `the owner of exit ${target.id} catching it: ${selfCatch ? `${selfCatch.outcome}: ${selfCatch.error ?? 'no error'}` : 'not sent'}; `
+      + `the late buyer catching ${catchEval ? unitsToTokens(catchEval.record.amount) : '?'} LOUD of it`
+      + `${s8.catch?.before_ready === true ? ' during the notice' : s8.catch?.before_ready === false ? ' after the notice, before expiry' : ''}: `
+      + (caught ? `${caught.outcome}${caught.error ? ` (${caught.error})` : ''}` : 'not sent')
+      + (catchEval && caught?.outcome === 'success'
+        ? `, paid ${nearText(catchEval.record.near_in)} of which ${nearText(catchEval.record.fee)} stayed in the pool; `
+          + `its loud balance ${unitsToTokens(catchEval.record.catcher_loud_before ?? 0)} -> ${unitsToTokens(catchEval.record.catcher_loud_after ?? 0)} LOUD, `
+          + `pool_tokens changed by ${catchEval.record.pool_tokens_change}, cap room ${unitsToTokens(catchEval.record.cap_available_before ?? 0)} -> ${unitsToTokens(catchEval.record.cap_available_after ?? 0)} LOUD`
+        : '')
+      + (catchEval && catchEval.reasons.length > 0 ? `; NOT as expected: ${catchEval.reasons.join('; ')}` : '')
+      + (catchEval && catchEval.notes.length > 0 ? `; ${catchEval.notes.join('; ')}` : '');
+  finishStep(s8, open.length === WALLETS && early?.outcome === 'failure' && early.code === 'E_NOTICE' && hushOk && selfCatchOk && catchOk,
     `${open.length} open exits (ids ${open.map((e) => e.id).join(',')}); early leave: ${early ? `${early.outcome}: ${early.error ?? 'no error'}` : 'not sent'}; `
     + `hush of exit ${earlyExitId ?? '-'} by its owner${s8.early_hush?.before_ready === true ? ' during the notice' : s8.early_hush?.before_ready === false ? ' after the notice, before expiry' : ''}: `
-    + `${earlyHush ? `${earlyHush.outcome}: ${earlyHush.error ?? 'no error'}` : 'not sent'}; the exit is ${hushedExit !== null ? 'still open' : 'NOT listed as open'}`);
+    + `${earlyHush ? `${earlyHush.outcome}: ${earlyHush.error ?? 'no error'}` : 'not sent'}; the exit is ${hushedExit !== null ? 'still open' : 'NOT listed as open'}; ${catchText}`);
   if (open.length === 0) throw new Error('no exit was opened; cannot run the leave test');
 
   // Step 9: all wallets leave for one cap window
