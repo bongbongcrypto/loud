@@ -707,7 +707,7 @@ function trRender() {
     $('#try-other').hidden = true;
     $('#try-claim').hidden = true;
   }
-  setText($('#try-wallet-note'), `${tr.storageOk ? '' : 'This browser blocks storage, so a wallet lasts only until this tab is closed. '}A test wallet is a new NEAR testnet account that the public faucet funds with test NEAR. Testnet only, throwaway, no real funds. Its key is made in this browser, kept in this browser's storage and never sent anywhere. A second wallet lets you catch your own exit from another account.`);
+  setText($('#try-wallet-note'), `${tr.storageOk ? '' : 'This browser blocks storage, so a wallet lasts only until this tab is closed. '}Test wallet: one click, no install. A throwaway NEAR testnet account with free test NEAR, its key kept in this browser. A second wallet lets you catch your own exit.`);
   trRenderBoard();
   setText($('#try-board-note'), TL.boardNote(live, tr.readError, tr.chain.isMock ? 'the mock, not a chain,' : 'NEAR testnet'));
 
