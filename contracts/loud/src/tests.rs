@@ -580,6 +580,11 @@ fn shout_escrows_and_publishes_the_exit() {
     assert_eq!(e.shouted_at.0, T0 + 2 * SECOND_NS);
     assert_eq!(e.ready_at.0, ready);
     assert_eq!(e.expires_at.0, ready + 60 * MINUTE);
+    // The pool has not moved since the shout, so its quote for the whole
+    // amount is still the one the exit recorded.
+    at(&token(), T0 + 2 * SECOND_NS, 0);
+    assert!(e.shout_quote.0 > 0);
+    assert_eq!(e.shout_quote.0, c.quote_sell(U128(20_000_000 * E18)).0);
     assert_eq!(c.get_account(creator()).exits, exits);
 }
 
@@ -1351,8 +1356,12 @@ impl Rng {
     }
 }
 
-#[test]
-fn invariants_hold_over_random_operations() {
+/// A random sequence of calls with the invariants of SPEC 4 checked after
+/// every step. Without `with_catch` the operations and their order are
+/// exactly the seven of the first version of this test; with it, `catch`
+/// is the eighth.
+fn random_run(seed: u64, with_catch: bool) {
+    let ops: u128 = if with_catch { 8 } else { 7 };
     let cfg = demo();
     let mut c = deploy(&cfg);
     let p = c.get_params();
@@ -1365,7 +1374,7 @@ fn invariants_hold_over_random_operations() {
         users.push(acc(&format!("user{i}.test")));
     }
 
-    let mut rng = Rng(0x10AD_10AD_5EED_0001);
+    let mut rng = Rng(seed);
     let mut now = T0;
     // NEAR the contract account received minus NEAR it sent (invariant 5).
     let mut balance: u128 = 0;
@@ -1382,7 +1391,7 @@ fn invariants_hold_over_random_operations() {
     let mut prev_outstanding = state(&c, now).loud_outstanding.0;
     // (time, total_left, cap_available) right after a state-changing call.
     let mut snaps: Vec<(u64, u128, u128)> = vec![(T0, 0, 0)];
-    let mut done = [0u32; 7];
+    let mut done = [0u32; 8];
     let mut loud_buys = 0u32;
 
     for step in 0..2_500u32 {
@@ -1394,7 +1403,7 @@ fn invariants_hold_over_random_operations() {
         let (loud, quiet) = bal(&c, &who);
         let mut touched = false;
 
-        match rng.below(7) {
+        match rng.below(ops) {
             0 => {
                 let near = NEAR / 100 + rng.below(30 * NEAR);
                 let fee = if c.is_registered(who.clone()) { 0 } else { STORAGE_FEE };
@@ -1476,7 +1485,7 @@ fn invariants_hold_over_random_operations() {
                     done[5] += 1;
                 }
             }
-            _ => {
+            6 => {
                 if loud > 0 && other != who && c.is_registered(other.clone()) {
                     let amount = 1 + rng.below(loud);
                     at(&who, now, 1);
@@ -1484,6 +1493,47 @@ fn invariants_hold_over_random_operations() {
                     balance += 1;
                     touched = true;
                     done[6] += 1;
+                }
+            }
+            _ => {
+                // Any exit of somebody else that has not expired: `who`
+                // catches all of it, or a part that leaves a shoutable rest.
+                at(&token(), now, 0);
+                let open: Vec<Exit> = c
+                    .get_exits(0, 100)
+                    .into_iter()
+                    .filter(|e| now <= e.expires_at.0 && e.owner != who)
+                    .collect();
+                if !open.is_empty() && c.is_registered(who.clone()) {
+                    let e = open[rng.below(open.len() as u128) as usize].clone();
+                    let left = e.remaining.0;
+                    let amount = if left < 2 * dust || rng.below(2) == 0 {
+                        left
+                    } else {
+                        dust + rng.below(left - 2 * dust + 1)
+                    };
+                    let q = c.quote_catch(e.id, Some(U128(amount)));
+                    let (price, fee) = (q.near_in.0, q.fee.0);
+                    // Never below the amount's share of the shout quote.
+                    assert!(
+                        loud_math::mul_wide(price, e.amount.0) >= loud_math::mul_wide(e.shout_quote.0, amount),
+                        "step {step}: catch price below the floor"
+                    );
+                    let extra = rng.below(NEAR);
+                    let pool_before = c.get_state();
+                    at(&who, now, price + extra);
+                    let caught = c.catch(e.id, Some(U128(amount))).0;
+                    assert_eq!(caught, amount);
+                    assert_eq!(transfers_out(), price - fee + extra);
+                    assert_eq!(bal(&c, &who).0, loud + amount);
+                    let after = state(&c, now);
+                    assert_eq!(after.pool_tokens.0, pool_before.pool_tokens.0);
+                    assert_eq!(after.pool_near.0, pool_before.pool_near.0 + fee);
+                    assert_eq!(after.cap_available.0, pool_before.cap_available.0);
+                    // The contract keeps the fee, and it is pool liquidity.
+                    balance += fee;
+                    touched = true;
+                    done[7] += 1;
                 }
             }
         }
@@ -1540,15 +1590,36 @@ fn invariants_hold_over_random_operations() {
     assert!(s.total_shouted.0 >= s.total_left.0);
     assert_eq!(s.shout_count as u32, done[2]);
     assert_eq!(s.leave_count as u32, done[3]);
-    // Every kind of operation ran many times, and time passed the windows.
-    for (i, n) in done.iter().enumerate() {
-        assert!(*n >= 20, "operation {i} ran only {n} times");
-    }
-    assert!(snaps.len() > 20);
-    assert!(loud_buys >= 5, "only {loud_buys} buys inside the loud window");
+    assert_eq!(s.catch_count as u32, done[7]);
     assert_eq!(fees, users.len() as u128 * STORAGE_FEE - STORAGE_FEE, "everyone but the creator paid once");
     assert!(now > loud_until + 10 * cfg.cap_window);
-    assert!(s.total_left.0 > cap, "more than one full cap left over the run");
+    if with_catch {
+        // Catches ran, and so did everything they sit between.
+        assert!(done[7] >= 1, "no catch ran");
+        assert!(s.total_caught.0 > 0);
+        for i in [0usize, 2, 3] {
+            assert!(done[i] >= 1, "operation {i} never ran");
+        }
+    } else {
+        // Every kind of operation ran many times, and time passed the windows.
+        for (i, n) in done[..7].iter().enumerate() {
+            assert!(*n >= 20, "operation {i} ran only {n} times");
+        }
+        assert_eq!(done[7], 0);
+        assert!(snaps.len() > 20);
+        assert!(loud_buys >= 5, "only {loud_buys} buys inside the loud window");
+        assert!(s.total_left.0 > cap, "more than one full cap left over the run");
+    }
+}
+
+#[test]
+fn invariants_hold_over_random_operations() {
+    random_run(0x10AD_10AD_5EED_0001, false);
+}
+
+#[test]
+fn invariants_hold_over_random_operations_with_catches() {
+    random_run(0xCA7C_CA7C_5EED_0002, true);
 }
 
 // SPEC 8.1: the split test
@@ -2082,15 +2153,29 @@ fn catch_rejects_an_amount_worth_nothing() {
     };
     let mut c = deploy(&cfg);
     let ts = T0 + SECOND_NS;
-    let id = shout(&mut c, &creator(), ts, 10u128.pow(27));
+    // An exit of one unit: the pool formula paid nothing for it at the
+    // shout, so it has no floor, and it is worth nothing now either.
+    let mite = acc("mite.test");
+    register(&mut c, &mite, ts);
+    at(&creator(), ts, 1);
+    c.transfer_loud(mite.clone(), U128(1));
+    let tiny = shout(&mut c, &mite, ts, 1);
+    assert_eq!(c.get_account(mite.clone()).exits[0].shout_quote.0, 0);
     register(&mut c, &fan(), ts);
     at(&fan(), ts, NEAR);
-    expect_fail("E_AMOUNT", || c.catch(U64(id), Some(U128(1))));
+    expect_fail("E_AMOUNT", || c.catch(U64(tiny), None));
     at(&token(), ts, 0);
-    expect_fail("E_AMOUNT", || c.quote_catch(U64(id), Some(U128(1))));
+    expect_fail("E_AMOUNT", || c.quote_catch(U64(tiny), None));
 
-    // The whole exit has a price, and the pool that could not pay for it
-    // (it holds no NEAR) does not have to.
+    // A large exit has a price, and so does one unit of it: the floor is
+    // rounded up, so a piece never goes for nothing.
+    let id = shout(&mut c, &creator(), ts, 10u128.pow(27));
+    at(&token(), ts, 0);
+    assert_eq!(c.quote_sell(U128(1)).0, 0);
+    assert_eq!(catch_quote(&c, ts, id, Some(1)), (1, 0));
+
+    // The pool that could not pay for the whole exit (it holds no NEAR)
+    // does not have to.
     let (quote, fee) = catch_quote(&c, ts, id, None);
     assert!(quote > 0);
     assert_eq!(state(&c, ts).pool_near.0, 0);
@@ -2226,4 +2311,191 @@ fn catch_does_not_change_what_the_cap_lets_out() {
     let last = *plain.last().unwrap();
     assert!(last > cap && last < 10_000_000 * E18);
     assert!(plain.windows(2).all(|w| w[0] < w[1]));
+}
+
+// catch: the price floor, the dust rule and a failed payout
+
+/// Standard launch. After the loud window a whale buys with 200 NEAR and a
+/// fan with 50 NEAR, both quiet. Then the creator shouts 20M. Returns the
+/// contract, the exit id, the whale's quiet balance, the quote the exit
+/// recorded and the time of the shout.
+fn shout_with_a_whale_around() -> (Loud, u64, u128, u128, u64) {
+    let mut c = deploy(&standard());
+    let t = T0 + 11 * MINUTE;
+    let whale_quiet = buy(&mut c, &acc("whale.test"), t, 200 * NEAR);
+    buy(&mut c, &fan(), t, 50 * NEAR);
+    let id = shout(&mut c, &creator(), t + 1, 20_000_000 * E18);
+    let shout_quote = c.get_exits(0, 100)[0].shout_quote.0;
+    at(&token(), t + 1, 0);
+    assert_eq!(shout_quote, c.quote_sell(U128(20_000_000 * E18)).0);
+    assert!(shout_quote > 0);
+    (c, id, whale_quiet, shout_quote, t + 1)
+}
+
+#[test]
+fn catch_price_cannot_be_pushed_below_the_shout_quote() {
+    let (mut c, id, whale_quiet, shout_quote, t) = shout_with_a_whale_around();
+    let whale = acc("whale.test");
+    let whole = 20_000_000 * E18;
+
+    // The whale sells everything it holds to push the pool price down.
+    let near_back = sell(&mut c, &whale, t + 1, whale_quiet);
+    assert!(near_back > 0);
+    at(&token(), t + 1, 0);
+    let live = c.quote_sell(U128(whole)).0;
+    assert!(live < shout_quote / 2, "the push moved the price: {live} against {shout_quote}");
+
+    // The catch still costs what the pool paid at the shout.
+    let (price, fee) = catch_quote(&c, t + 1, id, None);
+    assert_eq!(price, shout_quote);
+    assert_eq!(fee, shout_quote / 100);
+    // The cheap price is refused.
+    at(&whale, t + 1, live);
+    expect_fail("E_DEPOSIT", || c.catch(U64(id), None));
+    at(&whale, t + 1, shout_quote - 1);
+    expect_fail("E_DEPOSIT", || c.catch(U64(id), None));
+
+    let pool_before = state(&c, t + 1).pool_near.0;
+    assert_eq!(catch_exit(&mut c, &whale, t + 1, id, None, shout_quote), whole);
+    // The owner gets 99% of the shout-time quote, whatever the pool says now.
+    assert_eq!(paid_to(&creator()), shout_quote - shout_quote / 100);
+    assert!(paid_to(&creator()) >= shout_quote / 100 * 99);
+    assert!(logged(&format!("\"near_paid\":\"{shout_quote}\"")));
+    assert!(logged(&format!("\"fee\":\"{}\"", shout_quote / 100)));
+    assert_eq!(state(&c, t + 1).pool_near.0, pool_before + shout_quote / 100);
+    assert_eq!(bal(&c, &whale), (whole, 0));
+
+    // Buying back does not undo the price the whale paid.
+    buy(&mut c, &whale, t + 1, near_back);
+    assert_eq!(bal(&c, &whale).0, whole);
+}
+
+#[test]
+fn catch_charges_the_live_quote_when_the_price_has_risen() {
+    let (mut c, id, _whale_quiet, shout_quote, t) = shout_with_a_whale_around();
+    let whole = 20_000_000 * E18;
+    // New buyers lift the pool after the shout.
+    buy(&mut c, &acc("late.test"), t + 1, 300 * NEAR);
+    at(&token(), t + 1, 0);
+    let live = c.quote_sell(U128(whole)).0;
+    assert!(live > shout_quote);
+
+    let (price, fee) = catch_quote(&c, t + 1, id, None);
+    assert_eq!(price, live);
+    assert_eq!(fee, live / 100);
+    // The floor is not enough any more.
+    at(&fan(), t + 1, shout_quote);
+    expect_fail("E_DEPOSIT", || c.catch(U64(id), None));
+    assert_eq!(catch_exit(&mut c, &fan(), t + 1, id, None, live), whole);
+    assert_eq!(paid_to(&creator()), live - live / 100);
+    // The exit keeps its recorded quote through a partial catch as well.
+    let second = shout(&mut c, &creator(), t + 2, 10_000_000 * E18);
+    let recorded = c.get_exits(0, 100)[0].shout_quote.0;
+    catch_exit(&mut c, &fan(), t + 2, second, Some(4_000_000 * E18), 1_000 * NEAR);
+    let e = c.get_exits(0, 100)[0].clone();
+    assert_eq!(e.shout_quote.0, recorded);
+    assert_eq!(e.amount.0, 10_000_000 * E18);
+    assert_eq!(e.remaining.0, 6_000_000 * E18);
+}
+
+#[test]
+fn partial_catches_add_up_to_at_least_the_floor_of_the_whole() {
+    let (mut c, id, whale_quiet, shout_quote, t) = shout_with_a_whale_around();
+    let whale = acc("whale.test");
+    let whole = 20_000_000 * E18;
+    // Pushed down, so the floor decides every piece.
+    sell(&mut c, &whale, t + 1, whale_quiet);
+
+    let pieces = [6_666_667 * E18 + 1, 3_333_333 * E18 + 7, 0];
+    let mut left = whole;
+    let mut paid = 0u128;
+    let mut to_owner = 0u128;
+    for (k, piece) in pieces.iter().enumerate() {
+        let amount = if *piece == 0 { left } else { *piece };
+        let (price, fee) = catch_quote(&c, t + 1, id, Some(amount));
+        // The piece's share of the shout quote, rounded up.
+        assert_eq!(price, loud_math::pro_rata_ceil(shout_quote, amount, whole), "piece {k}");
+        assert_eq!(fee, price / 100);
+        // The view and the call agree to the yoctoNEAR: one less fails.
+        at(&whale, t + 1, price - 1);
+        expect_fail("E_DEPOSIT", || c.catch(U64(id), Some(U128(amount))));
+        assert_eq!(catch_exit(&mut c, &whale, t + 1, id, Some(amount), price), amount);
+        assert_eq!(transfers_out(), price - fee, "an exact deposit leaves no refund");
+        assert_eq!(paid_to(&creator()), price - fee);
+        paid += price;
+        to_owner += price - fee;
+        left -= amount;
+    }
+    assert_eq!(left, 0);
+    assert!(paid >= shout_quote, "pieces paid {paid}, the whole was quoted {shout_quote}");
+    assert!(paid <= shout_quote + 2, "rounding adds at most one yoctoNEAR per piece");
+    assert!(to_owner >= shout_quote - shout_quote / 100 - 3);
+    assert_eq!(state(&c, t + 1).open_exits, 0);
+    assert_eq!(bal(&c, &whale), (whole, 0));
+}
+
+#[test]
+fn catch_leaves_nothing_or_at_least_a_shout() {
+    let (mut c, id, ready) = launch_with_shout();
+    let whole = 20_000_000 * E18;
+    let dust = 1_000 * E18;
+    let plenty = 1_000 * NEAR;
+    register(&mut c, &fan(), ready);
+
+    // One unit less than the smallest shout would stay behind.
+    at(&fan(), ready, plenty);
+    expect_fail("E_DUST", || c.catch(U64(id), Some(U128(whole - dust + 1))));
+    at(&token(), ready, 0);
+    expect_fail("E_DUST", || c.quote_catch(U64(id), Some(U128(whole - dust + 1))));
+    at(&fan(), ready, plenty);
+    expect_fail("E_DUST", || c.catch(U64(id), Some(U128(whole - 1))));
+    assert_eq!(state(&c, ready).escrowed.0, whole);
+
+    // Exactly the smallest shout may stay.
+    assert_eq!(catch_exit(&mut c, &fan(), ready, id, Some(whole - dust), plenty), whole - dust);
+    assert_eq!(c.get_exits(0, 100)[0].remaining.0, dust);
+    // From there only the whole remainder can go.
+    at(&fan(), ready, plenty);
+    expect_fail("E_DUST", || c.catch(U64(id), Some(U128(1))));
+    at(&fan(), ready, plenty);
+    expect_fail("E_DUST", || c.catch(U64(id), Some(U128(dust - 1))));
+    assert_eq!(catch_exit(&mut c, &fan(), ready, id, None, plenty), dust);
+    assert_eq!(state(&c, ready).open_exits, 0);
+    assert_eq!(bal(&c, &fan()), (whole, 0));
+}
+
+#[test]
+fn failed_catch_payout_is_recorded_under_the_owner() {
+    let (mut c, id, ready) = launch_with_shout();
+    let t = ready - MINUTE;
+    register(&mut c, &fan(), t);
+    let (quote, fee) = catch_quote(&c, t, id, None);
+    let extra = 3 * NEAR;
+    catch_exit(&mut c, &fan(), t, id, None, quote + extra);
+    let pool_near = state(&c, t).pool_near.0;
+
+    // The transfer to the owner fails: the NEAR is back on the token
+    // account and the callback writes the debt under the owner.
+    at_callback(t, PromiseResult::Failed);
+    c.on_payout(creator(), U128(quote - fee));
+    assert!(has_event("payout_failed"));
+    assert_eq!(c.get_owed(creator()).0, quote - fee);
+    assert_eq!(c.get_owed(fan()).0, 0);
+    // The refund to the catcher is a payout of its own.
+    at_callback(t, PromiseResult::Failed);
+    c.on_payout(fan(), U128(extra));
+    assert_eq!(c.get_owed(fan()).0, extra);
+    let s = state(&c, t);
+    assert_eq!(s.owed_total.0, quote - fee + extra);
+    // Owed NEAR is outside pool_near, and the catch itself stands.
+    assert_eq!(s.pool_near.0, pool_near);
+    assert_eq!(bal(&c, &fan()), (20_000_000 * E18, 0));
+    assert_eq!(s.open_exits, 0);
+
+    // The owner collects it.
+    at(&creator(), t + 1, 1);
+    assert_eq!(c.claim().0, quote - fee);
+    assert_eq!(paid_to(&creator()), quote - fee);
+    assert_eq!(c.get_owed(creator()).0, 0);
+    assert_eq!(state(&c, t + 1).owed_total.0, extra);
 }

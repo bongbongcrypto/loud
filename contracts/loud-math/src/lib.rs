@@ -125,6 +125,29 @@ pub const fn bps_part(amount: u128, bps: u128) -> u128 {
     mul_div(amount, min_u128(bps, 10_000), 10_000)
 }
 
+/// The share of `total` that belongs to `part` out of `whole`, rounded up:
+/// `ceil(total * part / whole)`.
+///
+/// `part` above `whole` counts as `whole`, so the result is never more
+/// than `total`. Returns 0 when `whole` is 0. Summed over pieces that add
+/// up to `whole`, the results add up to at least `total`.
+pub const fn pro_rata_ceil(total: u128, part: u128, whole: u128) -> u128 {
+    if whole == 0 {
+        return 0;
+    }
+    let part = min_u128(part, whole);
+    // part <= whole here, so the quotient is <= total and fits.
+    let q = mul_div(total, part, whole);
+    let (qh, ql) = mul_wide(q, whole);
+    let (ph, pl) = mul_wide(total, part);
+    if qh == ph && ql == pl {
+        q
+    } else {
+        // A remainder means q < total * part / whole <= total.
+        q + 1
+    }
+}
+
 /// Units the bucket gains over `elapsed_ns`, never more than `cap_units`.
 /// `cap_window_ns` must be greater than zero.
 pub const fn bucket_gain(cap_units: u128, cap_window_ns: u64, elapsed_ns: u64) -> u128 {
@@ -637,6 +660,48 @@ mod tests {
         // The 256-bit intermediate keeps large amounts exact.
         assert_eq!(bps_part(MAX, 100), MAX / 100);
         assert_eq!(bps_part(MAX, 5_000), MAX / 2);
+    }
+
+    #[test]
+    fn pro_rata_ceil_rounds_up() {
+        assert_eq!(pro_rata_ceil(0, 1, 2), 0);
+        assert_eq!(pro_rata_ceil(10, 0, 5), 0);
+        assert_eq!(pro_rata_ceil(10, 5, 5), 10);
+        assert_eq!(pro_rata_ceil(10, 1, 3), 4);
+        assert_eq!(pro_rata_ceil(9, 1, 3), 3);
+        assert_eq!(pro_rata_ceil(1, 1, 1_000_000), 1);
+        assert_eq!(pro_rata_ceil(NEAR, 1, 3), NEAR / 3 + 1);
+        // A part above the whole counts as the whole.
+        assert_eq!(pro_rata_ceil(10, 7, 5), 10);
+        // No whole, no share.
+        assert_eq!(pro_rata_ceil(10, 1, 0), 0);
+        // The 256-bit intermediate keeps large values exact.
+        assert_eq!(pro_rata_ceil(MAX, MAX, MAX), MAX);
+        assert_eq!(pro_rata_ceil(MAX, 1, 2), MAX / 2 + 1);
+        assert_eq!(pro_rata_ceil(MAX - 1, 1, 2), MAX / 2);
+    }
+
+    #[test]
+    fn pro_rata_ceil_is_the_ceiling_and_pieces_cover_the_total() {
+        let mut rng = Rng(0xCA7C_F100_0D5E_ED01);
+        for _ in 0..20_000 {
+            let total = rng.sized();
+            let whole = rng.sized();
+            if whole == 0 {
+                continue;
+            }
+            let part = rng.sized() % (whole + 1);
+            let up = pro_rata_ceil(total, part, whole);
+            let down = ref_mul_div(total, part, whole).unwrap();
+            assert!(up <= total);
+            assert!(up == down || up == down + 1, "{total} {part} {whole}");
+            // Exact when the division has no remainder, one above otherwise.
+            let exact = big_cmp(&big_mul(down, whole), &big_mul(total, part)) == Ordering::Equal;
+            assert_eq!(up == down, exact, "{total} {part} {whole}");
+            // Two pieces never cost less than the whole.
+            let rest = pro_rata_ceil(total, whole - part, whole);
+            assert!(up.checked_add(rest).map_or(true, |sum| sum >= total));
+        }
     }
 
     #[test]

@@ -53,15 +53,15 @@ const CATCH_FEE_BPS: u128 = 100;
 /// loud, quiet, owed       3 * (61 + L)   key 1 + 4 + L, value 16
 /// registration            45 + L         key 1 + 4 + L, no value
 /// list of open exit ids   49 + L + 8n    key 1 + 4 + L, value 4 + 8n
-/// each open exit          198 + L        index record: key 6, value 8;
-///                                        exit record: key 32, value 72 + L
-/// total                   277 + 5L + n * (206 + L)
+/// each open exit          214 + L        index record: key 6, value 8;
+///                                        exit record: key 32, value 88 + L
+/// total                   277 + 5L + n * (222 + L)
 /// ```
 ///
 /// The exit record sits in a map that hashes its key, so that key is 32
 /// bytes whatever the id. With the longest account id the total is 597
-/// bytes plus 270 per open exit. An account can hold eight open exits,
-/// which makes 2,757 bytes. The fee pays for 3,000, so every account
+/// bytes plus 286 per open exit. An account can hold eight open exits,
+/// which makes 2,885 bytes. The fee pays for 3,000, so every account
 /// covers its own records and all eight open exits.
 const STORAGE_MIN_YOCTO: u128 = 30_000_000_000_000_000_000_000;
 /// Metadata sits in the root state, which every call reads, callbacks with
@@ -169,6 +169,9 @@ pub struct ExitRecord {
     pub shouted_at: u64,
     pub ready_at: u64,
     pub expires_at: u64,
+    /// What the pool formula paid for `amount` when the exit was shouted.
+    /// A catch never costs less than its share of this.
+    pub shout_quote: u128,
 }
 
 /// An open exit as returned by views.
@@ -182,6 +185,9 @@ pub struct Exit {
     pub shouted_at: U64,
     pub ready_at: U64,
     pub expires_at: U64,
+    /// YoctoNEAR the pool formula paid for `amount` at the shout. The
+    /// floor of a catch price is its share of this, rounded up.
+    pub shout_quote: U128,
 }
 
 #[near(serializers=[json])]
@@ -236,7 +242,9 @@ pub struct State {
 #[near(serializers=[json])]
 #[derive(Clone, Debug, PartialEq)]
 pub struct CatchQuote {
-    /// YoctoNEAR the catcher pays: the pool's sell quote for the amount.
+    /// YoctoNEAR the catcher pays: the pool's sell quote for the amount
+    /// now, or the amount's share of the quote at the shout if that is
+    /// more.
     pub near_in: U128,
     /// The part of `near_in` that stays in the pool. The exit owner
     /// receives the rest.
@@ -589,6 +597,13 @@ impl Loud {
         self.next_exit_id += 1;
         let ready_at = now.saturating_add(self.notice_ns);
         let expires_at = ready_at.saturating_add(self.exit_window_ns);
+        // The pool's price for the whole amount at this moment. It is the
+        // floor of what a catch pays, so nobody can push the pool down
+        // first and take the exit for less. Zero means no floor.
+        let shout_quote = match loud_math::sell_out(self.pool_tokens, self.reserve(), amount) {
+            Some(v) => v,
+            None => fail("E_MATH: amount is too large for the pool math"),
+        };
 
         self.set_loud(&caller, loud - amount);
         self.escrowed += amount;
@@ -602,6 +617,7 @@ impl Loud {
                 shouted_at: now,
                 ready_at,
                 expires_at,
+                shout_quote,
             },
         );
         ids.push(id);
@@ -715,9 +731,12 @@ impl Loud {
     /// the exit expires.
     ///
     /// The price is what the pool would pay for `amount` at this moment
-    /// (`quote_sell`). The caller attaches at least that much and gets the
-    /// rest back. 1% of the price stays in the pool and the owner receives
-    /// the other 99%. The caught tokens go to the caller as loud. The pool
+    /// (`quote_sell`), and never less than the same share of what the
+    /// pool would have paid for the whole exit when it was shouted. The
+    /// caller attaches at least that much and gets the rest back. A catch
+    /// takes everything left or leaves at least the smallest amount a
+    /// shout accepts (`E_DUST`). 1% of the price stays in the pool and the
+    /// owner receives the other 99%. The caught tokens go to the caller as loud. The pool
     /// inventory and the cap are not touched. `amount` defaults to
     /// everything left in the exit. Returns the units caught.
     #[payable]
@@ -741,7 +760,7 @@ impl Loud {
             Some(a) => a.0,
             None => exit.remaining,
         };
-        let (quote, fee) = self.catch_price(amount, exit.remaining);
+        let (quote, fee) = self.catch_price(&exit, amount);
         if deposit < quote {
             fail(&format!(
                 "E_DEPOSIT: catching {} units costs {} yoctoNEAR and {} was attached",
@@ -1221,7 +1240,8 @@ impl Loud {
     /// would stay in the pool. `amount` defaults to everything left in the
     /// exit. Fails like `catch` on an unknown id (`E_NO_EXIT`) and on an
     /// amount that is zero, above what is left, or worth nothing
-    /// (`E_AMOUNT`). It does not look at who asks or at the clock.
+    /// (`E_AMOUNT`), and on one that would leave less than the smallest
+    /// shout in the exit (`E_DUST`). It does not look at who asks or at the clock.
     pub fn quote_catch(&self, exit_id: U64, amount: Option<U128>) -> CatchQuote {
         let exit = match self.exits.get(&exit_id.0) {
             Some(e) => e,
@@ -1231,7 +1251,7 @@ impl Loud {
             Some(a) => a.0,
             None => exit.remaining,
         };
-        let (quote, fee) = self.catch_price(amount, exit.remaining);
+        let (quote, fee) = self.catch_price(exit, amount);
         CatchQuote { near_in: U128(quote), fee: U128(fee) }
     }
 }
@@ -1245,6 +1265,7 @@ fn exit_view(e: &ExitRecord) -> Exit {
         shouted_at: U64(e.shouted_at),
         ready_at: U64(e.ready_at),
         expires_at: U64(e.expires_at),
+        shout_quote: U128(e.shout_quote),
     }
 }
 
@@ -1297,25 +1318,44 @@ impl Loud {
         }
     }
 
-    /// `(quote, fee)` for catching `amount` units of an exit that has
-    /// `remaining` left. The quote is the pool's sell formula for `amount`,
-    /// whether or not the pool could pay it: nothing is taken from the
-    /// pool. The fee is `CATCH_FEE_BPS` of the quote, rounded down.
-    fn catch_price(&self, amount: u128, remaining: u128) -> (u128, u128) {
+    /// `(price, fee)` for catching `amount` units of `exit`.
+    ///
+    /// The price is the larger of two numbers. One is the pool's sell
+    /// formula for `amount` now, whether or not the pool could pay it:
+    /// nothing is taken from the pool. The other is the floor,
+    /// `shout_quote * amount / exit.amount` rounded up: the same share of
+    /// what the pool formula paid for the whole exit at the shout. The
+    /// fee is `CATCH_FEE_BPS` of the price, rounded down.
+    ///
+    /// What the catch leaves in the exit is nothing or at least the
+    /// smallest amount a shout accepts, so no remainder is too small to
+    /// sell.
+    fn catch_price(&self, exit: &ExitRecord, amount: u128) -> (u128, u128) {
+        let remaining = exit.remaining;
         if amount == 0 || amount > remaining {
             fail(&format!(
                 "E_AMOUNT: asked to catch {} units but the exit has {} left",
                 amount, remaining
             ));
         }
-        let quote = match loud_math::sell_out(self.pool_tokens, self.reserve(), amount) {
+        let dust = self.total_supply / DUST_DIVISOR;
+        let rest = remaining - amount;
+        if rest > 0 && rest < dust {
+            fail(&format!(
+                "E_DUST: this would leave {} units in the exit, less than the smallest shout ({} units); catch the whole remainder ({} units) or leave at least that much",
+                rest, dust, remaining
+            ));
+        }
+        let live = match loud_math::sell_out(self.pool_tokens, self.reserve(), amount) {
             Some(v) => v,
             None => fail("E_MATH: amount is too large for the pool math"),
         };
-        if quote == 0 {
+        let floor = loud_math::pro_rata_ceil(exit.shout_quote, amount, exit.amount);
+        let price = core::cmp::max(live, floor);
+        if price == 0 {
             fail("E_AMOUNT: this amount is too small to be worth anything");
         }
-        (quote, loud_math::bps_part(quote, CATCH_FEE_BPS))
+        (price, loud_math::bps_part(price, CATCH_FEE_BPS))
     }
 
     /// Pool side of a sale: checks the sale pays something, the pool can
