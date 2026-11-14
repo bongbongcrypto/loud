@@ -262,3 +262,19 @@ test('command line: --check reports and writes nothing', (t) => {
   assert.match(bad.stderr, /web\/receipts\.json: not valid JSON/);
   assert.equal(cli('--chek').status, 1);
 });
+
+test('README: every linked transaction and the run totals are in the recorded run', () => {
+  const readme = read(REPO, 'README.md');
+  const receipts = JSON.parse(read(REPO, 'web/receipts.json'));
+  const deployment = JSON.parse(read(REPO, 'web/deployment.json'));
+  const known = new Set([deployment.tx]);
+  for (const step of receipts.steps) for (const tx of step.txs || []) known.add(tx.hash);
+  const linked = [...readme.matchAll(/nearblocks\.io\/txns\/([1-9A-HJ-NP-Za-km-z]+)/g)].map((m) => m[1]);
+  assert.ok(linked.length >= 7);
+  for (const hash of linked) assert.ok(known.has(hash), `README links a transaction the run did not record: ${hash}`);
+  const whole = (units) => Math.round(Number(BigInt(units) / 10n ** 15n) / 1000).toLocaleString('en-US');
+  const sp = receipts.split;
+  assert.ok(readme.includes(`${sp.attempts} calls`));
+  assert.ok(readme.includes(`${sp.fills} sales, ${sp.cap_hits} \`E_CAP\` rejections, and ${sp.attempts - sp.fills - sp.cap_hits} \`E_EXPIRED\``));
+  assert.ok(readme.includes(`${whole(sp.sold_total)} LOUD got out; the cap allowed at most ${whole(sp.bound)}`));
+});

@@ -1,8 +1,8 @@
 # LOUD
 
-**A NEAR memecoin whose launch tokens can't hit the pool without warning. A hundred wallets get no more room than one.**
+**A NEAR memecoin where you have to shout before you sell.**
 
-Launch tokens are the creator allocation and tokens bought in the launch window. They can be sold into the token's own pool only after a public notice, and all of those sales share one cap.
+LOUD makes launch supply announce its exit. The creator allocation and the tokens bought in the launch window are *loud*. They sell into the token's own pool only after a public notice that cannot be taken back, and every wallet draws on one shared cap, so splitting a bag across 100 wallets adds no room. Tokens bought later are *quiet* and sell at once. That includes tokens a holder sells through the cap and then buys back: the cap sets how fast early supply can be sold or converted, and it does not stop a price from falling ([Limits](#limits)).
 
 - Live page: https://bongbongcrypto.github.io/loud/
 - Testnet token: <!-- proof:token -->[t.loud-mwf8y9vabcbf40.testnet](https://testnet.nearblocks.io/address/t.loud-mwf8y9vabcbf40.testnet), no access keys, demo preset, recorded 2026-11-13<!-- /proof:token -->. Every transaction: [Testnet proof](https://bongbongcrypto.github.io/loud/#proof).
@@ -10,11 +10,30 @@ Launch tokens are the creator allocation and tokens bought in the launch window.
 
 Built at NEAR HACKATHON, memecoins track. Testnet only. Unaudited.
 
+## What happened on testnet
+
+A script put the token on NEAR testnet and attacked it with 20 split wallets. Every row is a transaction of that run, on a faster demo preset (notice 1 min, cap window 10 min).
+
+| What was tried | What the contract did | Transaction |
+|---|---|---|
+| Create, fund, deploy and initialise the token account in one transaction that adds no key | Done. The account has 0 access keys, so nobody can sign for it | [2pWUqQ…](https://testnet.nearblocks.io/txns/2pWUqQEjShNo2S8d2g7yiRXroPvYgDmvzyW62hzK5HJf) |
+| The insider splits its launch tokens across 20 wallets with `ft_transfer` | Done. The tokens arrive still loud, as the next row shows | [G6JGuK…](https://testnet.nearblocks.io/txns/G6JGuKzgmcBEaYg6ktykYHThzQqTdmWPcbttNAB6nxx1) |
+| A split wallet calls `sell` with those tokens | Rejected: `E_NO_QUIET` | [39Gxqb…](https://testnet.nearblocks.io/txns/39GxqbEmSYpip6vQAag5SwW65USavfFxEzWskCsDnHvJ) |
+| The wallet shouts, then calls `leave` 57 s before its notice ends | Rejected: `E_NOTICE` | [4ifpVq…](https://testnet.nearblocks.io/txns/4ifpVqsRPAmsj6hWbhu2jenAqmyeuecimWXoRKWvMkCA) |
+| The same wallet tries to take the shout back with `hush` | Rejected: `E_NOTICE_BINDING` | [5fEtsn…](https://testnet.nearblocks.io/txns/5fEtsnqxZZijSF4EgG5xQC5mRwgEuKNw8bymmmN11xki) |
+| After the notice, a wallet calls `leave` while the cap has room | Sold 1,645,004 LOUD | [6fV53K…](https://testnet.nearblocks.io/txns/6fV53K4ZGYq2zXoFx7qgSjYxsVyCvZtuYW3peCxJgfJn) |
+| Another wallet calls `leave` when the cap is empty | Rejected: `E_CAP` | [FEkuja…](https://testnet.nearblocks.io/txns/FEkujaeUCEA8jdX7NPwus48mEVQasDHSaZNBzvCNx5zg) |
+| All 20 wallets keep calling `leave` for one full cap window, 600 calls | 40 sales, 540 `E_CAP` rejections, and 20 `E_EXPIRED` once the exit window had closed. 6,450,604 LOUD got out; the cap allowed at most 6,806,536 | [receipts.json](web/receipts.json) |
+
+The run shows 20 wallets staying inside one cap on chain. That 1 wallet and 100 wallets sell the same amount is shown by the contract and engine tests, not by this run. Ten checks, every transaction: [Testnet proof](https://bongbongcrypto.github.io/loud/#proof).
+
 ## The problem
 
-The creator and the launch buyers hold the cheap early supply. A per-wallet sell limit, the rule modelled here, caps each wallet, so an insider splits the bag across 100 wallets and sells all of it in the same minute. Everyone else finds out from the chart.
+The creator and the launch buyers hold the cheap early supply. A per-wallet sell limit caps each wallet, so an insider splits the bag across 100 wallets and sells all of it in the same minute. Everyone else finds out from the chart. On one pump.fun launch, four wallets bought 79% of the supply in the creation block and sold all of it in 18 minutes ([replay below](#replay-of-two-real-bundle-dumps)).
 
-## How it works
+## How it works: shout, wait, leave
+
+Nobody leaves this launch quietly. Every early exit goes up on a public departures board first.
 
 1. Tokens bought during the launch window, and the creator allocation, are **loud**. Later buys are **quiet** and sell at once. The tag travels with the tokens through every transfer.
 2. Loud tokens cannot use `sell`. To sell into the pool the holder calls `shout`, which locks them and posts a public notice, then `leave` when the notice ends.
@@ -24,7 +43,12 @@ The creator and the launch buyers hold the cheap early supply. A per-wallet sell
 
 Standard preset: 1,000,000,000 supply, 5% creator, launch window 10 min, notice 30 min, exit window 60 min, cap 0.5% of supply per 60 min. The cap is a bucket that holds 0.5% and refills 0.5% per 60 min, so a full bucket plus one refill lets out at most 1% in any 60 min.
 
-LOUD limits how fast early supply can be sold on its defined path, no matter how many wallets it is split across. The path is the token's own pool, and every sale of loud tokens into it is public in advance. Tokens sold there and bought back after the launch window are quiet and off the path ([Limits](#limits)). It does not stop a price from falling.
+What a launch buyer accepts:
+
+- The rule does not know who is an insider. An honest launch-window buyer shouts and waits like everyone else.
+- A shout locks the tokens until they sell or the exit expires, 90 min after the shout on the standard preset. After that `hush` returns them.
+- The cap is first come, first served. A `leave` fills only what the cap and the pool have room for.
+- Anyone who wants no part of this buys after the launch window and holds quiet tokens.
 
 ## Check it yourself
 
@@ -44,9 +68,11 @@ Run from the repository root. The Node rows need Node 22 or newer and nothing in
 
 The testnet token runs a faster demo preset (launch window 2 min, notice 1 min, exit window 10 min, cap 0.5% per 10 min)<!-- proof:commit --> and was built from commit `ff615c3`, named in `deployment.json` as `run.commit`<!-- /proof:commit -->.<!-- proof:scope --><!-- /proof:scope --> The testnet run shows 20 wallets staying inside the cap. The unit and engine tests show that 1 wallet and 100 wallets sell the same amount.
 
-## What the track asked for
+## The track prompt, item by item
 
-| Requirement | Where it shows |
+The mechanic is `shout`, `leave` and `hush`. The table maps each item of the memecoins track prompt to where it can be checked.
+
+| Prompt item | Where it shows |
 |---|---|
 | NEP-141 token | `ft_transfer`, `ft_transfer_call`, `ft_balance_of`, `ft_metadata` and NEP-145 `storage_deposit` in [contracts/loud/src/lib.rs](contracts/loud/src/lib.rs) |
 | Mechanic lives in the contract | `shout`, `leave` and `hush` in the same file, tested by `cargo test --workspace` |
@@ -56,11 +82,15 @@ The testnet token runs a faster demo preset (launch window 2 min, notice 1 min, 
 | Page with status and log | Live page: the exits board and "Testnet proof" |
 | 60-day simulation under scenarios | [sim/RESULTS.md](sim/RESULTS.md), reproduced by `node sim/run.mjs` |
 
+## Splitting changes nothing
+
+This is the claim the tests pin down. Under LOUD, 1, 7, 20 and 100 wallets holding the same position sell the same amount at every step, within rounding: `split_test_one_wallet_vs_one_hundred` in the contract tests, and the same comparison in the engine tests. Under a per-wallet limit the same split sells a 5% position in 1 minute against 10. The live page runs it with up to 1000 wallets.
+
 ## Simulation
 
-`node sim/run.mjs` runs the page's rule engine for 60 days against no rule and against a per-wallet limit (0.5% of supply per sale, one sale per wallet per 60 s, a much looser budget than the LOUD cap even for one wallet): four scenarios, nine seeds each. How holders behave is an assumption. Nobody measured it. Full tables and assumptions: [sim/RESULTS.md](sim/RESULTS.md).
+`node sim/run.mjs` runs the page's rule engine for 60 days: three rule sets, four scenarios, nine seeds each. The sale budgets are not matched. The per-wallet baseline (0.5% of supply per sale, one sale per wallet per 60 s) lets even one wallet sell far faster than the LOUD cap, so the price figures below mix a tighter budget, the notice and assumed holder reactions. They do not isolate what the shared cap adds; the split tests above do that. How holders behave is an assumption. Nobody measured it. Full tables and assumptions: [sim/RESULTS.md](sim/RESULTS.md).
 
-Insiders dump 13.6% of supply from 30 wallets at 24 h:
+Modelled scenario: at hour 24, 30 insider wallets try to sell 13.6% of supply.
 
 | Rule | Largest 1-hour price fall after the first 12 hours | Time until the modelled seller has sold 99.9% of early supply | Early-supply sales announced in advance | Holder quote 1 min after the first sign | Worst holder quote within 30 min |
 |---|---|---|---|---|---|
@@ -76,7 +106,7 @@ Every number in this section comes from the simulation. The next section replays
 
 ## Replay of two real bundle dumps
 
-Two pump.fun launches where a group of wallets bought early and sold everything within half an hour. Their sales were read from the chain and offered, minute by minute, to LOUD's standard rule in the same rule engine.
+Two pump.fun launches where a group of wallets bought early and sold everything within half an hour. Their sales were read from the chain and offered, minute by minute, to LOUD's standard rule in the same rule engine. The LOUD rows are a what-if on the sell schedule. They say how fast the tokens could have left, not what holders would have lost or kept.
 
 | Launch | | Bundle sold after 10 min | After 60 min | All sold after |
 |---|---|---|---|---|
