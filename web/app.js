@@ -1465,3 +1465,24 @@ safely('try', initTry);
 safely('sandbox', initSandbox);
 safely('split', initSplit);
 safely('proof', initProof);
+
+// A link to something inside a folded section opens the folds around it first.
+function openFoldsFor(hash) {
+  if (!hash || hash.length < 2) return;
+  let target = null;
+  try { target = document.getElementById(decodeURIComponent(hash.slice(1))); } catch { target = null; }
+  if (!target) return;
+  let opened = false;
+  for (let el = target.parentElement; el; el = el.parentElement) {
+    if (el.tagName === 'DETAILS' && !el.open) { el.open = true; opened = true; }
+  }
+  if (opened) target.scrollIntoView();
+}
+safely('folds', () => {
+  window.addEventListener('hashchange', () => openFoldsFor(location.hash));
+  document.addEventListener('click', (ev) => {
+    const a = ev.target && ev.target.closest ? ev.target.closest('a[href^="#"]') : null;
+    if (a) openFoldsFor(a.getAttribute('href'));
+  });
+  openFoldsFor(location.hash);
+});

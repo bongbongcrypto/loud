@@ -331,7 +331,10 @@
 }
 #sandbox .row-body::before {
   content: "SIMULATION, NO CHAIN";
-  position: absolute;
+  position: static;
+  display: block;
+  width: max-content;
+  margin: 0 0 12px;
   top: 0;
   left: 0;
   font-family: var(--mono);
