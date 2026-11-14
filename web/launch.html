@@ -60,6 +60,18 @@
         </div>
         <p class="fine">This wallet launches the token and is its creator: the creator allocation, if any, is paid to it as loud tokens.</p>
       </div>
+      <details class="fine-print try-import l-import" id="l-import">
+        <summary>Import a test wallet</summary>
+        <p class="fine">For a throwaway NEAR testnet account only. Never paste a key that controls real funds: this page keeps the key in this browser's storage. The page checks that the key is a full-access key of the account on NEAR testnet before it saves it.</p>
+        <form id="l-import-form" autocomplete="off">
+          <label for="l-import-id">Testnet account id</label>
+          <input id="l-import-id" autocomplete="off" spellcheck="false" placeholder="name.testnet">
+          <label for="l-import-key">Private key, as near-cli prints it</label>
+          <input id="l-import-key" type="password" autocomplete="off" spellcheck="false" placeholder="ed25519:...">
+          <button type="submit">Check and import</button>
+        </form>
+      </details>
+      <p class="fine" id="l-no-app">Launching from a connected NEAR wallet app is not built: the launch sends the contract code in a <code>DeployContract</code> action, and the page's wallet-app path signs function calls only. Use a test wallet or import one.</p>
     </div>
 
     <form id="launch-form" class="l-form" novalidate autocomplete="off">

@@ -606,6 +606,15 @@ export function createLaunchMock({ faucetFails = false, reject = null, unknown =
       accounts.set(accountId, { amount: startNear * NEAR, code_hash: '11111111111111111111111111111111', keys: [{ public_key: `ed25519:mock${seq}` }] });
       return { accountId, publicKey: `ed25519:mock${seq}`, secretKey: `mock-secret-${seq}` };
     },
+    async importTestWallet(idText, keyText) {
+      await wait();
+      const accountId = String(idText ?? '').trim();
+      if (!/^[a-z0-9._-]{2,56}\.testnet$/.test(accountId)) throw new Error('Enter a NEAR testnet account id, such as name.testnet.');
+      if (!/^ed25519:\S{20,}$/.test(String(keyText ?? '').trim())) throw new Error('That is not an ed25519 private key in the form ed25519:... as near-cli prints it.');
+      seq += 1;
+      if (!accounts.has(accountId)) accounts.set(accountId, { amount: startNear * NEAR, code_hash: '11111111111111111111111111111111', keys: [{ public_key: `ed25519:mock${seq}` }] });
+      return { accountId, publicKey: `ed25519:mock${seq}`, secretKey: `mock-secret-${seq}` };
+    },
     async rpc(method, params) {
       const a = accounts.get(params.account_id);
       if (!a) throw unknownAccount();
@@ -924,6 +933,31 @@ export async function startPage(doc = document, win = window) {
     } finally {
       S.busy = false;
       pend.hidden = true;
+    }
+    render();
+    await readBalance();
+  });
+  $('#l-import-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    if (S.busy) return;
+    const idBox = $('#l-import-id');
+    const keyBox = $('#l-import-key');
+    S.busy = true;
+    render();
+    try {
+      const w = await chain.importTestWallet(idBox.value, keyBox.value);
+      S.store = addWallet(S.store, w);
+      storage.set(WALLET_KEY, serializeWallets(S.store));
+      S.balance = null;
+      keyBox.value = '';
+      idBox.value = '';
+      $('#l-import').open = false;
+      showResult({ tone: 'ok', call: 'Test wallet imported', message: `${w.accountId} is now the launching wallet. Its key is kept in this browser.` });
+    } catch (err) {
+      // chain.js never puts the key into its error messages.
+      showResult({ tone: 'fail', call: 'Not imported', message: String(err?.message ?? err).slice(0, 300) });
+    } finally {
+      S.busy = false;
     }
     render();
     await readBalance();

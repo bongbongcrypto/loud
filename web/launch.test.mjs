@@ -274,3 +274,15 @@ test('mock end to end: launch, verify, rejection, not enough NEAR, faucet refusa
   // Faucet refusal keeps its message.
   await assert.rejects(createLaunchMock({ faucetFails: true }).createTestWallet(), /Too many requests/);
 });
+
+test('mock import of a test wallet: checked like chain.importTestWallet', async () => {
+  const m = createLaunchMock();
+  const w = await m.importTestWallet(' mine.testnet ', 'ed25519:' + '3'.repeat(40));
+  assert.equal(w.accountId, 'mine.testnet');
+  assert.equal((await m.accountState('mine.testnet')).exists, true);
+  await assert.rejects(m.importTestWallet('Mine', 'ed25519:' + '3'.repeat(40)), /testnet account id/);
+  await assert.rejects(m.importTestWallet('mine.testnet', 'secret'), /ed25519/);
+  // The launch page and the main page share one store.
+  const store = addWallet(parseWallets(null), w);
+  assert.equal(parseWallets(serializeWallets(store)).wallets[0].accountId, 'mine.testnet');
+});
