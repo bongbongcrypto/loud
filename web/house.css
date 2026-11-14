@@ -1,0 +1,55 @@
+/* House look: warm paper, dark ink, one blue. Loaded last on both pages. */
+:root {
+  --paper: #ebe1cd;
+  --paper-2: #e1d7c0;
+  --panel: #f4ecdb;
+  --ink: #322e25;
+  --ink-2: #655d4f;
+  --rule: #bdb199;
+  --accent: #005fb0;
+  --accent-ink: #fff7e9;
+  --fail: #a8321b;
+  --ok: #1f7a3a;
+  --board: #2a2821;
+  --board-2: #322e25;
+  --board-line: #4a4538;
+  --warm: #fff7e9;
+  --amber: #f2c14e;
+  --dim: #b9ae96;
+  --coral: #f08a6c;
+  --display: Arial, Helvetica, "Helvetica Neue", sans-serif;
+  --sans: Arial, Helvetica, "Helvetica Neue", sans-serif;
+  --serif: Arial, Helvetica, "Helvetica Neue", sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, "Cascadia Mono", Consolas, Menlo, monospace;
+  color-scheme: light;
+}
+
+html, body, body.launch-page { background: var(--paper); color: var(--ink); }
+body, body.launch-page { font-family: var(--mono); font-size: 15px; line-height: 1.7; }
+
+h1, h2, h3,
+body.launch-page h1, body.launch-page h2, body.launch-page h3 {
+  font-family: var(--display) !important;
+  font-stretch: normal !important;
+  text-transform: none !important;
+  font-weight: 700 !important;
+  letter-spacing: -0.03em !important;
+  color: var(--ink);
+}
+h1, body.launch-page h1 { font-size: clamp(40px, 6.4vw, 84px) !important; line-height: 1.04 !important; max-width: 16ch; }
+h2, body.launch-page h2 { line-height: 1.08 !important; }
+
+/* Text set in sentence case everywhere except small labels. */
+.say, .claim, .law, p { text-transform: none; }
+
+/* Buttons: one blue, flat, mono. */
+button:not(.link), .button, a.button,
+body.launch-page button:not(.link) {
+  font-family: var(--mono) !important;
+  text-transform: none !important;
+  letter-spacing: 0 !important;
+  border-radius: 0 !important;
+}
+
+/* Boards stay dark; their headings and figures read in the warm tone. */
+.board h2, .board h3, .board .board-title, .l-result h2, .l-result h3 { color: var(--warm) !important; }
