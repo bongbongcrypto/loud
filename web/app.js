@@ -3,6 +3,7 @@
 // Data from JSON files and RPC is written with textContent, never as HTML.
 
 import * as L from './ui-logic.js';
+import * as TL from './live-ui.js';
 
 const $ = (sel, root = document) => root.querySelector(sel);
 const SVG_NS = 'http://www.w3.org/2000/svg';
@@ -63,7 +64,7 @@ function flipStatus(tr, span, status) {
 
 // Keeps one <tr> per exit id, so only cells that change are touched and only
 // a changed status flips.
-function createBoard(table, { actions = false } = {}) {
+function createBoard(table, { actions = false, part = { kind: 'catch-half', text: 'Catch half', aria: 'Catch half of exit' } } = {}) {
   const tbody = table.tBodies[0];
   const cols = table.tHead.rows[0].cells.length;
   let byId = new Map();
@@ -131,7 +132,7 @@ function createBoard(table, { actions = false } = {}) {
             row.canLeave ? h('button', { type: 'button', 'data-do': 'leave', 'data-id': row.id, text: 'Leave', 'aria-label': `Leave exit ${row.id}` }) : null,
             row.canHush ? h('button', { type: 'button', 'data-do': 'hush', 'data-id': row.id, text: 'Hush', 'aria-label': `Hush exit ${row.id}` }) : null,
             row.canCatch ? h('button', { type: 'button', 'data-do': 'catch', 'data-id': row.id, text: 'Catch', 'aria-label': `Catch all of exit ${row.id}` }) : null,
-            row.canCatch ? h('button', { type: 'button', 'data-do': 'catch-half', 'data-id': row.id, text: 'Catch half', 'aria-label': `Catch half of exit ${row.id}` }) : null,
+            row.canCatch ? h('button', { type: 'button', 'data-do': part.kind, 'data-id': row.id, text: part.text, 'aria-label': `${part.aria} ${row.id}` }) : null,
           );
         }
       }
@@ -590,6 +591,371 @@ function initSandbox() {
   renderSandbox();
 }
 
+// Use it on testnet: real transactions through chain.js
+
+const tr = {
+  chain: null, cfg: null, store: { wallets: [], active: 0 }, live: null, board: null,
+  last: null, log: [], busy: false, storageOk: true, lastRead: 0, readError: '',
+};
+
+function trLoadStore() {
+  try {
+    tr.store = TL.parseWallets(window.localStorage.getItem(TL.WALLET_KEY));
+  } catch {
+    tr.storageOk = false;
+  }
+}
+
+function trSaveStore() {
+  try {
+    window.localStorage.setItem(TL.WALLET_KEY, TL.serializeWallets(tr.store));
+  } catch {
+    tr.storageOk = false;
+  }
+}
+
+const trWallet = () => tr.store.wallets[tr.store.active] || null;
+const trAccount = (id) => (tr.live ? tr.live.accounts.find((a) => a.accountId === id) : null) || null;
+
+function trBusy(on, text = 'Waiting for NEAR testnet…') {
+  tr.busy = on;
+  const pending = $('#try-pending');
+  pending.hidden = !on;
+  setText(pending, text);
+  for (const b of $('#try-body').querySelectorAll('button, input')) b.disabled = on;
+}
+
+function trRenderBoard() {
+  if (!tr.live) return;
+  const now = TL.chainNow(tr.live);
+  const w = trWallet();
+  const rows = TL.liveRows(tr.live.exits, now, w ? w.accountId : '', tr.store.wallets.map((x) => x.accountId));
+  tr.board.update(rows, 'No open exits on the token right now. Shout to list one.');
+  const cap = TL.capView(tr.live, now);
+  setCap($('#try-cap-bar'), $('#try-cap-text'), cap.fraction, cap.text);
+}
+
+function trRender() {
+  const live = tr.live;
+  const w = trWallet();
+  const count = tr.store.wallets.length;
+  $('#try-new').hidden = count > 0;
+  $('#try-new-2').hidden = count !== 1;
+  $('#try-switch').hidden = count < 2;
+  $('#try-forget').hidden = count === 0;
+  $('#try-account').hidden = !w;
+  $('#try-actions').hidden = !w;
+  if (live) {
+    facts($('#try-facts'), TL.liveHeader(live, tr.cfg).map(([label, value], i) => ({ label, value, href: i === 0 ? tr.cfg.tokenHref : null })));
+  }
+  if (w) {
+    const a = trAccount(w.accountId);
+    setText($('#try-wallet-label'), TL.walletLabel(tr.store.active));
+    put($('#try-acct'), link(tr.chain.accountUrl(w.accountId), w.accountId));
+    setText($('#try-near'), a ? (a.exists ? L.fmtNear(a.near) : 'being created…') : '…');
+    setText($('#try-loud'), a ? L.fmtTokens(a.loud) : '…');
+    setText($('#try-quiet'), a ? L.fmtTokens(a.quiet) : '…');
+    setText($('#try-escrow'), a ? L.fmtTokens(a.escrowed) : '…');
+    $('#try-first').hidden = !a || a.registered;
+    const other = tr.store.wallets[1 - tr.store.active];
+    const o = other ? trAccount(other.accountId) : null;
+    $('#try-other').hidden = !other;
+    if (other) {
+      setText($('#try-other'), `${TL.walletLabel(1 - tr.store.active)} (${L.shortAccount(other.accountId, 30)}) holds ${o ? L.fmtNear(o.near) : '…'} NEAR, ${o ? L.fmtTokens(o.loud) : '…'} loud, ${o ? L.fmtTokens(o.quiet) : '…'} quiet.`);
+    }
+  } else {
+    $('#try-other').hidden = true;
+  }
+  setText($('#try-wallet-note'), `${tr.storageOk ? '' : 'This browser blocks storage, so a wallet lasts only until this tab is closed. '}A test wallet is a new NEAR testnet account that the public faucet funds with test NEAR. Testnet only, throwaway, no real funds. Its key is made in this browser, kept in this browser's storage and never sent anywhere. A second wallet lets you catch your own exit from another account.`);
+  trRenderBoard();
+  setText($('#try-board-note'), tr.readError
+    ? `Could not read the token just now (${tr.readError}). The board shows the last read and tries again in 10 s.`
+    : 'Every open exit on the token, from every visitor, read from NEAR testnet. Times are UTC. The board reads again every 10 s.');
+
+  const box = $('#try-result');
+  const e = tr.last;
+  if (!e) {
+    box.removeAttribute('data-ok');
+    box.replaceChildren(h('p', { class: 'call', text: 'No transaction yet.' }));
+  } else {
+    box.dataset.ok = String(e.ok);
+    put(box,
+      h('p', { class: 'call', text: e.call }),
+      h('p', { class: 'msg', text: e.message }),
+      e.hint ? h('p', { class: 'hint', text: e.hint }) : null,
+      e.explorerUrl ? h('p', { class: 'hint' }, link(e.explorerUrl, 'View transaction in the explorer')) : null,
+    );
+  }
+  const log = $('#try-log');
+  log.replaceChildren(...tr.log.slice().reverse().map((x) => h('li', { 'data-ok': String(x.ok) },
+    document.createTextNode(`${x.call}: ${x.message} `),
+    x.explorerUrl ? link(x.explorerUrl, `transaction ${L.shortHash(x.hash)}`) : null)));
+  if (tr.log.length > 0) $('#try-log-box').open = true;
+}
+
+async function trRefresh() {
+  try {
+    tr.live = await TL.readLive(tr.chain, tr.cfg.token, tr.store.wallets.map((w) => w.accountId));
+    tr.readError = '';
+  } catch (e) {
+    tr.readError = e && e.message ? e.message : String(e);
+    if (!tr.live) throw e;
+  }
+  tr.lastRead = Date.now();
+  trRender();
+}
+
+function trNote(ok, call, message, hint = '') {
+  tr.last = { ok, call, message, hint, explorerUrl: null, hash: null };
+}
+
+// Sends one transaction and shows what came back. `build` returns
+// { kind, ctx, method, args, gasTgas, depositYocto } or throws a message for the visitor.
+async function trSend(build) {
+  if (tr.busy) return;
+  const w = trWallet();
+  if (!w) return;
+  trBusy(true);
+  let ctx = { accountId: w.accountId, call: '' };
+  try {
+    const plan = await build(w, trAccount(w.accountId));
+    ctx = { accountId: w.accountId, ...plan.ctx };
+    const res = await tr.chain.call(w, tr.cfg.token, plan.method, plan.args, { gasTgas: plan.gasTgas ?? TL.GAS_DEFAULT, depositYocto: plan.depositYocto });
+    tr.last = TL.describeResult(plan.kind, ctx, res);
+    tr.log.push(tr.last);
+  } catch (e) {
+    trNote(false, `${ctx.accountId}  ${ctx.call || 'not sent'}`, e && e.message ? e.message : String(e), 'Nothing was sent to the chain.');
+  }
+  try {
+    await trRefresh();
+  } catch {
+    trRender();
+  }
+  trBusy(false);
+}
+
+const trNeed = (a) => {
+  if (!a) throw new Error('The wallet is still loading. Try again in a moment.');
+  if (!a.exists) throw new Error('The faucet is still creating this account. Try again in a few seconds.');
+  return a;
+};
+
+function trBuy(text) {
+  return trSend(async (w, a) => {
+    const plan = TL.buyPlan(text, trNeed(a));
+    if (plan.error) throw new Error(plan.error);
+    const quote = await tr.chain.view(tr.cfg.token, 'quote_buy', { near: plan.intoPool.toString() });
+    return {
+      kind: 'buy', method: 'buy', args: TL.buyArgs(plan, quote), depositYocto: plan.deposit.toString(),
+      ctx: { call: `buy with ${L.fmtNear(plan.deposit)} NEAR`, deposit: plan.deposit, storage: plan.storage, loud: tr.live.state.is_loud_window === true },
+    };
+  });
+}
+
+function trSell(text) {
+  return trSend(async (w, a) => {
+    trNeed(a);
+    const amount = TL.tokenAmount(text);
+    return { kind: 'sell', method: 'sell', args: { amount: amount.toString(), min_near_out: '0' }, depositYocto: '1', ctx: { call: `sell ${L.fmtTokens(amount)} LOUD`, amount } };
+  });
+}
+
+function trShout(text) {
+  return trSend(async (w, a) => {
+    trNeed(a);
+    const amount = TL.tokenAmount(text);
+    return {
+      kind: 'shout', method: 'shout', args: { amount: amount.toString() }, depositYocto: '1',
+      ctx: { call: `shout ${L.fmtTokens(amount)} LOUD`, amount, noticeSec: L.nsToSeconds(tr.live.params.notice_ns) },
+    };
+  });
+}
+
+function trExit(id) {
+  const ex = tr.live ? tr.live.exits.find((x) => x.id.toString() === id) : null;
+  if (!ex) throw new Error('This exit is no longer open.');
+  return ex;
+}
+
+function trLeaveOrHush(kind, id) {
+  return trSend(async (w, a) => {
+    trNeed(a);
+    const ex = trExit(id);
+    const args = kind === 'leave' ? { exit_id: id, min_near_out: '0' } : { exit_id: id };
+    return { kind, method: kind, args, depositYocto: '1', ctx: { call: `${kind} exit ${id}`, remaining: ex.remaining } };
+  });
+}
+
+async function trCatch(id, part) {
+  const w = trWallet();
+  const a = w ? trAccount(w.accountId) : null;
+  // An unregistered wallet pays its storage first, in its own transaction.
+  if (w && a && a.exists && !a.registered) {
+    await trSend(async () => ({
+      kind: 'register', method: 'storage_deposit', args: {}, depositYocto: TL.STORAGE_FEE.toString(),
+      ctx: { call: 'storage_deposit 0.03 NEAR' },
+    }));
+    if (!tr.last || !tr.last.ok) return;
+  }
+  await trSend(async (w2, a2) => {
+    trNeed(a2);
+    const ex = trExit(id);
+    const amount = part === 'all' ? ex.remaining : TL.quarterOf(ex.remaining, tr.live.params.total_supply);
+    const quote = await tr.chain.view(tr.cfg.token, 'quote_catch', { exit_id: id, amount: amount.toString() });
+    const plan = TL.catchPlan(quote, a2);
+    if (plan.error) throw new Error(plan.error);
+    return {
+      kind: 'catch', method: 'catch', args: { exit_id: id, amount: amount.toString() }, gasTgas: TL.GAS_CATCH, depositYocto: plan.deposit.toString(),
+      ctx: { call: `catch ${L.fmtTokens(amount)} LOUD of exit ${id}`, amount, exitId: id, price: plan.price, fee: plan.fee },
+    };
+  });
+}
+
+async function trHasEd25519() {
+  try {
+    await window.crypto.subtle.generateKey({ name: 'Ed25519' }, false, ['sign', 'verify']);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function trNewWallet() {
+  if (tr.busy || tr.store.wallets.length >= 2) return;
+  if (!tr.chain.isMock && !(await trHasEd25519())) {
+    trNote(false, 'test wallet  not created', TL.NO_ED25519);
+    trRender();
+    return;
+  }
+  trBusy(true, 'Asking the testnet faucet for a funded account…');
+  try {
+    const w = await tr.chain.createTestWallet({ prefix: 'loud-try' });
+    tr.store.wallets.push({ accountId: w.accountId, publicKey: w.publicKey, secretKey: w.secretKey });
+    tr.store.active = tr.store.wallets.length - 1;
+    trSaveStore();
+    trNote(true, `${w.accountId}  created`, `${TL.walletLabel(tr.store.active)} is a new testnet account funded by the faucet. Buy with it.`);
+  } catch (e) {
+    trNote(false, 'test wallet  not created', TL.faucetFailure(e));
+  }
+  try {
+    await trRefresh();
+  } catch {
+    trRender();
+  }
+  trBusy(false);
+}
+
+async function trStart() {
+  const state = $('#try-state');
+  const retry = $('#try-retry');
+  retry.hidden = true;
+  state.dataset.state = 'pending';
+  setText(state, 'Reading the live token from NEAR testnet…');
+  try {
+    await trRefresh();
+    state.hidden = true;
+    $('#try-app').hidden = false;
+  } catch (e) {
+    state.dataset.state = 'failed';
+    setText(state, `Could not read the live token from NEAR testnet in this browser (${e && e.message ? e.message : e}).`);
+    retry.hidden = false;
+  }
+}
+
+async function initTry() {
+  const state = $('#try-state');
+  const mock = new URLSearchParams(location.search).get('mock') === '1';
+  let json = null;
+  if (mock) {
+    tr.chain = TL.createMockChain();
+    window.loudMock = tr.chain;
+    json = TL.mockLiveJson();
+  } else {
+    try {
+      json = await getJson('live.json');
+    } catch {
+      json = null;
+    }
+  }
+  tr.cfg = TL.liveConfig(json);
+  if (!tr.cfg) {
+    state.dataset.state = 'failed';
+    setText(state, 'The live token is not deployed yet.');
+    return;
+  }
+  if (!mock) {
+    try {
+      tr.chain = await import('./chain.js');
+    } catch (e) {
+      state.dataset.state = 'failed';
+      setText(state, `The wallet code did not load in this browser (${e && e.message ? e.message : e}).`);
+      return;
+    }
+  }
+  trLoadStore();
+  tr.board = createBoard($('#try-table'), { actions: true, part: { kind: 'catch-quarter', text: 'Catch quarter', aria: 'Catch a quarter of exit' } });
+  const root = $('#try-body');
+  $('#try-retry').addEventListener('click', trStart);
+  $('#try-new').addEventListener('click', trNewWallet);
+  $('#try-new-2').addEventListener('click', trNewWallet);
+  $('#try-switch').addEventListener('click', () => {
+    if (tr.busy || tr.store.wallets.length < 2) return;
+    tr.store.active = 1 - tr.store.active;
+    trSaveStore();
+    trRender();
+  });
+  $('#try-forget').addEventListener('click', () => {
+    const w = trWallet();
+    if (tr.busy || !w) return;
+    if (!window.confirm(`Forget ${w.accountId}? Its key is deleted from this browser and cannot be recovered.`)) return;
+    tr.store.wallets.splice(tr.store.active, 1);
+    tr.store.active = 0;
+    trSaveStore();
+    trNote(true, `${w.accountId}  forgotten`, 'The key is deleted from this browser. The account stays on testnet.');
+    trRefresh().catch(() => trRender());
+  });
+  for (const form of root.querySelectorAll('form[data-try]')) {
+    form.addEventListener('submit', (ev) => {
+      ev.preventDefault();
+      const value = $('input', form).value;
+      const kind = form.dataset.try;
+      if (kind === 'buy') trBuy(value);
+      else if (kind === 'sell') trSell(value);
+      else trShout(value);
+    });
+  }
+  for (const b of root.querySelectorAll('[data-try-fill]')) {
+    b.addEventListener('click', () => {
+      const w = trWallet();
+      const a = w ? trAccount(w.accountId) : null;
+      if (!a) return;
+      const whole = (units) => (units / 10n ** 18n) * 10n ** 18n;
+      if (b.dataset.tryFill === 'all') $('#try-sell-in').value = L.tokensForInput(whole(a.loud + a.quiet));
+      else $('#try-shout-in').value = L.tokensForInput(whole(a.loud));
+    });
+  }
+  $('#try-table').addEventListener('click', (ev) => {
+    const b = ev.target.closest('button[data-do]');
+    if (!b || tr.busy) return;
+    const id = b.dataset.id;
+    const kind = b.dataset.do;
+    if (kind === 'catch') trCatch(id, 'all');
+    else if (kind === 'catch-quarter') trCatch(id, 'quarter');
+    else trLeaveOrHush(kind, id);
+  });
+  await trStart();
+  // Countdowns move every second; the chain is read again every 10 s while the tab is visible.
+  setInterval(() => {
+    if (!tr.live || tr.busy || document.visibilityState !== 'visible') return;
+    if (Date.now() - tr.lastRead >= 10000) {
+      tr.lastRead = Date.now();
+      trRefresh().catch(() => trRender());
+    } else {
+      trRenderBoard();
+    }
+  }, 1000);
+}
+
 // Proof
 
 function facts(dl, rows) {
@@ -743,6 +1109,7 @@ function safely(name, fn) {
 }
 
 safely('board', initHero);
+safely('try', initTry);
 safely('sandbox', initSandbox);
 safely('split', initSplit);
 safely('proof', initProof);

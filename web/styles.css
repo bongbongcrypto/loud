@@ -712,3 +712,23 @@ table.steps details b { color: var(--ink); }
   #split-table td:not(:first-child) { white-space: normal; font-size: 13px; }
   #split-table th, #split-table td { padding-right: 8px; }
 }
+
+/* Use it on testnet */
+.try-wallets { border-top: 2px solid var(--ink); padding-top: 14px; }
+.try-wallet-buttons { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+.try-wallet-buttons button:not(.link):first-of-type { background: var(--ink); color: var(--paper); }
+.try-wallet-buttons button:not(.link):first-of-type:hover:not(:disabled) { background: var(--accent); border-color: var(--accent); }
+.try-wallets .fine { margin-top: 10px; max-width: 44em; }
+.try-account dd a { overflow-wrap: anywhere; }
+.sb-actions .try-first { grid-column: 1 / -1; margin: 0; }
+#try-pending { font-size: 16px; }
+#try-result .hint a { font-family: var(--mono); font-size: 13.5px; }
+#try-log a { margin-left: 4px; }
+#try-facts { margin-bottom: 4px; }
+@media (max-width: 960px) {
+  .try-account { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .try-account > div:first-child { grid-column: 1 / -1; }
+}
+#try-app > * + * { margin-top: 18px; }
+#try-app > .fine { margin-top: 10px; }
+#try-app > #try-other { margin-top: 6px; }

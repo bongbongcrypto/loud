@@ -19,9 +19,10 @@
 <header class="masthead">
   <p class="wordmark">LOUD</p>
   <nav aria-label="Sections">
+    <a href="#try">Use it on testnet</a>
     <a href="#rule">Rule</a>
     <a href="#split">Split attack</a>
-    <a href="#sandbox">Sandbox</a>
+    <a href="#sandbox">Simulator</a>
     <a href="#proof">Testnet proof</a>
     <a href="#limits">Limits</a>
   </nav>
@@ -77,6 +78,110 @@
     </div>
   </div>
   <p class="board-legend"><b>NOTICE</b> waiting. <b>BOARDING</b> may sell now, if the cap has room. <b>LEFT</b> sold. <b>CAUGHT</b> taken by another account, still loud. <b>EXPIRED</b> window ran out, tokens still loud.</p>
+</section>
+
+<section class="row" id="try" aria-labelledby="try-h">
+  <div class="row-head">
+    <h2 id="try-h">Use it on testnet</h2>
+  </div>
+  <div class="row-body" id="try-body">
+    <p class="say">A real token on NEAR testnet. Get a test wallet, buy, try to sell, shout, leave, catch. Every button sends a transaction you can open in the explorer.</p>
+    <p class="state" id="try-state" data-state="pending" role="status">Reading the live token from NEAR testnet…</p>
+    <button type="button" id="try-retry" hidden>Read the token again</button>
+
+    <div id="try-app" hidden>
+      <dl class="facts" id="try-facts"></dl>
+      <p class="fine" id="try-note">This token runs a demo setting: its launch window stays open for seven days, so every buy is loud and every visitor can shout, leave and catch. Nobody holds quiet tokens on it yet. The notice is 1 min here, against 30 min in the standard preset.</p>
+
+      <div class="try-wallets">
+        <div class="try-wallet-buttons">
+          <button type="button" id="try-new">Get a test wallet</button>
+          <button type="button" id="try-new-2" hidden>Get a second wallet</button>
+          <button type="button" id="try-switch" hidden>Switch wallet</button>
+          <button type="button" class="link" id="try-forget" hidden>Forget this wallet</button>
+        </div>
+        <p class="fine" id="try-wallet-note">A test wallet is a new NEAR testnet account that the public faucet funds with test NEAR. Testnet only, throwaway, no real funds. Its key is made in this browser, kept in this browser's storage and never sent anywhere. A second wallet lets you catch your own exit from another account.</p>
+      </div>
+
+      <dl class="sb-account try-account" id="try-account" hidden>
+        <div><dt id="try-wallet-label">Wallet A</dt><dd id="try-acct"></dd></div>
+        <div><dt>NEAR</dt><dd id="try-near">0</dd></div>
+        <div><dt>Loud</dt><dd id="try-loud">0</dd></div>
+        <div><dt>Quiet</dt><dd id="try-quiet">0</dd></div>
+        <div><dt>In open exits</dt><dd id="try-escrow">0</dd></div>
+      </dl>
+      <p class="fine" id="try-other" hidden></p>
+
+      <div class="sb-actions" id="try-actions" hidden>
+        <form data-try="buy">
+          <label for="try-buy-in">Buy with NEAR</label>
+          <input id="try-buy-in" inputmode="decimal" autocomplete="off" value="2">
+          <button type="submit">Buy</button>
+        </form>
+        <form data-try="sell">
+          <label for="try-sell-in">Sell LOUD <button type="button" class="link" data-try-fill="all">whole balance</button></label>
+          <input id="try-sell-in" inputmode="decimal" autocomplete="off" value="1000000">
+          <button type="submit">Sell</button>
+        </form>
+        <form data-try="shout">
+          <label for="try-shout-in">Shout LOUD <button type="button" class="link" data-try-fill="loud">all loud</button></label>
+          <input id="try-shout-in" inputmode="decimal" autocomplete="off" value="1000000">
+          <button type="submit">Shout</button>
+        </form>
+        <p class="fine try-first" id="try-first" hidden>The first buy of a wallet pays 0.03 NEAR to the token for storage. The rest buys tokens.</p>
+      </div>
+
+      <p class="state" id="try-pending" data-state="pending" role="status" hidden>Waiting for NEAR testnet…</p>
+      <div class="sb-result" id="try-result" role="status">
+        <p class="call">No transaction yet.</p>
+      </div>
+
+      <div class="board board-inline" role="group" aria-label="Open exits on the live token">
+        <div class="board-scroll">
+          <table class="board-table with-actions" id="try-table">
+            <thead>
+              <tr>
+                <th scope="col" class="c-id">Exit</th>
+                <th scope="col" class="c-acct">Account</th>
+                <th scope="col" class="c-amt">Left</th>
+                <th scope="col" class="c-shout">Shouted</th>
+                <th scope="col" class="c-ready">Ready</th>
+                <th scope="col" class="c-status">Status</th>
+                <th scope="col" class="c-act">Action</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr class="board-empty"><td colspan="7">No open exits on the token right now. Shout to list one.</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="board-foot">
+          <div class="cap">
+            <span class="cap-label">Cap room</span>
+            <span class="cap-bar" id="try-cap-bar" role="meter" aria-label="Cap room available now on the live token" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><span></span></span>
+            <span class="cap-text" id="try-cap-text"></span>
+          </div>
+          <p class="board-note" id="try-board-note">Every open exit on the token, from every visitor, read from NEAR testnet. Times are UTC. The board reads again every 10 s.</p>
+        </div>
+      </div>
+
+      <details class="sb-log" id="try-log-box">
+        <summary>Your transactions</summary>
+        <ol id="try-log"></ol>
+      </details>
+
+      <details class="fine-print">
+        <summary>What happens when you press a button</summary>
+        <ul class="plain">
+          <li>The page builds a NEAR transaction, signs it with the test wallet's key in this browser and sends it to a public testnet RPC node. Nothing passes through a server of ours. There is none.</li>
+          <li>A call takes 2 to 10 s. The result line shows what the contract answered, with its error code when it refused, and a link to the transaction.</li>
+          <li>Loud tokens here behave as on any LOUD token: <code>sell</code> refuses them, <code>shout</code> locks them for the notice, <code>leave</code> sells what the shared cap has room for, and another account can <code>catch</code> an open exit.</li>
+          <li>Other visitors use the same token. Their exits are on the board, and you can catch them or hush the expired ones.</li>
+          <li>Test NEAR has no value. The faucet may refuse when it is busy. Forgetting a wallet deletes its key from this browser, and the account stays on testnet.</li>
+        </ul>
+      </details>
+    </div>
+  </div>
 </section>
 
 <section class="summary" aria-label="Summary">
@@ -229,10 +334,10 @@
 
 <section class="row" id="sandbox" aria-labelledby="sandbox-h">
   <div class="row-head">
-    <h2 id="sandbox-h">Play the token by hand</h2>
+    <h2 id="sandbox-h">Simulator: play the rule by hand, no chain</h2>
   </div>
   <div class="row-body" id="sandbox-body">
-    <p class="say">No wallet needed. You hold the clock.</p>
+    <p class="say">A copy of the rule inside this page. No wallet, no chain, and you hold the clock. For real transactions use <a href="#try">the live token above</a>.</p>
     <ol class="path" id="sb-path">
       <li>Buy with 10 NEAR. It is launch time, so they are loud.</li>
       <li>Try to sell. Read the error.</li>
@@ -289,7 +394,7 @@
       <p class="call">No call yet.</p>
     </div>
 
-    <div class="board board-inline" role="group" aria-label="Sandbox exits">
+    <div class="board board-inline" role="group" aria-label="Simulator exits">
       <div class="board-scroll">
         <table class="board-table with-actions" id="sb-table">
           <thead>
@@ -324,11 +429,11 @@
     </details>
 
     <details class="fine-print">
-      <summary>What the sandbox leaves out</summary>
+      <summary>What the simulator leaves out</summary>
       <ul class="plain">
-        <li>It is a private copy of the rule engine inside this page, with no chain behind it. The error texts are the engine's own.</li>
+        <li>It is a private copy of the rule engine inside this page, with no chain behind it. The error texts are the engine's own. The section "Use it on testnet" sends the same calls to the contract.</li>
         <li>The engine charges no storage. On chain a buy by an unregistered wallet also pays 0.03 NEAR, and a transfer to one is refused (<code>E_UNREGISTERED</code>). A catch by an unregistered wallet is refused the same way.</li>
-        <li>Both sandbox wallets are yours and have all the NEAR they need. A catch attaches exactly the quoted price. "NEAR paid / received" adds up both wallets, so a catch between them shows as the price paid and the seller's part received.</li>
+        <li>Both simulator wallets are yours and have all the NEAR they need. A catch attaches exactly the quoted price. "NEAR paid / received" adds up both wallets, so a catch between them shows as the price paid and the seller's part received.</li>
       </ul>
     </details>
   </div>
@@ -509,6 +614,6 @@
   <p>No cookies, no tracking. The page reads its own two data files and public data on NEAR testnet.</p>
 </footer>
 
-<noscript><p class="noscript">The live board, the split run and the sandbox need JavaScript. The rule, the recorded proof summary, the limits and the parameters are complete without it.</p></noscript>
+<noscript><p class="noscript">The live token, the board, the split run and the simulator need JavaScript. The rule, the recorded proof summary, the limits and the parameters are complete without it.</p></noscript>
 </body>
 </html>

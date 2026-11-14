@@ -947,7 +947,7 @@ test('index.html: structure a parser can rely on', () => {
   assert.match(html, /<meta name="description" content="[^"]{80,300}">/);
   // Section ids, in page order.
   const ids = [...html.matchAll(/<section[^>]* id="([\w-]+)"/g)].map((m) => m[1]);
-  assert.deepEqual(ids, ['board', 'rule', 'split', 'sandbox', 'proof', 'limits', 'parameters']);
+  assert.deepEqual(ids, ['board', 'try', 'rule', 'split', 'sandbox', 'proof', 'limits', 'parameters']);
   // One h2 per section with an id, and no heading level is skipped.
   for (const id of ids) {
     const at = html.indexOf(`id="${id}"`);
