@@ -623,6 +623,8 @@ function trSaveStore() {
 
 const trWallet = () => (wc.use && wc.conn ? wc.conn : tr.store.wallets[tr.store.active] || null);
 // Every account the page shows balances for: the test wallets and the connected one.
+// Inputs are filled with whole tokens; a balance under one token is filled exactly.
+const trWhole = (units) => (units >= 10n ** 18n ? (units / 10n ** 18n).toString() : L.tokensForInput(units));
 const trIds = () => [...new Set([...tr.store.wallets.map((x) => x.accountId), ...(wc.conn ? [wc.conn.accountId] : [])])];
 const trAccount = (id) => (tr.live ? tr.live.accounts.find((a) => a.accountId === id) : null) || null;
 
@@ -803,7 +805,7 @@ async function trSend(build) {
   // larger than the cap, so the walkthrough ends in a partial leave.
   if (bought) {
     const a = trAccount(w.accountId);
-    if (a && a.loud > 0n) $('#try-shout-in').value = L.tokensForInput(a.loud);
+    if (a && a.loud > 0n) $('#try-shout-in').value = trWhole(a.loud);
   }
   trBusy(false);
 }
@@ -946,7 +948,7 @@ async function trAfterWallet() {
 function trShoutDefault() {
   const w = trWallet();
   const a = w ? trAccount(w.accountId) : null;
-  $('#try-shout-in').value = a && a.loud > 0n ? L.tokensForInput(a.loud) : '1000000';
+  $('#try-shout-in').value = a && a.loud > 0n ? trWhole(a.loud) : '1000000';
 }
 
 // The first wallet comes from the faucet. The second is made from wallet A in one
@@ -1280,8 +1282,8 @@ async function initTry() {
       if (!a) return;
       // Exact balances: a shout of the whole loud balance is accepted even below the
       // contract's minimum size.
-      if (b.dataset.tryFill === 'all') $('#try-sell-in').value = L.tokensForInput(a.loud + a.quiet);
-      else $('#try-shout-in').value = L.tokensForInput(a.loud);
+      if (b.dataset.tryFill === 'all') $('#try-sell-in').value = trWhole(a.loud + a.quiet);
+      else $('#try-shout-in').value = trWhole(a.loud);
     });
   }
   $('#try-stale').addEventListener('click', () => { tr.showStale = !tr.showStale; trRenderBoard(); });
