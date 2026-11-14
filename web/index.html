@@ -110,8 +110,8 @@
         <span>Sell into the token's own pool, as far as the cap has room.</span>
       </li>
     </ol>
-    <p class="law law-catch"><b>The room can answer.</b> From the shout until the exit ends, any other account can <code>catch</code> it: pay for the tokens and take them. The price is the pool's price now or its price at the shout, whichever is higher. The seller gets 99% of it and 1% stays in the pool. The tokens stay loud. That part of the sale never hits the pool.</p>
-    <p class="law"><b>A shout cannot be cancelled.</b> The tokens stay locked until they are sold, caught or, after the exit expires, returned by <code>hush</code>. The owner's own account cannot take them back sooner. A second account can, by catching the exit and paying the 1% fee. If they are not sold or caught, the exit expires 90 min after the shout, and they stay locked until someone calls <code>hush</code>.</p>
+    <p class="law law-catch"><b>The room can answer.</b> From the shout until the exit ends, any other account can <code>catch</code> it: pay for the tokens and take them. The price is the pool's price now or its price at the moment of the shout, whichever is higher, so pushing the price down after a shout does not make a catch cheaper. The seller gets 99% of it and 1% stays in the pool. The tokens stay loud. That part of the sale never hits the pool.</p>
+    <p class="law"><b>The owner cannot cancel a shout.</b> The tokens stay locked until they are sold, caught or, after the exit expires, returned by <code>hush</code>. The owner's own account cannot take them back sooner. A second account can, by catching the exit and paying the 1% fee. If they are not sold or caught, the exit expires 90 min after the shout, and they stay locked until someone calls <code>hush</code>.</p>
     <p class="law"><b>One cap for everyone.</b> All loud sales into the pool share one cap. It holds at most 0.5% of supply and refills 0.5% of supply per 60 min. A hundred wallets get the same room as one.</p>
     <p class="law"><b>No insider list.</b> The contract never decides who is an insider. It only tags launch-window buys. The creator allocation is loud from the start.</p>
     <details class="fine-print">
@@ -212,7 +212,7 @@
         <li>With no rule or with per-wallet limits it sells all each wallet may, once a minute. Per-wallet limits: at most 0.5% of supply per sale, one sale per wallet per 60 s.</li>
         <li>Under LOUD it shouts at minute 1 and first sells at minute 31. It shouts in batches and does not buy back. A sharper seller could be faster.</li>
         <li>Nobody reacts in this run: no holder sells on seeing a shout, and nobody buys the dip.</li>
-        <li>The LOUD sale is still running when the chart ends. LOUD changes how fast and how publicly early supply sells. The price can still fall.</li>
+        <li>The LOUD sale is still running when the chart ends. LOUD changes how fast and how publicly early supply sells into the pool. The price can still fall.</li>
         <li>Same rule engine as the tests. It charges no storage; on chain every wallet but the creator's also needs 0.03 NEAR once.</li>
       </ul>
     </details>
@@ -419,12 +419,14 @@
     <h2 id="limits-h">Limits</h2>
   </div>
   <div class="row-body">
-    <p class="say">LOUD slows one exit and makes it public. The rest is still possible.</p>
+    <p class="say">LOUD slows one exit, the one into the pool, and makes it public. The rest is still possible.</p>
     <dl class="limits">
       <div><dt>Leave, then buy back</dt>
       <dd>Once the launch window is over, a holder can sell loud tokens through the notice and the cap and, in the same transaction, buy the same amount back with NEAR of their own. The pool ends where it started, within rounding, and the holder now owns quiet tokens, which sell with no notice and no cap. So the cap sets how fast early supply can be sold or converted. It does not stop a later dump of tokens bought back at the market price. Every conversion still shows on chain as a shout and a leave.</dd></div>
       <div><dt>A catch is a cash-out the cap does not slow</dt>
       <dd>A caught exit pays its owner at once, however large it is. The pool sells nothing and the supply stays loud, but an insider with a willing buyer cashes out faster than the cap. A holder can also take back their own shout by catching it from a second account, for the 1% fee. That makes a bluff cheap: shout, let others sell first, then take the shout back. Whoever catches takes on tokens they must shout to sell, while quiet holders stay free to sell at once. And a <code>leave</code> can fail with <code>E_SLIPPAGE</code> or <code>E_NO_EXIT</code> when someone catches from the exit just before it, so quote again and leave some slack.</dd></div>
+      <div><dt>The seller sets the catch price floor</dt>
+      <dd>The floor is the pool's price for the shouted amount at the moment of the shout, and it never comes down. A seller who does not want to be caught can lift the pool price for an instant around their own shout and so set a floor nobody will pay. After a real price fall, a catch costs more than the pool pays, so nobody catches and the exit goes to the pool through <code>leave</code>. Someone who sells just before a shout lands lowers the floor it records.</dd></div>
       <div><dt>A standing notice</dt>
       <dd>A holder can keep exits open one after another, so some exit is always ready. The notice then says a sale may come, with no exact time.</dd></div>
       <div><dt>Side deals and wrappers</dt>
@@ -436,7 +438,7 @@
       <div><dt>Early honest buyers are loud too</dt>
       <dd>Anyone who buys in the launch window sells by the same rule.</dd></div>
       <div><dt>A shout is not a sale</dt>
-      <dd>A holder can shout, sell nothing and get the tokens back once the exit has expired. The cost is gas and the lock, 90 min in the standard preset, or the 1% fee to take them back sooner through a second account. Until then anyone else can catch them at the price above.</dd></div>
+      <dd>A holder can shout, sell nothing and get the tokens back once the exit has expired. The cost is gas and the lock, 90 min in the standard preset, or the 1% fee to take them back sooner through a second account. Until then anyone else can catch them, at a price that is never below the pool's price at the shout.</dd></div>
       <div><dt>A notice can start a rush</dt>
       <dd>Quiet holders can sell before a shouted exit is ready. That is what the notice is for, and it can speed up a sell-off.</dd></div>
       <div><dt>First come, first served</dt>
@@ -487,7 +489,7 @@
           <tr><th scope="row">Notice</th><td>30 min</td><td>Wait between a shout and the first sale into the pool. 30 min is our guess at how long a person needs to see it and act.</td></tr>
           <tr><th scope="row">Exit window</th><td>60 min</td><td>How long a ready exit can be used. Too short, and exits expire before the cap has room.</td></tr>
           <tr><th scope="row">Catch fee</th><td>1%</td><td>Share of a catch price that stays in the pool. Fixed in the contract, the same for every launch.</td></tr>
-          <tr><th scope="row">Cap</th><td>0.5% per 60 min</td><td>Shared by all accounts. It holds 0.5% and refills 0.5% per 60 min, so any 60 min lets out at most 1%. A 5% position needs about 10 hours of refill.</td></tr>
+          <tr><th scope="row">Cap</th><td>0.5% per 60 min</td><td>Shared by all accounts. It holds 0.5% and refills 0.5% per 60 min, so any 60 min lets at most 1% into the pool. A 5% position needs about 10 hours of refill.</td></tr>
         </tbody>
       </table>
     </div>

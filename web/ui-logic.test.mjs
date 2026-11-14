@@ -864,7 +864,7 @@ test('index.html: the static text makes no claim the contract does not back', ()
   assert.match(html, /the exit is announced on chain/);
   assert.match(html, /id="hero-note">Simulation: /);
   // A shout cannot be cancelled, it does not force a sale, and storage is paid per account.
-  assert.match(html, /<b>A shout cannot be cancelled\.<\/b> The tokens stay locked until they are sold/);
+  assert.match(html, /<b>The owner cannot cancel a shout\.<\/b> The tokens stay locked until they are sold/);
   assert.match(html, /<dt>A shout is not a sale<\/dt>/);
   assert.match(html, /Storage costs 0\.03 NEAR per account/);
   // One word per thing in the reader's text: cap and exit.

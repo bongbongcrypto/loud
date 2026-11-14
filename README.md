@@ -2,7 +2,7 @@
 
 **A NEAR memecoin where you have to shout before you sell, and the room can answer.**
 
-LOUD makes launch supply announce its exit. The creator allocation and the tokens bought in the launch window are *loud*. They sell into the token's own pool only after a public notice their owner cannot cancel, and every wallet draws on one shared cap, so splitting a bag across 100 wallets adds no room. While a notice is up, anyone else can *catch* the exit: buy the tokens from the seller at the pool's price and take them, still loud, so that sale never hits the pool. Tokens bought later are *quiet* and sell at once. That includes tokens a holder sells through the cap and then buys back: the cap sets how fast early supply can be sold or converted, and it does not stop a price from falling ([Limits](#limits)).
+LOUD makes launch supply announce its exit. The creator allocation and the tokens bought in the launch window are *loud*. They sell into the token's own pool only after a public notice, and every wallet draws on one shared cap, so splitting a bag across 100 wallets adds no room. While a notice is up, anyone else can *catch* the exit: buy the tokens from the seller, for no less than the pool's price when the exit was shouted, and take them, still loud, so that sale never hits the pool. Tokens bought later are *quiet* and sell at once. That includes tokens a holder sells through the cap and then buys back: the cap sets how fast early supply can be sold into the pool or converted, and it does not stop a price from falling ([Limits](#limits)).
 
 - Live page: https://bongbongcrypto.github.io/loud/
 - Testnet token: <!-- proof:token -->[t.loud-mwfw1nxp3572b6.testnet](https://testnet.nearblocks.io/address/t.loud-mwfw1nxp3572b6.testnet), no access keys, demo preset, recorded 2026-11-14<!-- /proof:token -->. Every transaction: [Testnet proof](https://bongbongcrypto.github.io/loud/#proof).
@@ -16,16 +16,16 @@ A script put the token on NEAR testnet and attacked it with 20 split wallets. Ev
 
 | What was tried | What the contract did | Transaction |
 |---|---|---|
-| Create, fund, deploy and initialise the token account in one transaction that adds no key | Done. The account has 0 access keys, so nobody can sign for it | [5twoy5…](https://testnet.nearblocks.io/txns/5twoy5SbaEq8JqtGDm6q6KrZ4wBFaFDXzZjJ5Fe95AY8) |
-| The insider splits its launch tokens across 20 wallets with `ft_transfer` | Done. The tokens arrive still loud, as the next row shows | [7s5njd…](https://testnet.nearblocks.io/txns/7s5njdw4gdWEvnieMAZNZzPb46xxTr2Ld5sPG8n6H2h) |
-| A split wallet calls `sell` with those tokens | Rejected: `E_NO_QUIET` | [ES6jL1…](https://testnet.nearblocks.io/txns/ES6jL13q44xip7hVzEGXHtQ39wwtvwk1hQ3cf7yddpeD) |
-| The wallet shouts, then calls `leave` 56 s before its notice ends | Rejected: `E_NOTICE` | [Fofq7W…](https://testnet.nearblocks.io/txns/Fofq7WdoVMpoEKaw8Stvo8tTeVpkkkSaA1RBhzJM83fz) |
-| The same wallet tries to take the shout back with `hush` | Rejected: `E_NOTICE_BINDING` | [5EKvJz…](https://testnet.nearblocks.io/txns/5EKvJzwDFQs95Ux6Z3umZMugrrZL9rc3zMXuoj22BVar) |
-| Another wallet tries to catch its own exit | Rejected: `E_SELF` | [EaKTwT…](https://testnet.nearblocks.io/txns/EaKTwTvCq1RxSyatZu3roTLzwe3JQz7QtHtbGiQcpu81) |
-| A late buyer catches a quarter of that exit while the notice is still up | Paid 0.0212 NEAR and got 2,604,167 LOUD, still loud. The pool sold nothing, kept the 1% fee, and the cap was not used | [6m74N6…](https://testnet.nearblocks.io/txns/6m74N6Mp5f8UdBVbCkcnupcjidirh7GbmDLxFmzKwDoq) |
-| After the notice, a wallet calls `leave` while the cap has room | Sold 1,671,982 LOUD | [HRbZuL…](https://testnet.nearblocks.io/txns/HRbZuLqHuhvZ9GKConBcjV3KzProKp6oXDDjFdvueFTG) |
-| Another wallet calls `leave` when the cap is empty | Rejected: `E_CAP` | [FtCivL…](https://testnet.nearblocks.io/txns/FtCivLBkxCZPvBeqnwMuwmzLZGdA3XU9MC8ESfJ8fFif) |
-| All 20 wallets keep calling `leave` for one full cap window, 480 calls | 33 sales, 426 `E_CAP` rejections, 20 `E_EXPIRED` once the exit window had closed, 1 whose outcome the script could not confirm. 6,540,796 LOUD got out; the cap allowed at most 6,964,776 | [receipts.json](web/receipts.json) |
+| Create, fund, deploy and initialise the token account in one transaction that adds no key | Done. The account has 0 access keys, so nobody can sign for it | [3rNaaZ…](https://testnet.nearblocks.io/txns/3rNaaZtEQBE95vxmqExXGEeUrssebfXSzLbkKWePHpDn) |
+| The insider splits its launch tokens across 20 wallets with `ft_transfer` | Done. The tokens arrive still loud, as the next row shows | [AaTyvH…](https://testnet.nearblocks.io/txns/AaTyvHo1jgJfMyaiPUd9S2j9oydeDDsuWhm3r5ZPeZLG) |
+| A split wallet calls `sell` with those tokens | Rejected: `E_NO_QUIET` | [3waXwA…](https://testnet.nearblocks.io/txns/3waXwAgDHau6XDGULMQ2MZaXxTACCyRn48JuRFWuBo9W) |
+| The wallet shouts, then calls `leave` 57 s before its notice ends | Rejected: `E_NOTICE` | [4UHzj6…](https://testnet.nearblocks.io/txns/4UHzj6QkWLU1vznfX2LTAGUC46Gn54t94XQbzrftmn9K) |
+| The same wallet tries to take the shout back with `hush` | Rejected: `E_NOTICE_BINDING` | [Fe6zF2…](https://testnet.nearblocks.io/txns/Fe6zF2igoF1HVuPu9dbRBAzxtsSH6ufHid3cnU395T4a) |
+| Another wallet tries to catch its own exit | Rejected: `E_SELF` | [5xHRU1…](https://testnet.nearblocks.io/txns/5xHRU16n6ZRqz8CuGM5BYcsxNxVshk9GwHZsP6pM7j7t) |
+| A late buyer catches a quarter of that exit while the notice is still up | Paid 0.0212 NEAR and got 2,604,167 LOUD, still loud. The pool sold nothing, kept the 1% fee, and the cap was not used | [DVdwSM…](https://testnet.nearblocks.io/txns/DVdwSMPa55767UfJeC2QkewndXFVSWAN5JHCYjHLvBgX) |
+| After the notice, a wallet calls `leave` while the cap has room | Sold 1,637,413 LOUD | [83o4MK…](https://testnet.nearblocks.io/txns/83o4MKSNxZkr53crq6htWt36GrfkNWnsNKkDXDERpFu4) |
+| Another wallet calls `leave` when the cap is empty | Rejected: `E_CAP` | [9YRMyL…](https://testnet.nearblocks.io/txns/9YRMyLWMQd9LjQVc4nT7ayKKgL9V2t6MA6876h4yZyPu) |
+| All 20 wallets keep calling `leave` for one full cap window, 620 calls | 37 sales, 563 `E_CAP` rejections, 20 `E_EXPIRED` once the exit window had closed. 6,498,659 LOUD got out; the cap allowed at most 6,649,928 | [receipts.json](web/receipts.json) |
 
 The run shows 20 wallets staying inside one cap on chain. That 1 wallet and 100 wallets sell the same amount is shown by the contract and engine tests, not by this run. Ten checks, every transaction: [Testnet proof](https://bongbongcrypto.github.io/loud/#proof).
 
@@ -40,16 +40,16 @@ Nobody leaves this launch quietly. Every early exit goes up on a public departur
 1. Tokens bought during the launch window, and the creator allocation, are **loud**. Later buys are **quiet** and sell at once. The tag travels with the tokens through every transfer.
 2. Loud tokens cannot use `sell`. To sell into the pool the holder calls `shout`, which locks them and posts a public notice, then `leave` when the notice ends.
 3. Every wallet's `leave` draws on one shared cap. More wallets never mean more room.
-4. The owner cannot cancel a shout. The tokens stay locked until they are sold, caught, or the exit ends, and then `hush` returns what is left, still loud.
-5. From the moment of the shout until the exit ends, any other registered account can call `catch` on it with NEAR attached. The price is the higher of the pool's sell quote now and its quote when the exit was shouted, so pushing the price down first does not make a catch cheaper. The catcher receives the tokens as loud. Of the price, 1% stays in the pool and the seller gets the rest. The pool sells nothing and the cap is not used, so an exit that is fully caught never pushes the price down. Holders who believe in the coin can absorb an insider's exit instead of watching the chart fall, and what they catch is as loud as it was: to sell it they must shout too.
+4. The owner's account cannot cancel a shout. The tokens stay locked until they are sold, caught, or the exit ends, and then `hush` returns what is left, still loud.
+5. From the moment of the shout until the exit ends, any other registered account can call `catch` on it with NEAR attached. The price is the higher of the pool's sell quote now and its quote when the exit was shouted, so pushing the price down after a shout does not make a catch cheaper. The catcher receives the tokens as loud. Of the price, 1% stays in the pool and the seller gets the rest. The pool sells nothing and the cap is not used, so an exit that is fully caught never pushes the price down. Holders who believe in the coin can take an announced exit off the board before it reaches the pool, and what they catch is as loud as it was: to sell it they must shout too.
 6. Every wallet but the creator's needs a one-time 0.03 NEAR storage fee. Nobody, the creator included, can change or pause the token: it has no owner method and its account has no access key.
 
-Standard preset: 1,000,000,000 supply, 5% creator, launch window 10 min, notice 30 min, exit window 60 min, cap 0.5% of supply per 60 min. The cap is a bucket that holds 0.5% and refills 0.5% per 60 min, so a full bucket plus one refill lets out at most 1% in any 60 min.
+Standard preset: 1,000,000,000 supply, 5% creator, launch window 10 min, notice 30 min, exit window 60 min, cap 0.5% of supply per 60 min. The cap is a bucket that holds 0.5% and refills 0.5% per 60 min, so a full bucket plus one refill lets at most 1% into the pool in any 60 min.
 
 What a launch buyer accepts:
 
 - The rule does not know who is an insider. An honest launch-window buyer shouts and waits like everyone else.
-- A shout locks the tokens until they sell, someone catches them, or the exit expires, 90 min after the shout on the standard preset. After that `hush` returns them. The owner cannot refuse a catch.
+- A shout locks the tokens until they sell, someone catches them, or the exit expires, 90 min after the shout on the standard preset. After that `hush` returns them. The owner cannot refuse a catch at or above the floor.
 - The cap is first come, first served. A `leave` fills only what the cap and the pool have room for.
 - Anyone who wants no part of this buys after the launch window and holds quiet tokens.
 
@@ -129,6 +129,7 @@ Under LOUD, holders in both cases also get 30 minutes of public notice before th
 - **Side deals and wrappers.** Loud tokens can be sent with a plain transfer to another registered account. That covers a private sale, and it covers a contract that issues its own token against them. Whoever buys that wrapper token holds no tag.
 - **Waiting out the launch window avoids the tag.** Someone who buys right after it gets quiet tokens with no notice and no cap. The creator allocation starts loud, and so do the tokens of honest launch-window buyers.
 - **A shout does not have to end in a pool sale.** A holder can shout, sell nothing and take the tokens back after the exit expires, at no cost beyond gas and the lock. A second account of the same holder can take them back sooner by catching the exit, for the 1% fee. So a shout can be a bluff: shout, let others sell first, take it back.
+- **The seller sets the catch price floor.** The floor is the pool's price for the shouted amount at the moment of the shout, and it never comes down. A seller who does not want to be caught can lift the pool price for an instant around their own shout and so set a floor nobody will pay. After a real price fall, a catch costs more than the pool pays, so nobody catches and the exit goes to the pool through `leave`. Someone who sells just before a shout lands lowers the floor it records.
 - **A notice can trigger a rush.** Quiet holders can sell before a shouted exit is ready.
 - **Catching is a cash-out the cap does not slow.** A seller whose exit is caught gets paid at once, however large it is. The pool sells nothing, its price moves only by the 1% fee it keeps, and the supply stays loud in the catcher's hands, but an insider with a willing buyer leaves faster than the cap. A holder can also take back their own shout by catching it from a second wallet. That costs the 1% fee and only moves loud tokens between their wallets. Catchers take on tokens they must shout to sell, while quiet holders stay free to sell. A `leave` can fail with `E_SLIPPAGE` or `E_NO_EXIT` if someone catches from the exit just before it.
 - **The creator allocation is unbacked.** It is minted without payment, so its proceeds come from buyers' NEAR. The last sellers may be unable to sell.
