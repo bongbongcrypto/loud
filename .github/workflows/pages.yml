@@ -1,7 +1,7 @@
 name: pages
 
 # Publishes web/ as the site root. Runs on every push that touches web/, after each
-# proof run (the proof commit is made with the workflow token, which does not start
+# proof or live run (their commits are made with the workflow token, which does not start
 # push workflows), and by hand.
 
 on:
@@ -9,7 +9,7 @@ on:
     branches: [main]
     paths: ["web/**", ".github/workflows/pages.yml"]
   workflow_run:
-    workflows: [proof]
+    workflows: [proof, live]
     types: [completed]
   workflow_dispatch:
 

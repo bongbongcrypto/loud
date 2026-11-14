@@ -8,9 +8,10 @@ name: live
 # takes, so that every buy made from the page in that time is loud. The full proof run
 # (proof.yml) cannot use it: its late-buyer check needs the window to close.
 #
-# The deploy job installs and runs npm code with a read-only token. Only the record job
-# can write to the repository, and it runs no npm code. The e2e job then walks the
-# visitor's path on chain with web/chain.js, the code the page itself runs.
+# The jobs that install or run npm code (compat, deploy) have a read-only token. Only the
+# record jobs can write to the repository, and they run no npm code. The e2e job walks
+# the visitor's path on chain with web/chain.js, the code the page itself runs, with a
+# read-only token too; it hands web/live-e2e.json to record-e2e as an artifact.
 
 # A manual run needs this file on the default branch. On a work branch the same run is
 # started by a push that changes .github/live-trigger: its first word is `deploy` (deploy
@@ -70,6 +71,32 @@ jobs:
           echo "e2e=$e2e" >> "$GITHUB_OUTPUT"
           echo "deploy=$deploy e2e=$e2e"
 
+  compat:
+    # The page's own transaction encoding and signing against near-api-js, byte for byte,
+    # before anything is signed on chain. Runs for a deploy and for an e2e walk alone.
+    name: Check web/chain.js against near-api-js
+    needs: plan
+    if: ${{ needs.plan.outputs.deploy == 'true' || needs.plan.outputs.e2e == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install the pinned client library
+        working-directory: scripts/proof
+        run: npm install --ignore-scripts --no-audit --no-fund
+
+      - name: Compare
+        run: node --test scripts/proof/chain-compat.check.mjs
+
   build:
     # Same tests and the same wasm build as CI; uploads the artifact loud-wasm.
     needs: plan
@@ -80,7 +107,7 @@ jobs:
 
   deploy:
     name: Deploy the live token
-    needs: [plan, build]
+    needs: [plan, compat, build]
     if: ${{ needs.plan.outputs.deploy == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -103,10 +130,6 @@ jobs:
       - name: Install the pinned client library
         working-directory: scripts/proof
         run: npm install --ignore-scripts --no-audit --no-fund
-
-      # The page signs with its own code; this compares it with the library, byte for byte.
-      - name: Check web/chain.js against near-api-js
-        run: node --test scripts/proof/chain-compat.check.mjs
 
       - name: Deploy
         env:
@@ -154,9 +177,10 @@ jobs:
 
   e2e:
     name: Visitor path on chain
-    needs: [plan, record]
-    # Runs after a recorded deploy, or alone against the committed web/live.json.
-    if: ${{ always() && needs.plan.outputs.e2e == 'true' && (needs.record.result == 'success' || (needs.record.result == 'skipped' && needs.plan.outputs.deploy != 'true')) }}
+    needs: [plan, compat, record]
+    # Runs after a recorded deploy, or alone against the committed web/live.json, and only
+    # once the encoding check has passed.
+    if: ${{ always() && needs.plan.outputs.e2e == 'true' && needs.compat.result == 'success' && (needs.record.result == 'success' || (needs.record.result == 'skipped' && needs.plan.outputs.deploy != 'true')) }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -173,4 +197,49 @@ jobs:
 
       # No install: web/chain.js and this script have no dependency.
       - name: Walk the visitor's path
+        id: walk
         run: node scripts/live-e2e.mjs
+
+      # The walk writes its record also when it stops at a step that did not hold.
+      - name: Upload the record of the walk
+        if: ${{ always() && hashFiles('web/live-e2e.json') != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: live-e2e
+          path: web/live-e2e.json
+          if-no-files-found: error
+          retention-days: 7
+
+  record-e2e:
+    name: Commit web/live-e2e.json
+    needs: e2e
+    # The latest walk is recorded whether it passed or stopped: the file says which.
+    if: ${{ always() && (needs.e2e.result == 'success' || needs.e2e.result == 'failure') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref_name }}
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: live-e2e
+          path: web
+
+      - name: Commit
+        env:
+          STATUS: ${{ needs.e2e.result }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add web/live-e2e.json
+          if git diff --cached --quiet; then
+            echo "web/live-e2e.json unchanged"
+            exit 0
+          fi
+          git commit -m "chore(live): record visitor path walk ${GITHUB_RUN_ID} (${STATUS})"
+          git pull --rebase origin "${GITHUB_REF_NAME}"
+          git push origin "HEAD:${GITHUB_REF_NAME}"
