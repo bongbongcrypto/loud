@@ -239,3 +239,7 @@ body:not(.launch-page) footer, body:not(.launch-page) footer p { font: 400 13px/
   body:not(.launch-page) .masthead { flex-direction: row !important; }
   body:not(.launch-page) .lp-fold li > b, body:not(.launch-page) .lp-fold .v-line { font-size: 18px !important; }
 }
+
+.lp-steps { margin: -8px 0 24px !important; font: 400 15px/1.5 var(--sans) !important; color: var(--ink-2) !important; }
+.lp-steps b { color: var(--accent); font-weight: 700; margin-right: 4px; }
+.lp-steps i { font-style: normal; color: var(--dim); margin: 0 8px; }

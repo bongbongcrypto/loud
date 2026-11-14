@@ -20,7 +20,7 @@ The top of the page is the app: the live exits board on the left, the wallet and
 1. **Get a test wallet.** The page makes a key pair in your browser and asks the public NEAR testnet faucet for a funded account. The key stays in that browser's storage. It is a throwaway and holds no real funds.
 2. **Buy** with 2 NEAR. The launch window of this token is open until 2026-11-21, so the tokens arrive loud.
 3. **Sell.** The contract refuses: `E_NO_QUIET`.
-4. **Shout.** After the buy the page fills in the wallet's whole loud balance. Your exit appears on the board that every visitor sees. Try **Hush**: refused, `E_NOTICE_BINDING`.
+4. **Shout.** After the buy the page fills in the wallet's loud balance, in whole tokens. Your exit appears on the board that every visitor sees. Try **Hush**: refused, `E_NOTICE_BINDING`.
 5. Press **Get a second wallet**: the page makes it from your first wallet with 3 of its test NEAR, in one transaction, so the faucet is asked only once. **Catch quarter** of your own exit from it. The tokens arrive loud and the pool sells nothing.
 6. Press **Switch wallet**, wait out the 1 min notice and press **Leave** on your row. When what is left of the exit is larger than the room in the shared cap, `leave` sells part of it; the result line says how much, and whether the cap or the pool's NEAR set the limit.
 
