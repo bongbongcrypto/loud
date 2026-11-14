@@ -16,14 +16,16 @@ A script put the token on NEAR testnet and attacked it with 20 split wallets. Ev
 
 | What was tried | What the contract did | Transaction |
 |---|---|---|
-| Create, fund, deploy and initialise the token account in one transaction that adds no key | Done. The account has 0 access keys, so nobody can sign for it | [2pWUqQ…](https://testnet.nearblocks.io/txns/2pWUqQEjShNo2S8d2g7yiRXroPvYgDmvzyW62hzK5HJf) |
-| The insider splits its launch tokens across 20 wallets with `ft_transfer` | Done. The tokens arrive still loud, as the next row shows | [G6JGuK…](https://testnet.nearblocks.io/txns/G6JGuKzgmcBEaYg6ktykYHThzQqTdmWPcbttNAB6nxx1) |
-| A split wallet calls `sell` with those tokens | Rejected: `E_NO_QUIET` | [39Gxqb…](https://testnet.nearblocks.io/txns/39GxqbEmSYpip6vQAag5SwW65USavfFxEzWskCsDnHvJ) |
-| The wallet shouts, then calls `leave` 57 s before its notice ends | Rejected: `E_NOTICE` | [4ifpVq…](https://testnet.nearblocks.io/txns/4ifpVqsRPAmsj6hWbhu2jenAqmyeuecimWXoRKWvMkCA) |
-| The same wallet tries to take the shout back with `hush` | Rejected: `E_NOTICE_BINDING` | [5fEtsn…](https://testnet.nearblocks.io/txns/5fEtsnqxZZijSF4EgG5xQC5mRwgEuKNw8bymmmN11xki) |
-| After the notice, a wallet calls `leave` while the cap has room | Sold 1,645,004 LOUD | [6fV53K…](https://testnet.nearblocks.io/txns/6fV53K4ZGYq2zXoFx7qgSjYxsVyCvZtuYW3peCxJgfJn) |
-| Another wallet calls `leave` when the cap is empty | Rejected: `E_CAP` | [FEkuja…](https://testnet.nearblocks.io/txns/FEkujaeUCEA8jdX7NPwus48mEVQasDHSaZNBzvCNx5zg) |
-| All 20 wallets keep calling `leave` for one full cap window, 600 calls | 40 sales, 540 `E_CAP` rejections, and 20 `E_EXPIRED` once the exit window had closed. 6,450,604 LOUD got out; the cap allowed at most 6,806,536 | [receipts.json](web/receipts.json) |
+| Create, fund, deploy and initialise the token account in one transaction that adds no key | Done. The account has 0 access keys, so nobody can sign for it | [5twoy5…](https://testnet.nearblocks.io/txns/5twoy5SbaEq8JqtGDm6q6KrZ4wBFaFDXzZjJ5Fe95AY8) |
+| The insider splits its launch tokens across 20 wallets with `ft_transfer` | Done. The tokens arrive still loud, as the next row shows | [7s5njd…](https://testnet.nearblocks.io/txns/7s5njdw4gdWEvnieMAZNZzPb46xxTr2Ld5sPG8n6H2h) |
+| A split wallet calls `sell` with those tokens | Rejected: `E_NO_QUIET` | [ES6jL1…](https://testnet.nearblocks.io/txns/ES6jL13q44xip7hVzEGXHtQ39wwtvwk1hQ3cf7yddpeD) |
+| The wallet shouts, then calls `leave` 56 s before its notice ends | Rejected: `E_NOTICE` | [Fofq7W…](https://testnet.nearblocks.io/txns/Fofq7WdoVMpoEKaw8Stvo8tTeVpkkkSaA1RBhzJM83fz) |
+| The same wallet tries to take the shout back with `hush` | Rejected: `E_NOTICE_BINDING` | [5EKvJz…](https://testnet.nearblocks.io/txns/5EKvJzwDFQs95Ux6Z3umZMugrrZL9rc3zMXuoj22BVar) |
+| Another wallet tries to catch its own exit | Rejected: `E_SELF` | [EaKTwT…](https://testnet.nearblocks.io/txns/EaKTwTvCq1RxSyatZu3roTLzwe3JQz7QtHtbGiQcpu81) |
+| A late buyer catches a quarter of that exit while the notice is still up | Paid 0.0212 NEAR and got 2,604,167 LOUD, still loud. The pool sold nothing, kept the 1% fee, and the cap was not used | [6m74N6…](https://testnet.nearblocks.io/txns/6m74N6Mp5f8UdBVbCkcnupcjidirh7GbmDLxFmzKwDoq) |
+| After the notice, a wallet calls `leave` while the cap has room | Sold 1,671,982 LOUD | [HRbZuL…](https://testnet.nearblocks.io/txns/HRbZuLqHuhvZ9GKConBcjV3KzProKp6oXDDjFdvueFTG) |
+| Another wallet calls `leave` when the cap is empty | Rejected: `E_CAP` | [FtCivL…](https://testnet.nearblocks.io/txns/FtCivLBkxCZPvBeqnwMuwmzLZGdA3XU9MC8ESfJ8fFif) |
+| All 20 wallets keep calling `leave` for one full cap window, 480 calls | 33 sales, 426 `E_CAP` rejections, 20 `E_EXPIRED` once the exit window had closed, 1 whose outcome the script could not confirm. 6,540,796 LOUD got out; the cap allowed at most 6,964,776 | [receipts.json](web/receipts.json) |
 
 The run shows 20 wallets staying inside one cap on chain. That 1 wallet and 100 wallets sell the same amount is shown by the contract and engine tests, not by this run. Ten checks, every transaction: [Testnet proof](https://bongbongcrypto.github.io/loud/#proof).
 
