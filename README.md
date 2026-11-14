@@ -1,6 +1,6 @@
 # LOUD
 
-**A NEAR memecoin where you have to shout before you sell, and the room can answer.**
+**A NEAR memecoin where launch tokens have to shout before they sell, and the room can answer.**
 
 LOUD makes launch supply announce its exit. The creator allocation and the tokens bought in the launch window are *loud*. They sell into the token's own pool only after a public notice, and every wallet draws on one shared cap, so splitting a bag across 100 wallets adds no room. While a notice is up, anyone else can *catch* the exit: buy the tokens from the seller, for no less than the pool's price when the exit was shouted, and take them, still loud, so that sale never hits the pool. Tokens bought later are *quiet* and sell at once. That includes tokens a holder sells through the cap and then buys back: the cap sets how fast early supply can be sold into the pool or converted, and it does not stop a price from falling ([Limits](#limits)).
 
@@ -12,7 +12,7 @@ Built at NEAR HACKATHON, memecoins track. Testnet only. Unaudited.
 
 ## What happened on testnet
 
-A script put the token on NEAR testnet and attacked it with 20 split wallets. Every row is a transaction of that run, on a faster demo preset (notice 1 min, cap window 10 min).
+A script put the token on NEAR testnet and attacked it with 20 split wallets. Each row links a transaction of that run, on a faster demo preset (notice 1 min, cap window 10 min). The split took 20 transfers and one is linked. The last row adds up every `leave` call of the cap window.
 
 | What was tried | What the contract did | Transaction |
 |---|---|---|
@@ -35,16 +35,16 @@ The creator and the launch buyers hold the cheap early supply. A per-wallet sell
 
 ## How it works: shout, wait, leave
 
-Nobody leaves this launch quietly. Every early exit goes up on a public departures board first.
+No launch token reaches the pool quietly. Every sale of launch tokens into the pool goes up on a public departures board first.
 
 1. Tokens bought during the launch window, and the creator allocation, are **loud**. Later buys are **quiet** and sell at once. The tag travels with the tokens through every transfer.
 2. Loud tokens cannot use `sell`. To sell into the pool the holder calls `shout`, which locks them and posts a public notice, then `leave` when the notice ends.
 3. Every wallet's `leave` draws on one shared cap. More wallets never mean more room.
 4. The owner's account cannot cancel a shout. The tokens stay locked until they are sold, caught, or the exit ends, and then `hush` returns what is left, still loud.
-5. From the moment of the shout until the exit ends, any other registered account can call `catch` on it with NEAR attached. The price is the higher of the pool's sell quote now and its quote when the exit was shouted, so pushing the price down after a shout does not make a catch cheaper. The catcher receives the tokens as loud. Of the price, 1% stays in the pool and the seller gets the rest. The pool sells nothing and the cap is not used, so an exit that is fully caught never pushes the price down. Holders who believe in the coin can take an announced exit off the board before it reaches the pool, and what they catch is as loud as it was: to sell it they must shout too.
+5. From the moment of the shout until the exit ends, any other registered account can call `catch` on it with NEAR attached. The price is the higher of the pool's sell quote now and its quote when the exit was shouted, so a catch never costs less than the same share of what the pool would have paid for the whole exit when it was shouted. The catcher receives the tokens as loud. Of the price, 1% stays in the pool and the seller gets the rest. The pool sells nothing and the cap is not used, so an exit that is fully caught never pushes the price down. Holders who believe in the coin can take an announced exit off the board before it reaches the pool, and what they catch is as loud as it was: to sell it they must shout too.
 6. Every wallet but the creator's needs a one-time 0.03 NEAR storage fee. Nobody, the creator included, can change or pause the token: it has no owner method and its account has no access key.
 
-Standard preset: 1,000,000,000 supply, 5% creator, launch window 10 min, notice 30 min, exit window 60 min, cap 0.5% of supply per 60 min. The cap is a bucket that holds 0.5% and refills 0.5% per 60 min, so a full bucket plus one refill lets at most 1% into the pool in any 60 min.
+Standard preset: 1,000,000,000 supply, 5% creator, launch window 10 min, notice 30 min, exit window 60 min, cap 0.5% of supply per 60 min. The cap is a bucket that holds 0.5% and refills 0.5% per 60 min, so a full bucket plus one refill lets at most 1% into the pool through `leave` in any 60 min. Quiet sales are not counted.
 
 What a launch buyer accepts:
 
@@ -129,7 +129,7 @@ Under LOUD, holders in both cases also get 30 minutes of public notice before th
 - **Side deals and wrappers.** Loud tokens can be sent with a plain transfer to another registered account. That covers a private sale, and it covers a contract that issues its own token against them. Whoever buys that wrapper token holds no tag.
 - **Waiting out the launch window avoids the tag.** Someone who buys right after it gets quiet tokens with no notice and no cap. The creator allocation starts loud, and so do the tokens of honest launch-window buyers.
 - **A shout does not have to end in a pool sale.** A holder can shout, sell nothing and take the tokens back after the exit expires, at no cost beyond gas and the lock. A second account of the same holder can take them back sooner by catching the exit, for the 1% fee. So a shout can be a bluff: shout, let others sell first, take it back.
-- **The seller sets the catch price floor.** The floor is the pool's price for the shouted amount at the moment of the shout, and it never comes down. A seller who does not want to be caught can lift the pool price for an instant around their own shout and so set a floor nobody will pay. After a real price fall, a catch costs more than the pool pays, so nobody catches and the exit goes to the pool through `leave`. Someone who sells just before a shout lands lowers the floor it records.
+- **The seller sets the catch price floor.** The floor is the pool's price for the shouted amount at the moment of the shout, and it never comes down. A seller who does not want to be caught can lift the pool price for an instant around their own shout and so set a floor nobody will pay. After a real price fall, a catch can cost more than the pool pays, and then there is little reason to catch. Someone who sells just before a shout lands lowers the floor it records.
 - **A notice can trigger a rush.** Quiet holders can sell before a shouted exit is ready.
 - **Catching is a cash-out the cap does not slow.** A seller whose exit is caught gets paid at once, however large it is. The pool sells nothing, its price moves only by the 1% fee it keeps, and the supply stays loud in the catcher's hands, but an insider with a willing buyer leaves faster than the cap. A holder can also take back their own shout by catching it from a second wallet. That costs the 1% fee and only moves loud tokens between their wallets. Catchers take on tokens they must shout to sell, while quiet holders stay free to sell. A `leave` can fail with `E_SLIPPAGE` or `E_NO_EXIT` if someone catches from the exit just before it.
 - **The creator allocation is unbacked.** It is minted without payment, so its proceeds come from buyers' NEAR. The last sellers may be unable to sell.
